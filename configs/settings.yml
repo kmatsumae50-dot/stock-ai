@@ -1,0 +1,51 @@
+paths:
+  raw_data_dir: data/raw
+  processed_data_dir: data/processed
+  feature_data_dir: data/features
+  prediction_data_dir: data/predictions
+  model_dir: models/artifacts
+  database_path: database/market.db
+
+data:
+  default_start: "2010-01-01"
+  default_interval: "1d"
+
+operations:
+  live_prediction_start_date: "2026-06-05"
+  known_missed_live_dates:
+    - date: "2026-06-15"
+      ticker: "7203.T"
+      reason_code: "data_not_available_at_run_time"
+      reason: "daily_predict ran at 2026-06-15 09:12, but latest available feature data was 2026-06-12 at run time."
+      action: "do_not_create_live_prediction"
+      allow_backfill: true
+    - date: "2026-06-23"
+      ticker: "7203.T"
+      reason_code: "data_not_available_at_run_time"
+      reason: "daily_predict ran at 2026-06-23 08:30, but latest available raw/feature data was 2026-06-22 at run time."
+      action: "do_not_create_live_prediction"
+      allow_backfill: true
+    - date: "2026-07-13"
+      ticker: "7203.T"
+      reason_code: "task_scheduler_not_run"
+      reason: "The PC shut down at 2026-07-13 09:48 before the 10:30 schedule and did not start again until 2026-07-14 19:34, so no live daily_predict run occurred for feature date 2026-07-13."
+      action: "do_not_create_live_prediction"
+      allow_backfill: true
+    - date: "2026-07-21"
+      ticker: "7203.T"
+      reason_code: "prediction_generation_failed"
+      reason: "The PC was off at the 2026-07-21 10:30 schedule. A catch-up run on 2026-07-22 00:23 built features through 2026-07-21, but predict-binary failed with an empty-input ValueError before either binary or multiclass live predictions were saved."
+      action: "do_not_create_live_prediction"
+      allow_backfill: true
+
+labels:
+  surge_threshold: 0.05
+  up_threshold: 0.01
+  down_threshold: -0.01
+  crash_threshold: -0.05
+
+features:
+  moving_average_windows: [5, 25, 75]
+  rsi_window: 14
+  volatility_window: 20
+  bollinger_window: 20

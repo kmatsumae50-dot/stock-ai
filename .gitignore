@@ -1,0 +1,70 @@
+# Python environments and caches
+.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+tmp_backtest_test/
+
+# Local environment and editor files
+.env
+.env.*
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs, runtime state, and locks
+logs/
+*.log
+reports/autonomous/.operations.lock
+reports/autonomous/.research.lock
+reports/autonomous/.codex_research_agent.lock
+reports/autonomous/.codex_research_agent_wrapper.lock
+reports/autonomous/operations_*.json
+reports/autonomous/operations_*.md
+reports/autonomous/research_*.json
+reports/autonomous/research_*.md
+reports/autonomous/codex_agent_*.json
+reports/autonomous/codex_agent_*.md
+reports/autonomous/codex_agent_prompt_*.md
+reports/autonomous/*_state.json
+reports/autonomous/*_history.jsonl
+reports/autonomous/operations_task_queue.json
+reports/autonomous/codex_research_hypotheses.json
+reports/autonomous/patches/
+reports/**/*.csv
+reports/**/*.json
+reports/**/*.jsonl
+reports/**/*.patch
+
+# Runtime datasets. Source code and design reports remain trackable.
+data/**/*.csv
+data/**/*.json
+data/**/*.parquet
+data/raw/
+data/processed/
+data/features/
+data/predictions/
+
+# Production and local databases
+database/*.db
+database/*.sqlite
+database/*.sqlite3
+database/*.sqlite3-*
+*.db-shm
+*.db-wal
+
+# Generated model artifacts
+models/artifacts/
+models/*.pkl
+models/*.joblib
+
+# Temporary files and accidental output
+tmp/
+temp/
+*.tmp
+Unknown
+Unknown/

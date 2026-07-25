@@ -1,0 +1,391 @@
+﻿sources:
+  - name: Reuters
+    aliases: ["reuters", "reuters.com", "jp.reuters.com", "ロイター"]
+    credibility_score: 0.90
+    market_impact_weight: 0.85
+    source_type: wire
+
+  - name: Bloomberg
+    aliases: ["bloomberg"]
+    credibility_score: 0.90
+    market_impact_weight: 0.85
+    source_type: financial_media
+
+  - name: Nikkei
+    aliases: ["nikkei", "nikkei asia", "日本経済新聞", "日経"]
+    credibility_score: 0.88
+    market_impact_weight: 0.82
+    source_type: financial_media
+
+  - name: Toyota official
+    aliases: ["toyota official", "toyota global", "toyota motor corporation", "global toyota"]
+    credibility_score: 0.95
+    market_impact_weight: 0.80
+    source_type: official
+
+  - name: Toyota corporate site
+    aliases: ["トヨタ自動車株式会社 公式企業サイト", "トヨタ自動車 公式企業サイト", "toyota motor corporation official site"]
+    credibility_score: 0.88
+    market_impact_weight: 0.50
+    source_type: official
+
+  - name: Yahoo Finance
+    aliases: ["yahoo finance", "yahoo!ファイナンス", "ヤフーファイナンス"]
+    credibility_score: 0.75
+    market_impact_weight: 0.65
+    source_type: financial_media
+
+  - name: CNBC
+    aliases: ["cnbc"]
+    credibility_score: 0.78
+    market_impact_weight: 0.70
+    source_type: financial_media
+
+  - name: MarketWatch
+    aliases: ["marketwatch"]
+    credibility_score: 0.72
+    market_impact_weight: 0.62
+    source_type: financial_media
+
+  - name: Wall Street Journal
+    aliases: ["wall street journal", "wsj"]
+    credibility_score: 0.86
+    market_impact_weight: 0.78
+    source_type: financial_media
+
+  - name: Automotive News
+    aliases: ["automotive news"]
+    credibility_score: 0.76
+    market_impact_weight: 0.70
+    source_type: financial_media
+
+  - name: Response.jp
+    aliases: ["response.jp", "レスポンス", "レスポンス（response.jp）"]
+    credibility_score: 0.55
+    market_impact_weight: 0.40
+    source_type: general_news
+
+  - name: Investing.com
+    aliases: ["investing.com", "investing"]
+    credibility_score: 0.68
+    market_impact_weight: 0.58
+    source_type: financial_media
+
+  - name: IG
+    aliases: ["ig.com", "ig"]
+    credibility_score: 0.62
+    market_impact_weight: 0.50
+    source_type: financial_media
+
+  - name: TheStreet Pro
+    aliases: ["thestreet pro", "thestreet"]
+    credibility_score: 0.62
+    market_impact_weight: 0.50
+    source_type: financial_media
+
+  - name: Stock Titan
+    aliases: ["stock titan"]
+    credibility_score: 0.58
+    market_impact_weight: 0.45
+    source_type: financial_media
+
+  - name: Simply Wall St
+    aliases: ["simplywall.st", "simply wall st"]
+    credibility_score: 0.60
+    market_impact_weight: 0.48
+    source_type: financial_media
+
+  - name: CleanTechnica
+    aliases: ["cleantechnica"]
+    credibility_score: 0.55
+    market_impact_weight: 0.42
+    source_type: general_news
+
+  - name: Seeking Alpha
+    aliases: ["seeking alpha"]
+    credibility_score: 0.62
+    market_impact_weight: 0.52
+    source_type: financial_media
+
+  - name: MarketBeat
+    aliases: ["marketbeat"]
+    credibility_score: 0.56
+    market_impact_weight: 0.42
+    source_type: financial_media
+
+  - name: ChartMill
+    aliases: ["chartmill"]
+    credibility_score: 0.50
+    market_impact_weight: 0.35
+    source_type: financial_media
+
+  - name: CBT News
+    aliases: ["cbt news"]
+    credibility_score: 0.50
+    market_impact_weight: 0.34
+    source_type: general_news
+
+  - name: Repairer Driven News
+    aliases: ["repairerdrivennews.com", "repairer driven news"]
+    credibility_score: 0.45
+    market_impact_weight: 0.30
+    source_type: general_news
+
+  - name: EBC Financial Group
+    aliases: ["ebc financial group"]
+    credibility_score: 0.50
+    market_impact_weight: 0.38
+    source_type: financial_media
+
+  - name: Focus2Move
+    aliases: ["focus2move"]
+    credibility_score: 0.48
+    market_impact_weight: 0.34
+    source_type: general_news
+
+  - name: Mshale
+    aliases: ["mshale"]
+    credibility_score: 0.30
+    market_impact_weight: 0.18
+    source_type: general_news
+
+  - name: TV Tokyo BIZ
+    aliases: ["テレ東biz", "テレ東BIZ", "tv tokyo biz", "tvtokyo biz"]
+    credibility_score: 0.72
+    market_impact_weight: 0.55
+    source_type: financial_media
+
+  - name: Asahi Shimbun
+    aliases: ["asahi shimbun", "朝日新聞"]
+    credibility_score: 0.70
+    market_impact_weight: 0.48
+    source_type: general_news
+
+  - name: Jiji Press
+    aliases: ["jiji", "時事ドットコム", "時事通信"]
+    credibility_score: 0.76
+    market_impact_weight: 0.62
+    source_type: wire
+
+  - name: Chasing Cars
+    aliases: ["chasingcars.com.au", "chasing cars"]
+    credibility_score: 0.50
+    market_impact_weight: 0.35
+    source_type: general_news
+
+  - name: CarExpert
+    aliases: ["carexpert", "carexpert.com.au"]
+    credibility_score: 0.52
+    market_impact_weight: 0.28
+    source_type: general_news
+
+  - name: Autoblog
+    aliases: ["autoblog"]
+    credibility_score: 0.52
+    market_impact_weight: 0.38
+    source_type: general_news
+
+  - name: Anadolu Ajansi
+    aliases: ["anadolu ajansı", "anadolu ajansi", "anadolu agency"]
+    credibility_score: 0.68
+    market_impact_weight: 0.42
+    source_type: wire
+
+  - name: Techzine Global
+    aliases: ["techzine global", "techzine"]
+    credibility_score: 0.55
+    market_impact_weight: 0.30
+    source_type: general_news
+
+  - name: Kabutan
+    aliases: ["株探", "株探（かぶたん）", "かぶたん", "kabutan"]
+    credibility_score: 0.65
+    market_impact_weight: 0.50
+    source_type: financial_media
+
+  - name: Japan Investment Organization
+    aliases: ["日本投資機構株式会社", "japan investment organization"]
+    credibility_score: 0.50
+    market_impact_weight: 0.30
+    source_type: financial_media
+
+  - name: 24/7 Wall St.
+    aliases: ["24/7 wall st.", "24/7 wall st", "247 wall st"]
+    credibility_score: 0.58
+    market_impact_weight: 0.42
+    source_type: financial_media
+
+  - name: TradingKey
+    aliases: ["tradingkey", "trading key"]
+    credibility_score: 0.58
+    market_impact_weight: 0.45
+    source_type: financial_media
+
+  - name: Newsweek Japan
+    aliases: ["ニューズウィーク日本版", "newsweek japan", "newsweek日本版"]
+    credibility_score: 0.62
+    market_impact_weight: 0.34
+    source_type: general_news
+
+  - name: The Telegraph
+    aliases: ["the telegraph", "telegraph", "the daily telegraph", "daily telegraph", "telegraph.co.uk"]
+    credibility_score: 0.66
+    market_impact_weight: 0.34
+    source_type: general_news
+
+  - name: Diamond Online Japan
+    aliases: ["ダイヤモンド・オンライン", "ダイヤモンドオンライン", "diamond online", "diamond online japan"]
+    credibility_score: 0.64
+    market_impact_weight: 0.36
+    source_type: general_news
+
+  - name: Toyo Keizai Online
+    aliases: ["東洋経済オンライン", "toyo keizai online", "toyokeizai online", "東洋経済"]
+    credibility_score: 0.68
+    market_impact_weight: 0.50
+    source_type: financial_media
+
+  - name: GuruFocus
+    aliases: ["gurufocus", "guru focus"]
+    credibility_score: 0.58
+    market_impact_weight: 0.42
+    source_type: financial_media
+
+  - name: Moomoo
+    aliases: ["moomoo", "moomoo news"]
+    credibility_score: 0.56
+    market_impact_weight: 0.40
+    source_type: financial_media
+
+  - name: Benzinga
+    aliases: ["benzinga", "benzinga.com"]
+    credibility_score: 0.62
+    market_impact_weight: 0.45
+    source_type: financial_media
+
+  - name: Stocktwits
+    aliases: ["stocktwits", "stocktwits.com", "stocktwits news"]
+    credibility_score: 0.45
+    market_impact_weight: 0.28
+    source_type: aggregator
+
+  - name: Timothy Sykes
+    aliases: ["timothysykes.com", "timothy sykes", "tim sykes"]
+    credibility_score: 0.38
+    market_impact_weight: 0.22
+    source_type: general_news
+
+  - name: Sankei News
+    aliases: ["産経ニュース", "産経新聞", "sankei news", "sankei.com"]
+    credibility_score: 0.68
+    market_impact_weight: 0.34
+    source_type: general_news
+
+  - name: Carscoops
+    aliases: ["carscoops"]
+    credibility_score: 0.52
+    market_impact_weight: 0.28
+    source_type: general_news
+
+  - name: Fathom Journal
+    aliases: ["fathom journal"]
+    credibility_score: 0.40
+    market_impact_weight: 0.16
+    source_type: general_news
+
+  - name: TradingView
+    aliases: ["tradingview", "trading view"]
+    credibility_score: 0.62
+    market_impact_weight: 0.45
+    source_type: financial_media
+
+  - name: Yahoo News Japan
+    aliases: ["yahoo!ニュース", "yahooニュース", "yahoo news japan"]
+    credibility_score: 0.55
+    market_impact_weight: 0.28
+    source_type: aggregator
+
+  - name: Yahoo
+    aliases: ["yahoo"]
+    credibility_score: 0.55
+    market_impact_weight: 0.28
+    source_type: aggregator
+
+  - name: Frontstretch
+    aliases: ["frontstretch"]
+    credibility_score: 0.50
+    market_impact_weight: 0.22
+    source_type: general_news
+
+  - name: MarketScreener
+    aliases: ["marketscreener.com", "marketscreener"]
+    credibility_score: 0.60
+    market_impact_weight: 0.45
+    source_type: financial_media
+
+  - name: The Motley Fool
+    aliases: ["the motley fool", "motley fool", "fool.com"]
+    credibility_score: 0.58
+    market_impact_weight: 0.40
+    source_type: financial_media
+
+  - name: Schaeffer's Investment Research
+    aliases: ["schaeffer's investment research", "schaeffers investment research", "schaeffersresearch.com"]
+    credibility_score: 0.58
+    market_impact_weight: 0.42
+    source_type: financial_media
+
+  - name: CNA
+    aliases: ["cna", "channel newsasia", "channel news asia"]
+    credibility_score: 0.64
+    market_impact_weight: 0.34
+    source_type: general_news
+
+  - name: Nikkan Jidosha Shimbun
+    aliases: ["netdenjd.com", "日刊自動車新聞", "日刊自動車新聞電子版"]
+    credibility_score: 0.58
+    market_impact_weight: 0.35
+    source_type: general_news
+
+  - name: Supercar Blondie
+    aliases: ["supercarblondie.com", "supercar blondie"]
+    credibility_score: 0.45
+    market_impact_weight: 0.18
+    source_type: general_news
+
+  - name: Chosun Ilbo
+    aliases: ["조선일보", "chosun ilbo", "chosun.com"]
+    credibility_score: 0.64
+    market_impact_weight: 0.32
+    source_type: general_news
+
+  - name: CarbonCredits.com
+    aliases: ["carboncredits.com", "carbon credits"]
+    credibility_score: 0.50
+    market_impact_weight: 0.30
+    source_type: general_news
+
+  - name: Top Speed
+    aliases: ["top speed", "topspeed", "topspeed.com"]
+    credibility_score: 0.52
+    market_impact_weight: 0.25
+    source_type: general_news
+
+  - name: YourValley.net
+    aliases: ["yourvalley.net", "yourvalley"]
+    credibility_score: 0.42
+    market_impact_weight: 0.15
+    source_type: general_news
+
+  - name: Google News
+    aliases: ["google news"]
+    credibility_score: 0.50
+    market_impact_weight: 0.40
+    source_type: aggregator
+
+  - name: Unknown
+    aliases: ["unknown", ""]
+    credibility_score: 0.30
+    market_impact_weight: 0.25
+    source_type: unknown
+

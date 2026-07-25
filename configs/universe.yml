@@ -1,0 +1,13 @@
+# 最初は動作確認用の少数銘柄です。
+# 本番では日経225の時点別構成銘柄を管理するファイルに拡張します。
+tickers:
+  - code: "7203.T"
+    name: "Toyota Motor"
+  - code: "6758.T"
+    name: "Sony Group"
+  - code: "9984.T"
+    name: "SoftBank Group"
+  - code: "8306.T"
+    name: "Mitsubishi UFJ Financial Group"
+  - code: "6861.T"
+    name: "Keyence"

@@ -1,0 +1,11 @@
+rules:
+  bullish_up_probability_threshold: 0.58
+  bearish_down_probability_threshold: 0.58
+  high_crash_percentile_threshold: 0.90
+  high_surge_percentile_threshold: 0.90
+  caution_conflict_threshold: 0.0
+  neutral_probability_gap_threshold: 0.08
+  watch_only_both_risks_high_threshold: 0.90
+  surge_score_threshold: 40.0
+  crash_score_threshold: 40.0
+  anomaly_caution_score_threshold: 50.0

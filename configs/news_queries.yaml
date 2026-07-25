@@ -1,0 +1,105 @@
+profiles:
+  - name: toyota_stock
+    query: "Toyota stock"
+    ticker: "7203.T"
+    category: "auto"
+    enabled_for_daily: true
+    group: "core"
+
+  - name: toyota_earnings
+    query: "Toyota earnings guidance profit"
+    ticker: "7203.T"
+    category: "earnings"
+    enabled_for_daily: false
+    group: "core"
+
+  - name: auto_industry
+    query: "Toyota Honda Nissan Tesla BYD auto industry"
+    ticker: ""
+    category: "auto"
+    enabled_for_daily: true
+    group: "sector"
+
+  - name: ev_hybrid
+    query: "Toyota EV hybrid vehicle demand"
+    ticker: "7203.T"
+    category: "ev_hybrid"
+    enabled_for_daily: false
+    group: "sector"
+
+  - name: japan_auto_market
+    query: "Japan auto industry Toyota Honda Nissan"
+    ticker: ""
+    category: "auto"
+    enabled_for_daily: false
+    group: "sector"
+
+  - name: macro_auto
+    query: "USDJPY tariffs interest rates auto stocks Toyota"
+    ticker: ""
+    category: "macro"
+    enabled_for_daily: false
+    group: "macro"
+
+  - name: toyota_jp
+    query: "トヨタ 株価 ニュース"
+    ticker: "7203.T"
+    category: "auto"
+    language: "ja"
+    region: "JP"
+    enabled_for_daily: true
+    group: "jp"
+
+  - name: toyota_earnings_jp
+    query: "トヨタ 決算 業績 見通し"
+    ticker: "7203.T"
+    category: "earnings"
+    language: "ja"
+    region: "JP"
+    enabled_for_daily: true
+    group: "jp"
+
+  - name: toyota_hybrid_ev_jp
+    query: "トヨタ EV ハイブリッド 電動車"
+    ticker: "7203.T"
+    category: "ev_hybrid"
+    language: "ja"
+    region: "JP"
+    enabled_for_daily: false
+    group: "jp"
+
+  - name: japan_auto_industry_jp
+    query: "トヨタ ホンダ 日産 自動車業界"
+    ticker: ""
+    category: "auto"
+    language: "ja"
+    region: "JP"
+    enabled_for_daily: false
+    group: "jp"
+
+  - name: toyota_china_jp
+    query: "トヨタ 中国市場 販売"
+    ticker: "7203.T"
+    category: "china_market"
+    language: "ja"
+    region: "JP"
+    enabled_for_daily: false
+    group: "jp"
+
+  - name: toyota_recall_jp
+    query: "トヨタ リコール 不具合 安全"
+    ticker: "7203.T"
+    category: "recall_safety"
+    language: "ja"
+    region: "JP"
+    enabled_for_daily: false
+    group: "research"
+
+  - name: toyota_macro_jp
+    query: "トヨタ 円安 円高 関税 金利"
+    ticker: "7203.T"
+    category: "macro"
+    language: "ja"
+    region: "JP"
+    enabled_for_daily: false
+    group: "macro"

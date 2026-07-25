@@ -1,0 +1,36 @@
+experiments:
+  current: {}
+
+  conservative:
+    bullish_up_probability_threshold: 0.62
+    bearish_down_probability_threshold: 0.62
+    high_crash_percentile_threshold: 0.93
+    high_surge_percentile_threshold: 0.93
+    neutral_probability_gap_threshold: 0.10
+    watch_only_both_risks_high_threshold: 0.93
+    surge_score_threshold: 45.0
+    crash_score_threshold: 45.0
+
+  aggressive:
+    bullish_up_probability_threshold: 0.54
+    bearish_down_probability_threshold: 0.54
+    high_crash_percentile_threshold: 0.85
+    high_surge_percentile_threshold: 0.85
+    neutral_probability_gap_threshold: 0.05
+    watch_only_both_risks_high_threshold: 0.85
+    surge_score_threshold: 35.0
+    crash_score_threshold: 35.0
+
+  risk_averse:
+    bearish_down_probability_threshold: 0.55
+    high_crash_percentile_threshold: 0.85
+    high_surge_percentile_threshold: 0.92
+    watch_only_both_risks_high_threshold: 0.88
+    crash_score_threshold: 35.0
+    anomaly_caution_score_threshold: 45.0
+
+  bullish_sensitive:
+    bullish_up_probability_threshold: 0.54
+    high_surge_percentile_threshold: 0.85
+    surge_score_threshold: 35.0
+    neutral_probability_gap_threshold: 0.06
