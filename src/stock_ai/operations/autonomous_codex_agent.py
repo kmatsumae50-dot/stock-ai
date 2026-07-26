@@ -703,7 +703,17 @@ def inspect_research_worktree(
     status = str(hypothesis.get("status") or "")
     reasons: list[str] = []
     if not path_exists and not registration:
-        lifecycle_status = "orphaned" if configured_path else "inactive"
+        cleanup_preserved = bool(
+            configured_path
+            and status in {"rejected", "completed", "cleanup_ready", "archived"}
+            and report_path
+            and patch_path
+            and patch_hash_recorded_and_valid
+        )
+        if cleanup_preserved:
+            lifecycle_status = "cleanup_completed"
+        else:
+            lifecycle_status = "orphaned" if configured_path else "inactive"
     elif path_exists != bool(registration):
         lifecycle_status = "orphaned"
         reasons.append("path_and_git_registration_disagree")

@@ -867,6 +867,42 @@ def test_cleanup_is_dry_run_by_default_and_unsafe_confirm_does_not_remove(
     assert confirmed["removed"] is False
 
 
+def test_removed_terminal_worktree_is_cleanup_completed_not_orphaned(tmp_path: Path) -> None:
+    repository = tmp_path / "repo"
+    reports = tmp_path / "reports"
+    repository.mkdir()
+    subprocess.run(["git", "init"], cwd=repository, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repository, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repository, check=True)
+    (repository / "README.md").write_text("base", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repository, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=repository, check=True, capture_output=True)
+    reports.mkdir()
+    report_path = reports / "result.json"
+    patch_path = reports / "result.patch"
+    report_path.write_text("{}", encoding="utf-8")
+    patch_path.write_text("preserved patch", encoding="utf-8")
+    hypothesis = {
+        "hypothesis_id": "removed",
+        "status": "rejected",
+        "worktree": str(tmp_path / "worktrees" / "removed"),
+        "report_path": str(report_path),
+        "patch_path": str(patch_path),
+        "patch_sha256": hashlib.sha256(patch_path.read_bytes()).hexdigest(),
+    }
+
+    audit = agent.inspect_research_worktree(
+        hypothesis,
+        project_root=repository,
+        worktree_root=tmp_path / "worktrees",
+        report_dir=reports,
+        check_processes=False,
+    )
+
+    assert audit["lifecycle_status"] == "cleanup_completed"
+    assert audit["safe_to_remove"] is False
+
+
 def test_prompt_template_contains_all_nonnegotiable_guards() -> None:
     root = Path(__file__).resolve().parents[1]
     text = (root / "prompts" / "autonomous_codex_research_agent.md").read_text(
