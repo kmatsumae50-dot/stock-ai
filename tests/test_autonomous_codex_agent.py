@@ -594,6 +594,27 @@ def test_rejected_fingerprint_is_not_selected_even_if_status_is_requeued() -> No
     assert selected["fingerprint"] != rejected["fingerprint"]
 
 
+def test_technical_block_can_retry_but_performance_rejection_cannot() -> None:
+    backlog = agent.seed_hypothesis_backlog()
+    technical = backlog["hypotheses"][0]
+    technical.update(
+        status="blocked",
+        result="hypothesis_blocked",
+        retryable=True,
+    )
+    performance = backlog["hypotheses"][1]
+    performance.update(
+        status="rejected",
+        result="hypothesis_rejected",
+        retryable=False,
+    )
+
+    selected = agent.select_hypothesis(backlog, research_report=_healthy_research())["selected"]
+
+    assert selected["hypothesis_id"] == technical["hypothesis_id"]
+    assert selected["hypothesis_id"] != performance["hypothesis_id"]
+
+
 def test_due_gate_skips_duplicate_research_without_new_evidence() -> None:
     backlog = agent.seed_hypothesis_backlog()
     state = agent.default_agent_state()

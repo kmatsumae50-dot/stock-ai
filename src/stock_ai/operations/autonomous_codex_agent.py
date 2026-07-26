@@ -425,7 +425,14 @@ def summarize_hypothesis_lifecycle(
     selectable = [
         item
         for item in items
-        if item.get("status") in {"proposed", "queued"}
+        if (
+            item.get("status") in {"proposed", "queued"}
+            or (
+                item.get("status") == "blocked"
+                and item.get("result") == "hypothesis_blocked"
+                and item.get("retryable", True)
+            )
+        )
         and item.get("fingerprint") not in completed | rejected
     ]
     return {
@@ -454,7 +461,14 @@ def select_hypothesis(
     candidates = [
         item
         for item in deduplicate_hypotheses(backlog.get("hypotheses", []))
-        if item.get("status") in {"proposed", "queued"}
+        if (
+            item.get("status") in {"proposed", "queued"}
+            or (
+                item.get("status") == "blocked"
+                and item.get("result") == "hypothesis_blocked"
+                and item.get("retryable", True)
+            )
+        )
         and item.get("fingerprint") not in excluded
         and item.get("category") in ALLOWED_CATEGORIES
         and item.get("risk_level") in {"low", "medium"}
@@ -976,6 +990,11 @@ def build_compact_context_bundle(
         }
         for item in backlog.get("hypotheses", [])
         if item.get("status") in {"proposed", "queued", "monitoring", "approval_required"}
+        or (
+            item.get("status") == "blocked"
+            and item.get("result") == "hypothesis_blocked"
+            and item.get("retryable", True)
+        )
     ]
     live = research_report.get("live_metrics") or {}
     return {
@@ -1376,6 +1395,8 @@ def run_autonomous_codex_research_agent(
                         str(selected["hypothesis_id"]),
                         status="blocked",
                         result=classification,
+                        retryable=True,
+                        failure_type="technical_pre_execution",
                         next_action="run manually from a supported Codex environment",
                     )
                 else:
@@ -1994,7 +2015,15 @@ def _updated_state(
         "last_result": result.get("classification"),
         "last_operations_report": operations_path or None,
         "last_research_report": research_path or None,
-        "open_hypotheses": sum(status in {"proposed", "queued", "running", "monitoring"} for status in statuses),
+        "open_hypotheses": sum(
+            status in {"proposed", "queued", "running", "monitoring"}
+            or (
+                status == "blocked"
+                and item.get("result") == "hypothesis_blocked"
+                and item.get("retryable", True)
+            )
+            for status, item in zip(statuses, backlog.get("hypotheses", []), strict=False)
+        ),
         "completed_hypotheses": statuses.count("completed"),
         "rejected_hypotheses": statuses.count("rejected"),
         "active_worktree": (result.get("worktree") or {}).get("path") if statuses.count("running") else None,
