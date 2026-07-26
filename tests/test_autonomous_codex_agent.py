@@ -872,6 +872,55 @@ def test_cleanup_ready_requires_report_patch_hash_and_matching_worktree(tmp_path
     assert unsafe["safe_to_remove"] is False
 
 
+def test_cleanup_audit_includes_untracked_files_in_saved_patch(tmp_path: Path) -> None:
+    repository = tmp_path / "repo"
+    worktree_root = tmp_path / "worktrees"
+    worktree = worktree_root / "candidate"
+    reports = tmp_path / "reports" / "autonomous"
+    repository.mkdir()
+    subprocess.run(["git", "init"], cwd=repository, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repository, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repository, check=True)
+    (repository / "tracked.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=repository, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=repository, check=True, capture_output=True)
+    worktree_root.mkdir()
+    subprocess.run(
+        ["git", "worktree", "add", "-b", "research/candidate", str(worktree), "HEAD"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    )
+    (worktree / "new_file.txt").write_text("research\n", encoding="utf-8")
+    diff = agent._complete_worktree_diff(worktree)  # noqa: SLF001
+    reports.mkdir(parents=True)
+    report_path = reports / "codex_agent_candidate_2026-07-27_0018.json"
+    patch_path = reports / "patches" / "candidate_2026-07-27_0018.patch"
+    patch_path.parent.mkdir()
+    report_path.write_text("{}", encoding="utf-8")
+    patch_path.write_text(diff, encoding="utf-8")
+    hypothesis = {
+        "hypothesis_id": "candidate",
+        "status": "completed",
+        "worktree": str(worktree),
+        "report_path": str(report_path),
+        "patch_path": str(patch_path),
+        "patch_sha256": hashlib.sha256(patch_path.read_bytes()).hexdigest(),
+    }
+
+    audit = agent.inspect_research_worktree(
+        hypothesis,
+        project_root=repository,
+        worktree_root=worktree_root,
+        report_dir=reports,
+        check_processes=False,
+    )
+
+    assert "new_file.txt" in diff
+    assert audit["patch_matches_worktree"] is True
+    assert audit["lifecycle_status"] == "cleanup_ready"
+
+
 def test_cleanup_is_dry_run_by_default_and_unsafe_confirm_does_not_remove(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

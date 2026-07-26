@@ -687,9 +687,9 @@ def inspect_research_worktree(
     if path_exists and registration:
         status = _git(path, "status", "--porcelain=v1", "--untracked-files=all")
         head = _git(path, "rev-parse", "HEAD")
-        diff = _git(path, "diff", "--binary")
+        diff_text = _complete_worktree_diff(path)
         status_lines = [line for line in status["stdout"].splitlines() if line.strip()]
-        current_patch_sha256 = hashlib.sha256(diff["stdout"].encode("utf-8")).hexdigest()
+        current_patch_sha256 = hashlib.sha256(diff_text.encode("utf-8")).hexdigest()
         main_head = str(main_git.get("head") or "")
         ahead = _git(path, "rev-list", "--count", f"{main_head}..HEAD") if main_head else {}
         worktree_git = {
@@ -705,7 +705,7 @@ def inspect_research_worktree(
             except OSError:
                 recorded_patch_text = ""
             patch_matches_worktree = _normalized_newlines(recorded_patch_text) == _normalized_newlines(
-                diff["stdout"]
+                diff_text
             )
 
     recorded_patch_hash = str(hypothesis.get("patch_sha256") or "").lower() or None
@@ -1473,7 +1473,7 @@ def run_autonomous_codex_research_agent(
                     if worktree_head["stdout"].strip() != git_before.get("head"):
                         validation.setdefault("errors", []).append("automatic_commit_detected")
                         validation["valid"] = False
-                    diff = _git(Path(worktree["path"]), "diff", "--binary")
+                    diff_text = _complete_worktree_diff(Path(worktree["path"]))
                     worktree_status = _git(
                         Path(worktree["path"]),
                         "status",
@@ -1483,7 +1483,7 @@ def run_autonomous_codex_research_agent(
                     changed_count = len(
                         [line for line in worktree_status["stdout"].splitlines() if line.strip()]
                     )
-                    patch_line_count = len(diff["stdout"].splitlines())
+                    patch_line_count = len(diff_text.splitlines())
                     variants = len((experiment_result or {}).get("experiment_variants") or [])
                     budget_errors = []
                     if changed_count > policy.max_changed_files:
@@ -1508,7 +1508,7 @@ def run_autonomous_codex_research_agent(
                         patch_folder
                         / f"{selected['hypothesis_id']}_{cycle_started:%Y-%m-%d_%H%M}.patch"
                     )
-                    patch_path.write_text(diff["stdout"], encoding="utf-8")
+                    patch_path.write_text(diff_text, encoding="utf-8")
                     changed_files.append(str(patch_path))
                     if validation.get("valid"):
                         classification = str(experiment_result["classification"])
@@ -2184,6 +2184,21 @@ def _subprocess(command: list[str], *, timeout: int) -> dict[str, Any]:
 
 def _git(root: Path, *args: str) -> dict[str, Any]:
     return _subprocess(["git", "-C", str(root), *args], timeout=30)
+
+
+def _complete_worktree_diff(root: Path) -> str:
+    tracked = _git(root, "diff", "--binary")
+    parts = [tracked.get("stdout", "")] if tracked.get("stdout") else []
+    untracked = _git(root, "ls-files", "--others", "--exclude-standard")
+    null_path = "NUL" if os.name == "nt" else "/dev/null"
+    for relative_path in sorted(untracked.get("stdout", "").splitlines()):
+        normalized = relative_path.replace("\\", "/")
+        diff = _git(root, "diff", "--no-index", "--binary", "--", null_path, normalized)
+        if diff.get("returncode") not in {0, 1}:
+            raise CodexAgentError(f"Could not diff untracked worktree file: {relative_path}")
+        if diff.get("stdout"):
+            parts.append(diff["stdout"])
+    return "".join(parts)
 
 
 def _parse_datetime(value: Any) -> datetime | None:
