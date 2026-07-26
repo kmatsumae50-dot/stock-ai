@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -452,7 +453,8 @@ def test_full_cycle_dirty_main_writes_skipped_state_without_worktree(
         now=datetime.fromisoformat("2026-07-26T12:10:00+09:00"),
     )
 
-    assert result["exit_code"] == 4
+    assert result["exit_code"] == 0
+    assert result["classification"] == "agent_skipped_unhealthy_gate"
     assert result["stop_reason"] == "main_worktree_dirty"
     assert result["worktree"] is None
     assert not (tmp_path / "worktrees").exists()
@@ -460,8 +462,7 @@ def test_full_cycle_dirty_main_writes_skipped_state_without_worktree(
     assert (tmp_path / "hypotheses.json").exists()
     state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
     assert state["last_successful_cycle_at"] is None
-    queue = json.loads((tmp_path / "queue.json").read_text(encoding="utf-8"))
-    assert len(queue["tasks"]) == 1
+    assert not (tmp_path / "queue.json").exists()
 
 
 def test_clean_gate_with_unavailable_codex_blocks_selected_hypothesis(
@@ -528,14 +529,342 @@ def test_wrapper_has_no_scheduler_registration_and_enforces_formal_root() -> Non
 
     assert '"C:\\Users\\kmats\\Documents\\ai-stock\\stock-ai"' in text
     assert ".venv\\Scripts\\python.exe" in text
-    assert "MaxRuntimeMinutes = 180" in text
-    assert "MaxRuntimeMinutes -gt 240" in text
+    assert "MaxRuntimeMinutes = 90" in text
+    assert "MaxRuntimeMinutes -gt 180" in text
     assert ".codex_research_agent_wrapper.lock" in text
     assert "$process.WaitForExit()" in text
     assert '"exit_code: $exitCode"' in text
     assert "exit 125" in text
     assert "exit 124" in text
     assert "Register-ScheduledTask" not in text
+
+
+def test_agent_policy_enforces_v11_cycle_budgets() -> None:
+    policy = agent.AgentPolicy()
+
+    policy.validate()
+    assert policy.as_dict() == {
+        "max_hypotheses_per_cycle": 1,
+        "max_codex_tasks_per_cycle": 1,
+        "max_implementation_attempts": 1,
+        "max_retuning_rounds_after_result": 0,
+        "max_experiment_variants": 6,
+        "max_changed_files": 8,
+        "max_patch_lines": 1500,
+        "max_runtime_minutes": 90.0,
+        "hard_max_runtime_minutes": 180.0,
+    }
+    with pytest.raises(ValueError, match="retuning"):
+        agent.AgentPolicy(max_retuning_rounds_after_result=1).validate()
+    with pytest.raises(ValueError, match="changed_files"):
+        agent.AgentPolicy(max_changed_files=9).validate()
+
+
+def test_old_agent_state_loads_with_v11_defaults(tmp_path: Path) -> None:
+    path = tmp_path / "state.json"
+    path.write_text(
+        json.dumps({"schema_version": "autonomous_codex_research_agent/v1", "last_cycle_at": "x"}),
+        encoding="utf-8",
+    )
+
+    state, initialized = agent.load_agent_state(path)
+
+    assert initialized is False
+    assert state["schema_version"] == agent.SCHEMA_VERSION
+    assert state["last_cycle_at"] == "x"
+    assert state["last_preflight_at"] is None
+    assert state["completed_hypothesis_fingerprints"] == []
+    assert state["rejected_hypothesis_fingerprints"] == []
+
+
+def test_rejected_fingerprint_is_not_selected_even_if_status_is_requeued() -> None:
+    backlog = agent.seed_hypothesis_backlog()
+    rejected = backlog["hypotheses"][0]
+    rejected["status"] = "proposed"
+    state = agent.default_agent_state()
+    state["rejected_hypothesis_fingerprints"] = [rejected["fingerprint"]]
+    lifecycle = agent.summarize_hypothesis_lifecycle(backlog, state=state)
+
+    selected = agent.select_hypothesis(
+        backlog,
+        research_report=_healthy_research(),
+        excluded_fingerprints=lifecycle["rejected_fingerprints"],
+    )["selected"]
+
+    assert selected["fingerprint"] != rejected["fingerprint"]
+
+
+def test_due_gate_skips_duplicate_research_without_new_evidence() -> None:
+    backlog = agent.seed_hypothesis_backlog()
+    state = agent.default_agent_state()
+    state.update(
+        {
+            "last_cycle_at": "2026-07-26T11:00:00+09:00",
+            "last_heavy_cycle_at": "2026-07-26T11:00:00+09:00",
+            "last_research_fingerprint": "abc123",
+            "last_live_confirmed_count": 4,
+            "last_shadow_confirmed_count": 2,
+        }
+    )
+    research = _healthy_research()
+    research["live_metrics"] = {"sample_count": 4}
+    research["shadow_metrics"] = {"confirmed_count": 2}
+
+    due = agent.assess_agent_due(
+        state=state,
+        backlog=backlog,
+        research_report=research,
+        task_queue={"tasks": []},
+        gate={"healthy": True},
+        now=datetime.fromisoformat("2026-07-26T12:00:00+09:00"),
+    )
+
+    assert due["due"] is False
+    assert due["classification"] == "agent_skipped_duplicate_research_state"
+    assert due["codex_invocation_required"] is False
+    assert due["worktree_creation_required"] is False
+
+
+def test_due_gate_triggers_after_five_new_confirmed_live_rows() -> None:
+    state = agent.default_agent_state()
+    state.update(
+        {
+            "last_cycle_at": "2026-07-26T11:00:00+09:00",
+            "last_heavy_cycle_at": "2026-07-26T11:00:00+09:00",
+            "last_research_fingerprint": "abc123",
+            "last_live_confirmed_count": 4,
+        }
+    )
+    research = _healthy_research()
+    research["live_metrics"] = {"sample_count": 9}
+
+    due = agent.assess_agent_due(
+        state=state,
+        backlog=agent.seed_hypothesis_backlog(),
+        research_report=research,
+        task_queue={"tasks": []},
+        gate={"healthy": True},
+        now=datetime.fromisoformat("2026-07-26T12:00:00+09:00"),
+    )
+
+    assert due["due"] is True
+    assert "live_confirmed_increased_by_5" in due["reason_codes"]
+
+
+def test_no_due_full_cycle_never_probes_codex_or_creates_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report_dir = tmp_path / "reports"
+    _write_cycle_reports(report_dir)
+    state = agent.default_agent_state()
+    state.update(
+        {
+            "last_cycle_at": "2026-07-26T11:00:00+09:00",
+            "last_heavy_cycle_at": "2026-07-26T11:00:00+09:00",
+            "last_research_fingerprint": "abc123",
+        }
+    )
+    (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    guard = {
+        "database": "db",
+        "database_readable": True,
+        "database_counts": {"predictions": 1},
+        "binary_artifact": "binary",
+        "multiclass_artifact": "multi",
+        "settings": "settings",
+        "daily_predict": "daily",
+    }
+    monkeypatch.setattr(agent, "DEFAULT_LOCK_PATH", tmp_path / "agent.lock")
+    monkeypatch.setattr(agent, "capture_production_guard", lambda **kwargs: dict(guard))
+    monkeypatch.setattr(
+        agent,
+        "inspect_git_state",
+        lambda root: {
+            "is_repository": True,
+            "has_head": True,
+            "clean": True,
+            "head": "abc",
+            "status_lines": [],
+        },
+    )
+    monkeypatch.setattr(
+        agent, "probe_codex_cli", lambda value: pytest.fail("Codex probe must not run when not due")
+    )
+    monkeypatch.setattr(
+        agent,
+        "create_research_worktree",
+        lambda **kwargs: pytest.fail("worktree must not be created when not due"),
+    )
+
+    result = agent.run_autonomous_codex_research_agent(
+        state_path=tmp_path / "state.json",
+        hypotheses_path=tmp_path / "hypotheses.json",
+        task_queue_path=tmp_path / "queue.json",
+        report_dir=report_dir,
+        prompt_template_path=tmp_path / "unused.md",
+        worktree_root=tmp_path / "worktrees",
+        now=datetime.fromisoformat("2026-07-26T12:10:00+09:00"),
+    )
+
+    assert result["exit_code"] == 0
+    assert result["classification"] == "agent_skipped_duplicate_research_state"
+    assert result["worktree"] is None
+    saved_state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert saved_state["last_research_fingerprint"] == "abc123"
+    assert saved_state["last_heavy_cycle_at"] == "2026-07-26T11:00:00+09:00"
+
+
+def test_read_only_status_does_not_create_or_modify_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report_dir = tmp_path / "reports"
+    _write_cycle_reports(report_dir)
+    before = {
+        path: path.read_bytes()
+        for path in report_dir.rglob("*")
+        if path.is_file()
+    }
+    monkeypatch.setattr(agent, "DEFAULT_LOCK_PATH", tmp_path / "agent.lock")
+    monkeypatch.setattr(
+        agent,
+        "inspect_git_state",
+        lambda root: {
+            "is_repository": True,
+            "has_head": True,
+            "clean": True,
+            "head": "abc",
+            "status_lines": [],
+        },
+    )
+    monkeypatch.setattr(
+        agent,
+        "capture_production_guard",
+        lambda **kwargs: {"database_readable": True, "settings": "settings"},
+    )
+
+    status = agent.autonomous_codex_research_status(
+        state_path=tmp_path / "state.json",
+        hypotheses_path=tmp_path / "hypotheses.json",
+        task_queue_path=tmp_path / "queue.json",
+        report_dir=report_dir,
+        worktree_root=tmp_path / "worktrees",
+        now=datetime.fromisoformat("2026-07-26T12:10:00+09:00"),
+    )
+
+    assert status["mode"] == "read_only_preflight"
+    assert status["side_effects"] == {
+        "codex_invoked": False,
+        "worktree_created": False,
+        "code_changed": False,
+        "database_changed": False,
+        "hypothesis_marked_running": False,
+    }
+    assert not (tmp_path / "state.json").exists()
+    assert not (tmp_path / "hypotheses.json").exists()
+    assert not (tmp_path / "queue.json").exists()
+    after = {path: path.read_bytes() for path in report_dir.rglob("*") if path.is_file()}
+    assert after == before
+
+
+def test_compact_context_excludes_full_logs_and_task_queue() -> None:
+    operations = _healthy_operations()
+    operations["very_large_log"] = "SHOULD_NOT_APPEAR"
+    research = _healthy_research()
+    research["full_task_queue"] = "SHOULD_NOT_APPEAR"
+    selected = agent.seed_hypothesis_backlog()["hypotheses"][0]
+
+    bundle = agent.build_compact_context_bundle(
+        ticker="7203.T",
+        operations_report=operations,
+        research_report=research,
+        backlog=agent.seed_hypothesis_backlog(),
+        selected_hypothesis=selected,
+        policy=agent.AgentPolicy(),
+    )
+    serialized = json.dumps(bundle, ensure_ascii=False)
+
+    assert bundle["ticker"] == "7203.T"
+    assert bundle["selected_hypothesis"]["hypothesis_id"] == selected["hypothesis_id"]
+    assert "SHOULD_NOT_APPEAR" not in serialized
+    assert "full_task_queue" not in serialized
+
+
+def test_cleanup_ready_requires_report_patch_hash_and_matching_worktree(tmp_path: Path) -> None:
+    repository = tmp_path / "repo"
+    worktree_root = tmp_path / "worktrees"
+    worktree = worktree_root / "candidate"
+    reports = tmp_path / "reports" / "autonomous"
+    repository.mkdir()
+    subprocess.run(["git", "init"], cwd=repository, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repository, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repository, check=True)
+    (repository / "tracked.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=repository, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=repository, check=True, capture_output=True)
+    worktree_root.mkdir()
+    subprocess.run(
+        ["git", "worktree", "add", "-b", "research/candidate", str(worktree), "HEAD"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    )
+    (worktree / "tracked.txt").write_text("changed\n", encoding="utf-8")
+    diff = subprocess.check_output(["git", "diff", "--binary"], cwd=worktree, text=True)
+    reports.mkdir(parents=True)
+    report_path = reports / "codex_agent_candidate_2026-07-26_1200.json"
+    patch_path = reports / "patches" / "candidate_2026-07-26_1200.patch"
+    patch_path.parent.mkdir()
+    report_path.write_text("{}", encoding="utf-8")
+    patch_path.write_text(diff, encoding="utf-8")
+    patch_hash = hashlib.sha256(patch_path.read_bytes()).hexdigest()
+    hypothesis = {
+        "hypothesis_id": "candidate",
+        "status": "rejected",
+        "worktree": str(worktree),
+        "report_path": str(report_path),
+        "patch_path": str(patch_path),
+        "patch_sha256": patch_hash,
+    }
+
+    audit = agent.inspect_research_worktree(
+        hypothesis,
+        project_root=repository,
+        worktree_root=worktree_root,
+        report_dir=reports,
+        check_processes=False,
+    )
+
+    assert audit["lifecycle_status"] == "cleanup_ready"
+    assert audit["safe_to_remove"] is True
+    assert audit["patch_hash_recorded_and_valid"] is True
+    assert audit["patch_matches_worktree"] is True
+
+    hypothesis["patch_sha256"] = None
+    unsafe = agent.inspect_research_worktree(
+        hypothesis,
+        project_root=repository,
+        worktree_root=worktree_root,
+        report_dir=reports,
+        check_processes=False,
+    )
+    assert unsafe["lifecycle_status"] == "unsafe_to_remove"
+    assert unsafe["safe_to_remove"] is False
+
+
+def test_cleanup_is_dry_run_by_default_and_unsafe_confirm_does_not_remove(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    safe = {"safe_to_remove": True, "lifecycle_status": "cleanup_ready", "path": "C:/safe"}
+    monkeypatch.setattr(agent, "inspect_research_worktree", lambda *args, **kwargs: safe)
+    dry_run = agent.cleanup_research_worktree({"hypothesis_id": "x"})
+    assert dry_run["removed"] is False
+    assert dry_run["would_remove"] is True
+
+    unsafe = {"safe_to_remove": False, "lifecycle_status": "unsafe_to_remove", "path": "C:/bad"}
+    monkeypatch.setattr(agent, "inspect_research_worktree", lambda *args, **kwargs: unsafe)
+    monkeypatch.setattr(agent, "_git", lambda *args, **kwargs: pytest.fail("must not remove"))
+    confirmed = agent.cleanup_research_worktree({"hypothesis_id": "x"}, confirm=True)
+    assert confirmed["removed"] is False
 
 
 def test_prompt_template_contains_all_nonnegotiable_guards() -> None:

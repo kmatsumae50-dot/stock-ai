@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import hashlib
 import json
 import os
@@ -21,7 +21,7 @@ from stock_ai.operations.autonomous_research import (
 )
 
 
-SCHEMA_VERSION = "autonomous_codex_research_agent/v1"
+SCHEMA_VERSION = "autonomous_codex_research_agent/v1.1"
 DEFAULT_REPORT_DIR = PROJECT_ROOT / "reports" / "autonomous"
 DEFAULT_STATE_PATH = DEFAULT_REPORT_DIR / "codex_research_agent_state.json"
 DEFAULT_HYPOTHESES_PATH = DEFAULT_REPORT_DIR / "codex_research_hypotheses.json"
@@ -29,6 +29,30 @@ DEFAULT_TASK_QUEUE_PATH = DEFAULT_REPORT_DIR / "operations_task_queue.json"
 DEFAULT_PROMPT_TEMPLATE = PROJECT_ROOT / "prompts" / "autonomous_codex_research_agent.md"
 DEFAULT_WORKTREE_ROOT = PROJECT_ROOT.parent / "stock-ai-worktrees"
 DEFAULT_LOCK_PATH = DEFAULT_REPORT_DIR / ".codex_research_agent.lock"
+DEFAULT_CONTEXT_DIR = DEFAULT_REPORT_DIR / "context"
+HEAVY_CYCLE_INTERVAL_DAYS = 7
+CONFIRMED_COUNT_TRIGGER = 5
+HYPOTHESIS_STATUSES = {
+    "proposed",
+    "queued",
+    "running",
+    "completed",
+    "rejected",
+    "blocked",
+    "monitoring",
+    "approval_required",
+    "cleanup_ready",
+    "archived",
+}
+TERMINAL_HYPOTHESIS_STATUSES = {"completed", "rejected", "archived", "cleanup_ready"}
+NORMAL_SKIP_CLASSIFICATIONS = {
+    "agent_skipped_not_due",
+    "agent_skipped_no_safe_hypothesis",
+    "agent_skipped_duplicate_hypothesis",
+    "agent_skipped_duplicate_research_state",
+    "agent_skipped_unhealthy_gate",
+    "agent_skipped_worktree_review_required",
+}
 ALLOWED_CATEGORIES = {
     "binary_objective_weighting",
     "existing_feature_research",
@@ -79,19 +103,50 @@ class CodexAgentTimeoutError(CodexAgentError):
 
 @dataclass(frozen=True)
 class AgentPolicy:
-    max_runtime_minutes: float = 180.0
+    max_runtime_minutes: float = 90.0
+    hard_max_runtime_minutes: float = 180.0
     max_hypotheses_per_cycle: int = 1
     max_worktrees_per_cycle: int = 1
     max_codex_tasks_per_cycle: int = 1
+    max_implementation_attempts: int = 1
+    max_retuning_rounds_after_result: int = 0
+    max_experiment_variants: int = 6
+    max_changed_files: int = 8
+    max_patch_lines: int = 1500
     report_freshness_minutes: float = 240.0
 
     def validate(self) -> None:
-        if self.max_runtime_minutes <= 0 or self.max_runtime_minutes > 240:
-            raise ValueError("max_runtime_minutes must be in (0, 240].")
+        if self.hard_max_runtime_minutes != 180:
+            raise ValueError("v1.1 hard_max_runtime_minutes must remain 180.")
+        if self.max_runtime_minutes <= 0 or self.max_runtime_minutes > self.hard_max_runtime_minutes:
+            raise ValueError("max_runtime_minutes must be in (0, hard_max_runtime_minutes].")
         if self.max_hypotheses_per_cycle != 1:
-            raise ValueError("v1 requires exactly one hypothesis maximum per cycle.")
+            raise ValueError("v1.1 requires exactly one hypothesis maximum per cycle.")
         if self.max_worktrees_per_cycle != 1 or self.max_codex_tasks_per_cycle != 1:
-            raise ValueError("v1 permits at most one worktree and one Codex task per cycle.")
+            raise ValueError("v1.1 permits at most one worktree and one Codex task per cycle.")
+        if self.max_implementation_attempts != 1:
+            raise ValueError("v1.1 permits exactly one implementation attempt per cycle.")
+        if self.max_retuning_rounds_after_result != 0:
+            raise ValueError("v1.1 does not permit same-cycle retuning after a result.")
+        if self.max_experiment_variants <= 0 or self.max_experiment_variants > 6:
+            raise ValueError("max_experiment_variants must be in [1, 6].")
+        if self.max_changed_files <= 0 or self.max_changed_files > 8:
+            raise ValueError("max_changed_files must be in [1, 8].")
+        if self.max_patch_lines <= 0 or self.max_patch_lines > 1500:
+            raise ValueError("max_patch_lines must be in [1, 1500].")
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "max_hypotheses_per_cycle": self.max_hypotheses_per_cycle,
+            "max_codex_tasks_per_cycle": self.max_codex_tasks_per_cycle,
+            "max_implementation_attempts": self.max_implementation_attempts,
+            "max_retuning_rounds_after_result": self.max_retuning_rounds_after_result,
+            "max_experiment_variants": self.max_experiment_variants,
+            "max_changed_files": self.max_changed_files,
+            "max_patch_lines": self.max_patch_lines,
+            "max_runtime_minutes": self.max_runtime_minutes,
+            "hard_max_runtime_minutes": self.hard_max_runtime_minutes,
+        }
 
 
 @dataclass
@@ -147,6 +202,21 @@ def default_agent_state() -> dict[str, Any]:
         "active_worktree": None,
         "consecutive_failures": 0,
         "next_due_reason": "first_cycle",
+        "last_preflight_at": None,
+        "last_heavy_cycle_at": None,
+        "last_heavy_cycle_token_usage": None,
+        "last_heavy_cycle_runtime_minutes": None,
+        "last_research_fingerprint": None,
+        "last_live_confirmed_count": 0,
+        "last_shadow_confirmed_count": 0,
+        "last_selected_hypothesis_fingerprint": None,
+        "completed_hypothesis_fingerprints": [],
+        "rejected_hypothesis_fingerprints": [],
+        "worktree_status": None,
+        "next_due_at": None,
+        "next_due_reasons": ["first_cycle"],
+        "last_context_bundle": None,
+        "last_skip_classification": None,
     }
 
 
@@ -162,6 +232,7 @@ def load_agent_state(path: str | Path) -> tuple[dict[str, Any], bool]:
         raise CodexAgentError(f"Agent state must be a JSON object: {state_path}")
     state = default_agent_state()
     state.update(loaded)
+    state["schema_version"] = SCHEMA_VERSION
     return state, False
 
 
@@ -310,6 +381,7 @@ def load_hypothesis_backlog(path: str | Path) -> tuple[dict[str, Any], bool]:
         raise CodexAgentError(f"Hypothesis backlog is unreadable: {backlog_path}") from error
     if not isinstance(loaded, dict) or not isinstance(loaded.get("hypotheses"), list):
         raise CodexAgentError(f"Hypothesis backlog has an invalid schema: {backlog_path}")
+    loaded["schema_version"] = SCHEMA_VERSION
     loaded["hypotheses"] = deduplicate_hypotheses(loaded["hypotheses"])
     return loaded, False
 
@@ -326,15 +398,64 @@ def deduplicate_hypotheses(hypotheses: Sequence[dict[str, Any]]) -> list[dict[st
     return list(unique.values())
 
 
+def summarize_hypothesis_lifecycle(
+    backlog: dict[str, Any],
+    *,
+    state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    items = deduplicate_hypotheses(backlog.get("hypotheses", []))
+    completed = set((state or {}).get("completed_hypothesis_fingerprints") or [])
+    rejected = set((state or {}).get("rejected_hypothesis_fingerprints") or [])
+    invalid_status = []
+    duplicate_ids = []
+    seen_ids: set[str] = set()
+    for item in items:
+        hypothesis_id = str(item.get("hypothesis_id") or "")
+        status = str(item.get("status") or "")
+        fingerprint = str(item.get("fingerprint") or hypothesis_fingerprint(item))
+        if hypothesis_id in seen_ids:
+            duplicate_ids.append(hypothesis_id)
+        seen_ids.add(hypothesis_id)
+        if status not in HYPOTHESIS_STATUSES:
+            invalid_status.append(hypothesis_id)
+        if status == "completed":
+            completed.add(fingerprint)
+        elif status == "rejected":
+            rejected.add(fingerprint)
+    selectable = [
+        item
+        for item in items
+        if item.get("status") in {"proposed", "queued"}
+        and item.get("fingerprint") not in completed | rejected
+    ]
+    return {
+        "hypothesis_count": len(items),
+        "status_counts": {
+            status: sum(str(item.get("status")) == status for item in items)
+            for status in sorted(HYPOTHESIS_STATUSES)
+        },
+        "selectable_count": len(selectable),
+        "selectable_fingerprints": [item.get("fingerprint") for item in selectable],
+        "completed_fingerprints": sorted(completed),
+        "rejected_fingerprints": sorted(rejected),
+        "duplicate_hypothesis_ids": duplicate_ids,
+        "invalid_status_hypothesis_ids": invalid_status,
+        "consistent": not duplicate_ids and not invalid_status,
+    }
+
+
 def select_hypothesis(
     backlog: dict[str, Any],
     *,
     research_report: dict[str, Any] | None = None,
+    excluded_fingerprints: Sequence[str] | None = None,
 ) -> dict[str, Any]:
+    excluded = set(excluded_fingerprints or [])
     candidates = [
         item
         for item in deduplicate_hypotheses(backlog.get("hypotheses", []))
         if item.get("status") in {"proposed", "queued"}
+        and item.get("fingerprint") not in excluded
         and item.get("category") in ALLOWED_CATEGORIES
         and item.get("risk_level") in {"low", "medium"}
     ]
@@ -506,6 +627,482 @@ def assess_agent_gate(
     }
 
 
+def research_observation_counts(research_report: dict[str, Any]) -> dict[str, int]:
+    live = research_report.get("live_metrics") or {}
+    shadow = research_report.get("shadow_metrics") or {}
+    live_count = int(live.get("confirmed_count") or live.get("sample_count") or 0)
+    shadow_count = int(shadow.get("confirmed_count") or 0)
+    return {"live_confirmed_count": live_count, "shadow_confirmed_count": shadow_count}
+
+
+def inspect_research_worktree(
+    hypothesis: dict[str, Any],
+    *,
+    project_root: str | Path = PROJECT_ROOT,
+    worktree_root: str | Path = DEFAULT_WORKTREE_ROOT,
+    report_dir: str | Path = DEFAULT_REPORT_DIR,
+    check_processes: bool = True,
+) -> dict[str, Any]:
+    root = Path(project_root).resolve()
+    worktrees = Path(worktree_root).resolve()
+    reports = Path(report_dir).resolve()
+    hypothesis_id = str(hypothesis.get("hypothesis_id") or "")
+    configured_path = hypothesis.get("worktree")
+    path = Path(configured_path).resolve() if configured_path else worktrees / hypothesis_id
+    registered = _registered_worktrees(root)
+    registration = registered.get(str(path).casefold())
+    path_exists = path.exists()
+    report_path = _existing_artifact_path(hypothesis.get("report_path"))
+    patch_path = _existing_artifact_path(hypothesis.get("patch_path"))
+    if report_path is None:
+        report_path = _latest_matching_path(reports, f"codex_agent_{hypothesis_id}_*.json")
+        report_path = report_path or _latest_matching_path(reports, f"codex_agent_{hypothesis_id}_*.md")
+    if patch_path is None:
+        patch_path = _latest_matching_path(reports / "patches", f"{hypothesis_id}_*.patch")
+
+    main_git = inspect_git_state(root)
+    worktree_git = {
+        "clean": False,
+        "status_lines": [],
+        "head": None,
+        "commit_count_ahead": None,
+        "branch": (registration or {}).get("branch"),
+    }
+    current_patch_sha256 = None
+    patch_matches_worktree = False
+    if path_exists and registration:
+        status = _git(path, "status", "--porcelain=v1", "--untracked-files=all")
+        head = _git(path, "rev-parse", "HEAD")
+        diff = _git(path, "diff", "--binary")
+        status_lines = [line for line in status["stdout"].splitlines() if line.strip()]
+        current_patch_sha256 = hashlib.sha256(diff["stdout"].encode("utf-8")).hexdigest()
+        main_head = str(main_git.get("head") or "")
+        ahead = _git(path, "rev-list", "--count", f"{main_head}..HEAD") if main_head else {}
+        worktree_git = {
+            "clean": not status_lines,
+            "status_lines": status_lines,
+            "head": head.get("stdout", "").strip() or None,
+            "commit_count_ahead": _safe_int(ahead.get("stdout")) if ahead else None,
+            "branch": (registration or {}).get("branch"),
+        }
+        if patch_path:
+            try:
+                recorded_patch_text = patch_path.read_text(encoding="utf-8")
+            except OSError:
+                recorded_patch_text = ""
+            patch_matches_worktree = _normalized_newlines(recorded_patch_text) == _normalized_newlines(
+                diff["stdout"]
+            )
+
+    recorded_patch_hash = str(hypothesis.get("patch_sha256") or "").lower() or None
+    actual_patch_hash = (_file_sha256(patch_path) or "").lower() if patch_path else None
+    patch_hash_recorded_and_valid = bool(
+        recorded_patch_hash and actual_patch_hash and recorded_patch_hash == actual_patch_hash
+    )
+    process_matches = _worktree_processes(path) if check_processes and path_exists else []
+    status = str(hypothesis.get("status") or "")
+    reasons: list[str] = []
+    if not path_exists and not registration:
+        lifecycle_status = "orphaned" if configured_path else "inactive"
+    elif path_exists != bool(registration):
+        lifecycle_status = "orphaned"
+        reasons.append("path_and_git_registration_disagree")
+    elif status == "running":
+        lifecycle_status = "active"
+    elif status not in {"rejected", "completed", "cleanup_ready", "archived"}:
+        lifecycle_status = "review_required"
+        reasons.append("hypothesis_not_terminal")
+    else:
+        cleanup_checks = {
+            "report_exists": report_path is not None,
+            "patch_exists": patch_path is not None,
+            "patch_hash_recorded_and_valid": patch_hash_recorded_and_valid,
+            "patch_matches_worktree": patch_matches_worktree,
+            "no_worktree_commits": worktree_git.get("commit_count_ahead") == 0,
+            "no_running_process": not process_matches,
+            "main_clean": bool(main_git.get("clean")),
+        }
+        failed = [name for name, passed in cleanup_checks.items() if not passed]
+        reasons.extend(failed)
+        lifecycle_status = "cleanup_ready" if not failed else "unsafe_to_remove"
+    return {
+        "hypothesis_id": hypothesis_id,
+        "hypothesis_status": status,
+        "path": str(path),
+        "path_exists": path_exists,
+        "registered": bool(registration),
+        "branch": (registration or {}).get("branch"),
+        "worktree_git": worktree_git,
+        "report_path": str(report_path) if report_path else None,
+        "report_exists": report_path is not None,
+        "patch_path": str(patch_path) if patch_path else None,
+        "patch_exists": patch_path is not None,
+        "recorded_patch_sha256": recorded_patch_hash,
+        "actual_patch_sha256": actual_patch_hash,
+        "current_worktree_patch_sha256": current_patch_sha256,
+        "patch_hash_recorded_and_valid": patch_hash_recorded_and_valid,
+        "patch_matches_worktree": patch_matches_worktree,
+        "process_matches": process_matches,
+        "main_clean": bool(main_git.get("clean")),
+        "lifecycle_status": lifecycle_status,
+        "reasons": reasons,
+        "safe_to_remove": lifecycle_status == "cleanup_ready",
+    }
+
+
+def assess_agent_due(
+    *,
+    state: dict[str, Any],
+    backlog: dict[str, Any],
+    research_report: dict[str, Any],
+    task_queue: dict[str, Any],
+    gate: dict[str, Any],
+    worktree_audits: Sequence[dict[str, Any]] = (),
+    now: datetime,
+    force: bool = False,
+) -> dict[str, Any]:
+    lifecycle = summarize_hypothesis_lifecycle(backlog, state=state)
+    terminal = set(lifecycle["completed_fingerprints"]) | set(lifecycle["rejected_fingerprints"])
+    unrestricted_selection = select_hypothesis(backlog, research_report=research_report)
+    selection = select_hypothesis(
+        backlog,
+        research_report=research_report,
+        excluded_fingerprints=terminal,
+    )
+    counts = research_observation_counts(research_report)
+    latest_fingerprint = str(research_report.get("experiment_fingerprint") or "") or None
+    previous_fingerprint = str(state.get("last_research_fingerprint") or "") or None
+    last_heavy = _parse_datetime(state.get("last_heavy_cycle_at") or state.get("last_cycle_at"))
+    due_reasons: list[str] = []
+    if force:
+        due_reasons.append("explicit_force")
+    if previous_fingerprint and latest_fingerprint and latest_fingerprint != previous_fingerprint:
+        due_reasons.append("research_fingerprint_changed")
+    if last_heavy is None and not state.get("last_cycle_at"):
+        due_reasons.append("first_heavy_cycle")
+    live_delta = counts["live_confirmed_count"] - int(state.get("last_live_confirmed_count") or 0)
+    shadow_delta = counts["shadow_confirmed_count"] - int(
+        state.get("last_shadow_confirmed_count") or 0
+    )
+    if live_delta >= CONFIRMED_COUNT_TRIGGER:
+        due_reasons.append("live_confirmed_increased_by_5")
+    if shadow_delta >= CONFIRMED_COUNT_TRIGGER:
+        due_reasons.append("shadow_confirmed_increased_by_5")
+    approval_tasks = _new_approval_model_research_tasks(task_queue, after=last_heavy)
+    if approval_tasks:
+        due_reasons.append("new_approval_required_model_research_task")
+    safe_hypothesis = selection.get("selected") is not None
+    if last_heavy and now.astimezone(UTC) >= last_heavy.astimezone(UTC) + timedelta(
+        days=HEAVY_CYCLE_INTERVAL_DAYS
+    ) and safe_hypothesis:
+        due_reasons.append("seven_days_elapsed_with_safe_hypothesis")
+
+    unresolved_worktrees = [
+        audit
+        for audit in worktree_audits
+        if audit.get("lifecycle_status")
+        in {"active", "review_required", "cleanup_ready", "orphaned", "unsafe_to_remove"}
+    ]
+    duplicate_candidate = unrestricted_selection.get("selected") and not safe_hypothesis
+    research_duplicate = bool(
+        latest_fingerprint
+        and previous_fingerprint == latest_fingerprint
+        and research_report.get("classification") == "research_skipped_duplicate_experiment"
+    )
+    due = bool(due_reasons)
+    if not gate.get("healthy"):
+        classification = "agent_skipped_unhealthy_gate"
+    elif unresolved_worktrees:
+        classification = "agent_skipped_worktree_review_required"
+    elif duplicate_candidate:
+        classification = "agent_skipped_duplicate_hypothesis"
+    elif not safe_hypothesis:
+        classification = "agent_skipped_no_safe_hypothesis"
+    elif not due and research_duplicate:
+        classification = "agent_skipped_duplicate_research_state"
+    elif not due:
+        classification = "agent_skipped_not_due"
+    else:
+        classification = "agent_due_ready"
+    invocation_required = classification == "agent_due_ready"
+    next_due = last_heavy + timedelta(days=HEAVY_CYCLE_INTERVAL_DAYS) if last_heavy else now
+    reason_codes = list(due_reasons)
+    if classification != "agent_due_ready":
+        reason_codes.insert(0, classification)
+    return {
+        "due": invocation_required,
+        "trigger_due": due,
+        "classification": classification,
+        "reason_codes": reason_codes,
+        "trigger_reasons": due_reasons,
+        "latest_research_fingerprint": latest_fingerprint,
+        "last_agent_research_fingerprint": previous_fingerprint,
+        **counts,
+        "last_live_confirmed_count": int(state.get("last_live_confirmed_count") or 0),
+        "last_shadow_confirmed_count": int(state.get("last_shadow_confirmed_count") or 0),
+        "live_confirmed_delta": live_delta,
+        "shadow_confirmed_delta": shadow_delta,
+        "new_approval_required_tasks": approval_tasks,
+        "selected_next_hypothesis": selection.get("selected"),
+        "selection": selection,
+        "duplicate_candidate": bool(duplicate_candidate),
+        "duplicate_research_state": research_duplicate,
+        "unresolved_worktrees": unresolved_worktrees,
+        "codex_invocation_required": invocation_required,
+        "worktree_creation_required": invocation_required,
+        "next_due_at": next_due.isoformat(),
+        "lifecycle": lifecycle,
+    }
+
+
+def autonomous_codex_research_status(
+    *,
+    ticker: str = "7203.T",
+    state_path: str | Path = DEFAULT_STATE_PATH,
+    hypotheses_path: str | Path = DEFAULT_HYPOTHESES_PATH,
+    task_queue_path: str | Path = DEFAULT_TASK_QUEUE_PATH,
+    report_dir: str | Path = DEFAULT_REPORT_DIR,
+    worktree_root: str | Path = DEFAULT_WORKTREE_ROOT,
+    now: datetime | None = None,
+    force: bool = False,
+    settings: Settings | None = None,
+    ignore_lock: bool = False,
+) -> dict[str, Any]:
+    current = now or datetime.now().astimezone()
+    report_folder = _resolve(report_dir)
+    state, state_initialized = load_agent_state(_resolve(state_path))
+    backlog, backlog_initialized = load_hypothesis_backlog(_resolve(hypotheses_path))
+    operations_report = load_latest_operations_report(report_folder)
+    research_report = _load_latest_json(report_folder, "research")
+    queue = load_task_queue(_resolve(task_queue_path))
+    git_state = inspect_git_state(PROJECT_ROOT)
+    production = capture_production_guard(settings=settings)
+    configured_guard = _load_configured_production_guard(report_folder)
+    config_matches = not configured_guard or configured_guard.get("settings") == production.get(
+        "settings"
+    )
+    freshness = assess_report_freshness(
+        operations_report,
+        research_report,
+        now=current,
+        max_age_minutes=AgentPolicy().report_freshness_minutes,
+    )
+    lock_active = DEFAULT_LOCK_PATH.exists() and not ignore_lock
+    gate = assess_agent_gate(
+        operations_report=operations_report,
+        research_report=research_report,
+        git_state=git_state,
+        db_readable=bool(production.get("database_readable")),
+        production_config_matches=config_matches,
+        report_freshness=freshness,
+        lock_active=lock_active,
+    )
+    audits = [
+        inspect_research_worktree(
+            item,
+            project_root=PROJECT_ROOT,
+            worktree_root=worktree_root,
+            report_dir=report_folder,
+        )
+        for item in backlog.get("hypotheses", [])
+        if item.get("worktree") or (Path(worktree_root) / str(item.get("hypothesis_id"))).exists()
+    ]
+    due = assess_agent_due(
+        state=state,
+        backlog=backlog,
+        research_report=research_report,
+        task_queue=queue,
+        gate=gate,
+        worktree_audits=audits,
+        now=current,
+        force=force,
+    )
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "read_only_preflight",
+        "ticker": ticker,
+        "checked_at": current.isoformat(),
+        "state_was_initialized": state_initialized,
+        "backlog_was_initialized": backlog_initialized,
+        "lock_active": lock_active,
+        "operations_gate": gate.get("operations"),
+        "research_gate": {
+            "classification": gate.get("research_classification"),
+            "fingerprint": gate.get("research_fingerprint"),
+            "fresh": freshness.get("research_fresh"),
+        },
+        "main_git": git_state,
+        "gate": gate,
+        "due": due,
+        "worktrees": audits,
+        "budgets": AgentPolicy().as_dict(),
+        "side_effects": {
+            "codex_invoked": False,
+            "worktree_created": False,
+            "code_changed": False,
+            "database_changed": False,
+            "hypothesis_marked_running": False,
+        },
+    }
+
+
+def build_compact_context_bundle(
+    *,
+    ticker: str,
+    operations_report: dict[str, Any],
+    research_report: dict[str, Any],
+    backlog: dict[str, Any],
+    selected_hypothesis: dict[str, Any],
+    policy: AgentPolicy,
+) -> dict[str, Any]:
+    lifecycle = summarize_hypothesis_lifecycle(backlog)
+    open_hypotheses = [
+        {
+            "hypothesis_id": item.get("hypothesis_id"),
+            "fingerprint": item.get("fingerprint"),
+            "status": item.get("status"),
+            "category": item.get("category"),
+            "primary_metric": item.get("primary_metric"),
+        }
+        for item in backlog.get("hypotheses", [])
+        if item.get("status") in {"proposed", "queued", "monitoring", "approval_required"}
+    ]
+    live = research_report.get("live_metrics") or {}
+    return {
+        "schema_version": "autonomous_codex_context/v1.1",
+        "project": "stock-ai",
+        "ticker": ticker,
+        "target": "next close direction / target_next_close_binary",
+        "production_model_slot": "binary production model (read-only)",
+        "operations_summary": {
+            "cycle_completed_at": operations_report.get("cycle_completed_at"),
+            "stop_reason": operations_report.get("stop_reason"),
+            "health_summary": operations_report.get("health_summary") or {},
+            "data_freshness": operations_report.get("data_freshness") or {},
+        },
+        "research_summary": {
+            "cycle_completed_at": research_report.get("cycle_completed_at"),
+            "classification": research_report.get("classification"),
+            "experiment_fingerprint": research_report.get("experiment_fingerprint"),
+            "recommendation": research_report.get("recommendation"),
+        },
+        "current_production_metrics": {
+            key: live.get(key)
+            for key in (
+                "sample_count",
+                "accuracy",
+                "balanced_accuracy",
+                "up_recall",
+                "down_recall",
+                "up_precision",
+                "down_precision",
+            )
+        },
+        "baseline_summary": research_report.get("baseline_summary")
+        or research_report.get("baseline_comparison")
+        or [],
+        "shadow_summary": {
+            key: (research_report.get("shadow_metrics") or {}).get(key)
+            for key in ("status", "confirmed_count", "pending_count", "conclusions")
+        },
+        "rejected_hypothesis_fingerprints": lifecycle["rejected_fingerprints"],
+        "open_hypotheses": open_hypotheses,
+        "selected_hypothesis": selected_hypothesis,
+        "success_criteria": [
+            "improve the primary metric on train/validation-selected settings",
+            "preserve stated guardrail metrics",
+            "remain competitive with required simple baselines",
+        ],
+        "guardrail_metrics": selected_hypothesis.get("guardrail_metrics") or [],
+        "cycle_budgets": policy.as_dict(),
+        "permitted_scope": [
+            "one selected offline research hypothesis",
+            "existing features and offline reports",
+            "worktree-only code and focused tests",
+        ],
+        "forbidden_scope": [
+            "production model or config changes",
+            "production SQLite or live/backfill writes",
+            "daily_predict or Task Scheduler changes",
+            "commit, merge, push, or same-cycle retuning",
+        ],
+        "relevant_paths": {
+            "project_root": str(PROJECT_ROOT),
+            "operations_module": str(PROJECT_ROOT / "src/stock_ai/operations/autonomous.py"),
+            "research_module": str(PROJECT_ROOT / "src/stock_ai/operations/autonomous_research.py"),
+            "agent_module": str(Path(__file__).resolve()),
+            "prompt_template": str(DEFAULT_PROMPT_TEMPLATE),
+        },
+    }
+
+
+def write_compact_context_bundle(
+    bundle: dict[str, Any],
+    *,
+    context_dir: str | Path = DEFAULT_CONTEXT_DIR,
+    now: datetime | None = None,
+) -> dict[str, str]:
+    current = now or datetime.now().astimezone()
+    folder = _resolve(context_dir)
+    folder.mkdir(parents=True, exist_ok=True)
+    stem = f"codex_agent_context_{current:%Y-%m-%d_%H%M}"
+    json_path = folder / f"{stem}.json"
+    markdown_path = folder / f"{stem}.md"
+    json_path.write_text(json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8")
+    markdown_path.write_text(
+        "# Codex Agent Compact Context\n\n```json\n"
+        + json.dumps(bundle, ensure_ascii=False, indent=2)
+        + "\n```\n",
+        encoding="utf-8",
+    )
+    return {"json": str(json_path), "markdown": str(markdown_path)}
+
+
+def cleanup_research_worktree(
+    hypothesis: dict[str, Any],
+    *,
+    project_root: str | Path = PROJECT_ROOT,
+    worktree_root: str | Path = DEFAULT_WORKTREE_ROOT,
+    report_dir: str | Path = DEFAULT_REPORT_DIR,
+    confirm: bool = False,
+) -> dict[str, Any]:
+    audit = inspect_research_worktree(
+        hypothesis,
+        project_root=project_root,
+        worktree_root=worktree_root,
+        report_dir=report_dir,
+    )
+    if audit.get("safe_to_remove"):
+        initial_reason = "confirmation_required" if not confirm else "ready_for_confirmed_removal"
+    else:
+        initial_reason = "unsafe_to_remove"
+    result = {
+        "mode": "confirmed" if confirm else "dry_run",
+        "audit": audit,
+        "would_remove": bool(audit.get("safe_to_remove")),
+        "removed": False,
+        "reason": initial_reason,
+    }
+    if not confirm or not audit.get("safe_to_remove"):
+        return result
+    root = Path(project_root).resolve()
+    target = Path(str(audit["path"])).resolve()
+    worktree_root_path = Path(worktree_root).resolve()
+    if target == root or worktree_root_path not in target.parents:
+        result["reason"] = "target_outside_configured_worktree_root"
+        return result
+    removed = _git(root, "worktree", "remove", "--force", str(target))
+    if removed["returncode"] != 0:
+        result["reason"] = "git_worktree_remove_failed"
+        result["error"] = removed["stderr"]
+        return result
+    branch = audit.get("branch")
+    if branch:
+        _git(root, "branch", "-D", str(branch))
+    result.update({"removed": True, "reason": "removed_after_confirmed_safe_audit"})
+    return result
+
+
 def build_agent_prompt(
     *,
     template_path: str | Path,
@@ -646,9 +1243,10 @@ def run_autonomous_codex_research_agent(
     report_dir: str | Path = DEFAULT_REPORT_DIR,
     prompt_template_path: str | Path = DEFAULT_PROMPT_TEMPLATE,
     worktree_root: str | Path = DEFAULT_WORKTREE_ROOT,
-    max_runtime_minutes: float = 180,
+    max_runtime_minutes: float = 90,
     codex_executable: str = "codex",
     dry_run: bool = False,
+    force: bool = False,
     now: datetime | None = None,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
@@ -694,10 +1292,35 @@ def run_autonomous_codex_research_agent(
             production_config_matches=config_matches,
             report_freshness=freshness,
         )
-        codex_probe = probe_codex_cli(codex_executable)
         queue = load_task_queue(queue_file)
         gate["latest_candidate_ranking"] = research_report.get("candidate_ranking") or []
         gate["open_model_research_tasks"] = _open_model_research_tasks(queue)
+        lifecycle = summarize_hypothesis_lifecycle(backlog, state=state)
+        worktree_audits = [
+            inspect_research_worktree(
+                item,
+                project_root=PROJECT_ROOT,
+                worktree_root=worktree_folder,
+                report_dir=report_folder,
+            )
+            for item in backlog.get("hypotheses", [])
+            if item.get("worktree") or (worktree_folder / str(item.get("hypothesis_id"))).exists()
+        ]
+        due = assess_agent_due(
+            state=state,
+            backlog=backlog,
+            research_report=research_report,
+            task_queue=queue,
+            gate=gate,
+            worktree_audits=worktree_audits,
+            now=cycle_started,
+            force=force,
+        )
+        codex_probe = {
+            "available": False,
+            "executable": codex_executable,
+            "reason": "not_probed_before_due_gate",
+        }
         selected = None
         selection = {"selected": None, "rejected_candidates": [], "reason": "gate_not_passed"}
         worktree = None
@@ -707,28 +1330,23 @@ def run_autonomous_codex_research_agent(
         validation: dict[str, Any] | None = None
         changed_files: list[str] = []
         patch_path = None
+        context_bundle_paths: dict[str, str] | None = None
 
-        if not gate["healthy"]:
-            classification = "agent_skipped_gate"
-            stop_reason = _primary_gate_reason(gate["reasons"])
-            exit_code = 4 if any(
-                reason in {"main_worktree_dirty", "main_git_head_missing", "main_not_git_repository"}
-                for reason in gate["reasons"]
-            ) else 3
-            queue, task_change = upsert_agent_task(
-                queue,
-                fingerprint=f"codex_agent_gate:{ticker}:{stop_reason}",
-                title="Autonomous Codex Research Agent gate requires review",
-                description="; ".join(gate["reasons"]),
-                status="review_needed",
-                cycle_at=cycle_started.isoformat(),
+        if due["classification"] != "agent_due_ready":
+            classification = str(due["classification"])
+            stop_reason = (
+                _primary_gate_reason(gate["reasons"])
+                if classification == "agent_skipped_unhealthy_gate"
+                else classification
             )
+            exit_code = 0
+            task_change = {"changed": False, "task_id": None}
         else:
-            selection = select_hypothesis(backlog, research_report=research_report)
+            selection = due["selection"]
             selected = selection["selected"]
             if selected is None:
-                classification = "no_safe_hypothesis_available"
-                stop_reason = "no_safe_hypothesis_available"
+                classification = "agent_skipped_no_safe_hypothesis"
+                stop_reason = classification
                 exit_code = 0
                 task_change = {"changed": False, "task_id": None}
             elif dry_run:
@@ -736,103 +1354,162 @@ def run_autonomous_codex_research_agent(
                 stop_reason = "dry_run_before_worktree_creation"
                 exit_code = 0
                 task_change = {"changed": False, "task_id": None}
-            elif not codex_probe.get("available"):
-                classification = "hypothesis_blocked"
-                stop_reason = str(codex_probe.get("reason") or "codex_cli_unavailable")
-                exit_code = 5
-                task_change = {"changed": False, "task_id": None}
-                _update_hypothesis(
-                    backlog,
-                    str(selected["hypothesis_id"]),
-                    status="blocked",
-                    result=classification,
-                    next_action="run manually from a supported Codex environment",
-                )
             else:
-                budget.check("create_worktree")
-                worktree = create_research_worktree(
-                    project_root=PROJECT_ROOT,
-                    worktree_root=worktree_folder,
-                    hypothesis_id=str(selected["hypothesis_id"]),
-                    cycle_date=cycle_started.strftime("%Y-%m-%d"),
-                )
-                _update_hypothesis(
-                    backlog,
-                    str(selected["hypothesis_id"]),
-                    status="running",
-                    selected_at=cycle_started.isoformat(),
-                    worktree=worktree["path"],
-                )
-                prompt = build_agent_prompt(
-                    template_path=prompt_file,
-                    ticker=ticker,
-                    hypothesis=selected,
-                    operations_report_path=operations_path,
-                    research_report_path=research_path,
-                    worktree_path=worktree["path"],
-                    max_runtime_minutes=max_runtime_minutes,
-                )
-                prompt_output = report_folder / f"codex_agent_prompt_{cycle_started:%Y-%m-%d_%H%M}.md"
-                prompt_output.write_text(prompt, encoding="utf-8")
-                changed_files.append(str(prompt_output))
-                final_output = Path(worktree["path"]) / "reports" / "autonomous" / "codex_agent_final.md"
-                final_output.parent.mkdir(parents=True, exist_ok=True)
-                invocation = build_codex_invocation(
-                    codex_probe,
-                    worktree_path=worktree["path"],
-                    output_path=final_output,
-                )
-                budget.check("invoke_codex")
-                invocation_result = _invoke_codex(
-                    invocation,
-                    prompt,
-                    timeout_seconds=max(1, int(max_runtime_minutes * 60 - 30)),
-                )
-                result_path = Path(worktree["path"]) / "reports" / "autonomous" / "codex_agent_result.json"
-                if invocation_result["returncode"] == 0 and result_path.exists():
-                    experiment_result = json.loads(result_path.read_text(encoding="utf-8"))
-                    validation = validate_experiment_result(experiment_result)
-                else:
-                    validation = {"valid": False, "errors": ["codex_result_missing_or_failed"]}
-                worktree_head = _git(Path(worktree["path"]), "rev-parse", "HEAD")
-                if worktree_head["stdout"].strip() != git_before.get("head"):
-                    validation.setdefault("errors", []).append("automatic_commit_detected")
-                    validation["valid"] = False
-                diff = _git(Path(worktree["path"]), "diff", "--binary")
-                patch_folder = report_folder / "patches"
-                patch_folder.mkdir(parents=True, exist_ok=True)
-                patch_path = patch_folder / f"{selected['hypothesis_id']}_{cycle_started:%Y-%m-%d_%H%M}.patch"
-                patch_path.write_text(diff["stdout"], encoding="utf-8")
-                changed_files.append(str(patch_path))
-                if validation.get("valid"):
-                    classification = str(experiment_result["classification"])
-                    stop_reason = classification
-                    exit_code = 2 if validation.get("human_review_ready") else 0
-                else:
-                    classification = "experiment_failed"
-                    stop_reason = ";".join(validation.get("errors") or ["experiment_failed"])
-                    exit_code = 1
-                status = _hypothesis_status(classification, validation or {})
-                _update_hypothesis(
-                    backlog,
-                    str(selected["hypothesis_id"]),
-                    status=status,
-                    report_path=str(result_path) if result_path.exists() else None,
-                    result=classification,
-                    rejection_reason=stop_reason if status == "rejected" else None,
-                    next_action="human review" if exit_code == 2 else "review report and patch",
-                )
-                if exit_code == 2:
-                    queue, task_change = upsert_agent_task(
-                        queue,
-                        fingerprint=f"codex_agent_result:{selected['fingerprint']}",
-                        title=f"Review Codex Research result: {selected['title']}",
-                        description=classification,
-                        status="approval_required",
-                        cycle_at=cycle_started.isoformat(),
+                codex_probe = probe_codex_cli(codex_executable)
+                if not codex_probe.get("available"):
+                    classification = "hypothesis_blocked"
+                    stop_reason = str(codex_probe.get("reason") or "codex_cli_unavailable")
+                    exit_code = 5
+                    task_change = {"changed": False, "task_id": None}
+                    _update_hypothesis(
+                        backlog,
+                        str(selected["hypothesis_id"]),
+                        status="blocked",
+                        result=classification,
+                        next_action="run manually from a supported Codex environment",
                     )
                 else:
-                    task_change = {"changed": False, "task_id": None}
+                    context_bundle = build_compact_context_bundle(
+                        ticker=ticker,
+                        operations_report=operations_report,
+                        research_report=research_report,
+                        backlog=backlog,
+                        selected_hypothesis=selected,
+                        policy=policy,
+                    )
+                    context_bundle_paths = write_compact_context_bundle(
+                        context_bundle,
+                        context_dir=report_folder / "context",
+                        now=cycle_started,
+                    )
+                    changed_files.extend(context_bundle_paths.values())
+                    budget.check("create_worktree")
+                    worktree = create_research_worktree(
+                        project_root=PROJECT_ROOT,
+                        worktree_root=worktree_folder,
+                        hypothesis_id=str(selected["hypothesis_id"]),
+                        cycle_date=cycle_started.strftime("%Y-%m-%d"),
+                    )
+                    _update_hypothesis(
+                        backlog,
+                        str(selected["hypothesis_id"]),
+                        status="running",
+                        selected_at=cycle_started.isoformat(),
+                        worktree=worktree["path"],
+                    )
+                    prompt = build_agent_prompt(
+                        template_path=prompt_file,
+                        ticker=ticker,
+                        hypothesis=selected,
+                        operations_report_path=context_bundle_paths["json"],
+                        research_report_path=context_bundle_paths["json"],
+                        worktree_path=worktree["path"],
+                        max_runtime_minutes=max_runtime_minutes,
+                    )
+                    prompt_output = report_folder / f"codex_agent_prompt_{cycle_started:%Y-%m-%d_%H%M}.md"
+                    prompt_output.write_text(prompt, encoding="utf-8")
+                    changed_files.append(str(prompt_output))
+                    final_output = (
+                        Path(worktree["path"])
+                        / "reports"
+                        / "autonomous"
+                        / "codex_agent_final.md"
+                    )
+                    final_output.parent.mkdir(parents=True, exist_ok=True)
+                    invocation = build_codex_invocation(
+                        codex_probe,
+                        worktree_path=worktree["path"],
+                        output_path=final_output,
+                    )
+                    budget.check("invoke_codex")
+                    invocation_result = _invoke_codex(
+                        invocation,
+                        prompt,
+                        timeout_seconds=max(1, int(max_runtime_minutes * 60 - 30)),
+                    )
+                    result_path = (
+                        Path(worktree["path"])
+                        / "reports"
+                        / "autonomous"
+                        / "codex_agent_result.json"
+                    )
+                    if invocation_result["returncode"] == 0 and result_path.exists():
+                        experiment_result = json.loads(result_path.read_text(encoding="utf-8"))
+                        validation = validate_experiment_result(experiment_result)
+                    else:
+                        validation = {"valid": False, "errors": ["codex_result_missing_or_failed"]}
+                    worktree_head = _git(Path(worktree["path"]), "rev-parse", "HEAD")
+                    if worktree_head["stdout"].strip() != git_before.get("head"):
+                        validation.setdefault("errors", []).append("automatic_commit_detected")
+                        validation["valid"] = False
+                    diff = _git(Path(worktree["path"]), "diff", "--binary")
+                    worktree_status = _git(
+                        Path(worktree["path"]),
+                        "status",
+                        "--porcelain=v1",
+                        "--untracked-files=all",
+                    )
+                    changed_count = len(
+                        [line for line in worktree_status["stdout"].splitlines() if line.strip()]
+                    )
+                    patch_line_count = len(diff["stdout"].splitlines())
+                    variants = len((experiment_result or {}).get("experiment_variants") or [])
+                    budget_errors = []
+                    if changed_count > policy.max_changed_files:
+                        budget_errors.append("max_changed_files_exceeded")
+                    if patch_line_count > policy.max_patch_lines:
+                        budget_errors.append("max_patch_lines_exceeded")
+                    if variants > policy.max_experiment_variants:
+                        budget_errors.append("max_experiment_variants_exceeded")
+                    if budget_errors:
+                        validation.setdefault("errors", []).extend(budget_errors)
+                        validation["valid"] = False
+                    validation["cycle_budget"] = {
+                        "changed_files": changed_count,
+                        "patch_lines": patch_line_count,
+                        "experiment_variants": variants,
+                        "implementation_attempts": 1,
+                        "retuning_rounds_after_result": 0,
+                    }
+                    patch_folder = report_folder / "patches"
+                    patch_folder.mkdir(parents=True, exist_ok=True)
+                    patch_path = (
+                        patch_folder
+                        / f"{selected['hypothesis_id']}_{cycle_started:%Y-%m-%d_%H%M}.patch"
+                    )
+                    patch_path.write_text(diff["stdout"], encoding="utf-8")
+                    changed_files.append(str(patch_path))
+                    if validation.get("valid"):
+                        classification = str(experiment_result["classification"])
+                        stop_reason = classification
+                        exit_code = 2 if validation.get("human_review_ready") else 0
+                    else:
+                        classification = "experiment_failed"
+                        stop_reason = ";".join(validation.get("errors") or ["experiment_failed"])
+                        exit_code = 1
+                    status = _hypothesis_status(classification, validation or {})
+                    _update_hypothesis(
+                        backlog,
+                        str(selected["hypothesis_id"]),
+                        status=status,
+                        report_path=str(result_path) if result_path.exists() else None,
+                        patch_path=str(patch_path),
+                        patch_sha256=_file_sha256(patch_path),
+                        result=classification,
+                        rejection_reason=stop_reason if status == "rejected" else None,
+                        next_action="human review" if exit_code == 2 else "review report and patch",
+                    )
+                    if exit_code == 2:
+                        queue, task_change = upsert_agent_task(
+                            queue,
+                            fingerprint=f"codex_agent_result:{selected['fingerprint']}",
+                            title=f"Review Codex Research result: {selected['title']}",
+                            description=classification,
+                            status="approval_required",
+                            cycle_at=cycle_started.isoformat(),
+                        )
+                    else:
+                        task_change = {"changed": False, "task_id": None}
 
         budget.check("final_guards")
         production_after = capture_production_guard(settings=settings)
@@ -858,7 +1535,12 @@ def run_autonomous_codex_research_agent(
             "ticker": ticker,
             "target": "next_close_binary",
             "dry_run": dry_run,
+            "force": force,
             "gate": gate,
+            "due_gate": due,
+            "hypothesis_lifecycle": lifecycle,
+            "worktree_audits": worktree_audits,
+            "cycle_budgets": policy.as_dict(),
             "codex_cli": codex_probe,
             "selected_hypothesis": selected,
             "selection": selection,
@@ -871,6 +1553,7 @@ def run_autonomous_codex_research_agent(
             "recommendation": _recommendation(classification),
             "human_approval_required": exit_code == 2,
             "patch_path": str(patch_path) if patch_path else None,
+            "context_bundle": context_bundle_paths,
             "changed_files": changed_files,
             "task_queue_change": task_change,
             "safety": safety,
@@ -1047,6 +1730,8 @@ def render_agent_report(result: dict[str, Any]) -> str:
         f"- Ticker / target: {result.get('ticker')} / {result.get('target')}",
         f"- Gate healthy: {gate.get('healthy')}",
         f"- Gate reasons: {', '.join(gate.get('reasons') or []) or 'none'}",
+        f"- Due classification: {(result.get('due_gate') or {}).get('classification')}",
+        f"- Due reasons: {json.dumps((result.get('due_gate') or {}).get('reason_codes') or [], ensure_ascii=False)}",
         f"- Selected hypothesis: {selected.get('hypothesis_id') or 'none'}",
         f"- Classification: {result.get('classification')}",
         f"- Recommendation: {result.get('recommendation')}",
@@ -1058,6 +1743,8 @@ def render_agent_report(result: dict[str, Any]) -> str:
         f"- Worktree: {(result.get('worktree') or {}).get('path') or 'not created'}",
         f"- Changed files: {json.dumps(result.get('changed_files') or [], ensure_ascii=False)}",
         f"- Patch / diff: {result.get('patch_path') or 'not created'}",
+        f"- Compact context: {json.dumps(result.get('context_bundle'), ensure_ascii=False)}",
+        f"- Cycle budgets: {json.dumps(result.get('cycle_budgets') or {}, ensure_ascii=False)}",
         f"- Codex CLI: {json.dumps(result.get('codex_cli') or {}, ensure_ascii=False)}",
         "",
         "## Safety Contract",
@@ -1119,6 +1806,33 @@ def _open_model_research_tasks(queue: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _new_approval_model_research_tasks(
+    queue: dict[str, Any],
+    *,
+    after: datetime | None,
+) -> list[dict[str, Any]]:
+    closed = {"resolved", "closed", "completed", "rejected", "archived"}
+    tasks = []
+    for task in queue.get("tasks", []):
+        if not isinstance(task, dict) or task.get("category") != "model_research":
+            continue
+        if str(task.get("status") or "") in closed or not task.get("requires_human_approval"):
+            continue
+        created = _parse_datetime(task.get("created_at"))
+        if after and created and created.astimezone(UTC) <= after.astimezone(UTC):
+            continue
+        tasks.append(
+            {
+                "task_id": task.get("task_id"),
+                "fingerprint": task.get("fingerprint"),
+                "status": task.get("status"),
+                "created_at": task.get("created_at"),
+                "title": task.get("title"),
+            }
+        )
+    return tasks
+
+
 def _load_configured_production_guard(report_folder: Path) -> dict[str, Any]:
     state_path = report_folder / "research_state.json"
     if not state_path.exists():
@@ -1138,6 +1852,98 @@ def _update_hypothesis(backlog: dict[str, Any], hypothesis_id: str, **updates: A
             return
 
 
+def _registered_worktrees(project_root: Path) -> dict[str, dict[str, Any]]:
+    result = _git(project_root, "worktree", "list", "--porcelain")
+    if result["returncode"] != 0:
+        return {}
+    entries: dict[str, dict[str, Any]] = {}
+    current: dict[str, Any] = {}
+    for line in [*result["stdout"].splitlines(), ""]:
+        if not line.strip():
+            if current.get("path"):
+                entries[str(Path(current["path"]).resolve()).casefold()] = current
+            current = {}
+            continue
+        key, _, value = line.partition(" ")
+        if key == "worktree":
+            current["path"] = value
+        elif key == "HEAD":
+            current["head"] = value
+        elif key == "branch":
+            current["branch"] = value.removeprefix("refs/heads/")
+        else:
+            current[key] = value or True
+    return entries
+
+
+def _existing_artifact_path(value: Any) -> Path | None:
+    if not value:
+        return None
+    path = Path(str(value))
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return path.resolve() if path.exists() else None
+
+
+def _latest_matching_path(folder: Path, pattern: str) -> Path | None:
+    if not folder.exists():
+        return None
+    paths = sorted(folder.glob(pattern), key=lambda path: path.stat().st_mtime, reverse=True)
+    return paths[0].resolve() if paths else None
+
+
+def _worktree_processes(path: Path) -> list[dict[str, Any]]:
+    if os.name != "nt":
+        return []
+    command = [
+        "powershell.exe",
+        "-NoProfile",
+        "-Command",
+        "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CommandLine "
+        "| ConvertTo-Json -Compress",
+    ]
+    result = _subprocess(command, timeout=20)
+    if result["returncode"] != 0 or not result["stdout"].strip():
+        return []
+    try:
+        parsed = json.loads(result["stdout"])
+    except json.JSONDecodeError:
+        return []
+    processes = parsed if isinstance(parsed, list) else [parsed]
+    by_pid = {
+        int(item.get("ProcessId")): item
+        for item in processes
+        if isinstance(item, dict) and item.get("ProcessId") is not None
+    }
+    excluded = {os.getpid()}
+    parent = os.getppid()
+    while parent and parent not in excluded:
+        excluded.add(parent)
+        parent = int((by_pid.get(parent) or {}).get("ParentProcessId") or 0)
+    needle = str(path).casefold()
+    return [
+        {
+            "pid": int(item.get("ProcessId")),
+            "command_line": item.get("CommandLine"),
+        }
+        for item in processes
+        if isinstance(item, dict)
+        and item.get("ProcessId") not in excluded
+        and needle in str(item.get("CommandLine") or "").casefold()
+    ]
+
+
+def _safe_int(value: Any) -> int | None:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalized_newlines(value: str) -> str:
+    return value.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _updated_state(
     state: dict[str, Any],
     result: dict[str, Any],
@@ -1149,13 +1955,22 @@ def _updated_state(
     statuses = [str(item.get("status")) for item in backlog.get("hypotheses", [])]
     exit_code = int(result.get("exit_code") or 0)
     technical_failure = exit_code not in {0, 2, 3, 4, 5}
-    successful_cycle = exit_code in {0, 2}
+    successful_cycle = (
+        exit_code in {0, 2} and result.get("classification") not in NORMAL_SKIP_CLASSIFICATIONS
+    )
     previous_success = state.get("last_successful_cycle_at")
     if (
         state.get("last_result") == "agent_skipped_gate"
         and previous_success == state.get("last_cycle_at")
     ):
         previous_success = None
+    lifecycle = summarize_hypothesis_lifecycle(backlog, state=state)
+    due = result.get("due_gate") or {}
+    selected = result.get("selected_hypothesis") or {}
+    heavy_executed = bool(result.get("codex_invocation"))
+    last_heavy_at = result["cycle_completed_at"] if heavy_executed else state.get(
+        "last_heavy_cycle_at"
+    )
     return {
         **state,
         "schema_version": SCHEMA_VERSION,
@@ -1177,6 +1992,56 @@ def _updated_state(
             int(state.get("consecutive_failures") or 0) + 1 if technical_failure else 0
         ),
         "next_due_reason": _next_due_reason(result),
+        "last_preflight_at": result["cycle_completed_at"],
+        "last_heavy_cycle_at": last_heavy_at,
+        "last_heavy_cycle_token_usage": (
+            (result.get("codex_result") or {}).get("token_usage")
+            if heavy_executed
+            else state.get("last_heavy_cycle_token_usage")
+        ),
+        "last_heavy_cycle_runtime_minutes": (
+            round(float(result.get("duration_seconds") or 0) / 60, 3)
+            if heavy_executed
+            else state.get("last_heavy_cycle_runtime_minutes")
+        ),
+        "last_research_fingerprint": (
+            due.get("latest_research_fingerprint")
+            if heavy_executed
+            else state.get("last_research_fingerprint")
+        ),
+        "last_live_confirmed_count": (
+            due.get("live_confirmed_count")
+            if heavy_executed
+            else state.get("last_live_confirmed_count", 0)
+        ),
+        "last_shadow_confirmed_count": (
+            due.get("shadow_confirmed_count")
+            if heavy_executed
+            else state.get("last_shadow_confirmed_count", 0)
+        ),
+        "last_selected_hypothesis_fingerprint": (
+            selected.get("fingerprint")
+            or state.get("last_selected_hypothesis_fingerprint")
+        ),
+        "completed_hypothesis_fingerprints": lifecycle["completed_fingerprints"],
+        "rejected_hypothesis_fingerprints": lifecycle["rejected_fingerprints"],
+        "worktree_status": next(
+            (
+                audit.get("lifecycle_status")
+                for audit in result.get("worktree_audits", [])
+                if audit.get("path") == state.get("active_worktree")
+                or audit.get("hypothesis_id") == state.get("last_hypothesis_id")
+            ),
+            state.get("worktree_status"),
+        ),
+        "next_due_at": due.get("next_due_at") or state.get("next_due_at"),
+        "next_due_reasons": due.get("reason_codes") or [],
+        "last_context_bundle": result.get("context_bundle") or state.get("last_context_bundle"),
+        "last_skip_classification": (
+            result.get("classification")
+            if result.get("classification") in NORMAL_SKIP_CLASSIFICATIONS
+            else None
+        ),
     }
 
 
@@ -1223,8 +2088,12 @@ def _primary_gate_reason(reasons: Sequence[str]) -> str:
 
 
 def _recommendation(classification: str) -> str:
-    if classification == "agent_skipped_gate":
+    if classification == "agent_skipped_unhealthy_gate":
         return "Resolve the gate finding before creating a research worktree."
+    if classification == "agent_skipped_worktree_review_required":
+        return "Review or clean the existing research worktree before another heavy cycle."
+    if classification in NORMAL_SKIP_CLASSIFICATIONS:
+        return "No heavy Codex cycle is required; keep the current production system unchanged."
     if classification == "hypothesis_blocked":
         return "Run the generated workflow manually from a supported Codex environment."
     if classification == "agent_dry_run_ready":
@@ -1235,7 +2104,7 @@ def _recommendation(classification: str) -> str:
 
 
 def _next_due_reason(result: dict[str, Any]) -> str:
-    if result.get("classification") == "agent_skipped_gate":
+    if result.get("classification") == "agent_skipped_unhealthy_gate":
         return "after_gate_recovery"
     if result.get("classification") == "hypothesis_blocked":
         return "after_codex_cli_available"

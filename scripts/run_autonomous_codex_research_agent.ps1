@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$Ticker = "7203.T",
-    [double]$MaxRuntimeMinutes = 180,
+    [double]$MaxRuntimeMinutes = 90,
     [switch]$DryRun
 )
 
@@ -24,8 +24,8 @@ if ($ProjectRoot -ne $ExpectedRoot) {
 if (-not (Test-Path -LiteralPath $Python)) {
     throw "Formal project virtual environment is missing: $Python"
 }
-if ($MaxRuntimeMinutes -le 0 -or $MaxRuntimeMinutes -gt 240) {
-    throw "MaxRuntimeMinutes must be in (0, 240]."
+if ($MaxRuntimeMinutes -le 0 -or $MaxRuntimeMinutes -gt 180) {
+    throw "MaxRuntimeMinutes must be in (0, 180]."
 }
 if (Test-Path -LiteralPath $LockPath) {
     Write-Host "Codex Research Agent wrapper lock exists: $LockPath"

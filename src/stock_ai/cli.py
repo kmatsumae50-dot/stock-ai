@@ -465,8 +465,51 @@ def main() -> None:
         "--worktree-root",
         default=str(PROJECT_ROOT.parent / "stock-ai-worktrees"),
     )
-    autonomous_codex_agent.add_argument("--max-runtime-minutes", type=float, default=180.0)
+    autonomous_codex_agent.add_argument("--max-runtime-minutes", type=float, default=90.0)
     autonomous_codex_agent.add_argument("--codex-executable", default="codex")
+    autonomous_codex_agent.add_argument("--force", action="store_true")
+
+    autonomous_codex_status = subparsers.add_parser(
+        "autonomous-codex-research-status",
+        help="Show read-only Codex research-agent due, lifecycle, and worktree status",
+    )
+    autonomous_codex_status.add_argument("--ticker", default="7203.T")
+    autonomous_codex_status.add_argument(
+        "--state-path",
+        default=str(Path("reports") / "autonomous" / "codex_research_agent_state.json"),
+    )
+    autonomous_codex_status.add_argument(
+        "--hypotheses-path",
+        default=str(Path("reports") / "autonomous" / "codex_research_hypotheses.json"),
+    )
+    autonomous_codex_status.add_argument(
+        "--task-queue-path",
+        default=str(Path("reports") / "autonomous" / "operations_task_queue.json"),
+    )
+    autonomous_codex_status.add_argument(
+        "--report-dir", default=str(Path("reports") / "autonomous")
+    )
+    autonomous_codex_status.add_argument(
+        "--worktree-root", default=str(PROJECT_ROOT.parent / "stock-ai-worktrees")
+    )
+    autonomous_codex_status.add_argument("--force", action="store_true")
+
+    autonomous_codex_cleanup = subparsers.add_parser(
+        "autonomous-codex-research-cleanup",
+        help="Audit a research worktree and remove it only after explicit confirmation",
+    )
+    autonomous_codex_cleanup.add_argument("--hypothesis-id", required=True)
+    autonomous_codex_cleanup.add_argument("--confirm", action="store_true")
+    autonomous_codex_cleanup.add_argument(
+        "--hypotheses-path",
+        default=str(Path("reports") / "autonomous" / "codex_research_hypotheses.json"),
+    )
+    autonomous_codex_cleanup.add_argument(
+        "--report-dir", default=str(Path("reports") / "autonomous")
+    )
+    autonomous_codex_cleanup.add_argument(
+        "--worktree-root", default=str(PROJECT_ROOT.parent / "stock-ai-worktrees")
+    )
 
     add_health_check_parser(subparsers)
 
@@ -551,6 +594,74 @@ def main() -> None:
             raise SystemExit(int(result["exit_code"]))
         return
 
+    if args.command == "autonomous-codex-research-status":
+        from stock_ai.operations.autonomous_codex_agent import autonomous_codex_research_status
+
+        result = autonomous_codex_research_status(
+            ticker=args.ticker,
+            state_path=Path(args.state_path),
+            hypotheses_path=Path(args.hypotheses_path),
+            task_queue_path=Path(args.task_queue_path),
+            report_dir=Path(args.report_dir),
+            worktree_root=Path(args.worktree_root),
+            force=args.force,
+        )
+        due = result["due"]
+        print("Autonomous Codex Research Agent v1.1 preflight")
+        print(f"ticker: {result['ticker']}")
+        print(f"main clean: {str(result['main_git'].get('clean')).lower()}")
+        print(f"active lock: {str(result['lock_active']).lower()}")
+        print(f"gate healthy: {str(result['gate'].get('healthy')).lower()}")
+        print(f"latest research fingerprint: {due.get('latest_research_fingerprint')}")
+        print(f"last agent research fingerprint: {due.get('last_agent_research_fingerprint')}")
+        print(f"live confirmed delta: {due.get('live_confirmed_delta')}")
+        print(f"shadow confirmed delta: {due.get('shadow_confirmed_delta')}")
+        print(f"approval-required tasks: {len(due.get('new_approval_required_tasks') or [])}")
+        print(
+            "selected next hypothesis: "
+            f"{(due.get('selected_next_hypothesis') or {}).get('hypothesis_id') or 'none'}"
+        )
+        print(f"classification: {due.get('classification')}")
+        print(f"due: {str(due.get('due')).lower()}")
+        print(f"Codex invocation required: {str(due.get('codex_invocation_required')).lower()}")
+        print(f"worktree creation required: {str(due.get('worktree_creation_required')).lower()}")
+        print(f"reason codes: {json.dumps(due.get('reason_codes') or [], ensure_ascii=False)}")
+        print(f"worktrees: {json.dumps(result.get('worktrees') or [], ensure_ascii=False)}")
+        return
+
+    if args.command == "autonomous-codex-research-cleanup":
+        from stock_ai.operations.autonomous_codex_agent import (
+            cleanup_research_worktree,
+            load_hypothesis_backlog,
+        )
+
+        backlog, _ = load_hypothesis_backlog(Path(args.hypotheses_path))
+        hypothesis = next(
+            (
+                item
+                for item in backlog.get("hypotheses", [])
+                if item.get("hypothesis_id") == args.hypothesis_id
+            ),
+            None,
+        )
+        if hypothesis is None:
+            raise SystemExit(f"hypothesis not found: {args.hypothesis_id}")
+        result = cleanup_research_worktree(
+            hypothesis,
+            worktree_root=Path(args.worktree_root),
+            report_dir=Path(args.report_dir),
+            confirm=args.confirm,
+        )
+        print("Autonomous Codex research worktree cleanup")
+        print(f"mode: {result['mode']}")
+        print(f"status: {result['audit']['lifecycle_status']}")
+        print(f"worktree: {result['audit']['path']}")
+        print(f"would remove: {str(result['would_remove']).lower()}")
+        print(f"removed: {str(result['removed']).lower()}")
+        print(f"reason: {result['reason']}")
+        print(f"audit: {json.dumps(result['audit'], ensure_ascii=False)}")
+        return
+
     if args.command == "autonomous-codex-agent":
         from stock_ai.operations.autonomous_codex_agent import (
             CodexAgentError,
@@ -571,6 +682,7 @@ def main() -> None:
                 max_runtime_minutes=args.max_runtime_minutes,
                 codex_executable=args.codex_executable,
                 dry_run=args.dry_run,
+                force=args.force,
             )
         except CodexAgentTimeoutError as error:
             print(f"autonomous Codex Research Agent timeout: {error}")
@@ -581,7 +693,7 @@ def main() -> None:
         except CodexAgentError as error:
             print(f"autonomous Codex Research Agent failure: {error}")
             raise SystemExit(1) from error
-        print("Autonomous Codex Research Agent v1")
+        print("Autonomous Codex Research Agent v1.1")
         print(f"ticker: {result['ticker']}")
         print(f"gate healthy: {str(result['gate']['healthy']).lower()}")
         print(
