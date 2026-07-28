@@ -275,6 +275,12 @@
     market_impact_weight: 0.22
     source_type: general_news
 
+  - name: StocksToTrade
+    aliases: ["stocks to trade"]
+    credibility_score: 0.48
+    market_impact_weight: 0.30
+    source_type: financial_media
+
   - name: Sankei News
     aliases: ["産経ニュース", "産経新聞", "sankei news", "sankei.com"]
     credibility_score: 0.68

@@ -107,6 +107,15 @@ def test_july_unknown_source_profiles_are_resolved_conservatively():
         assert profile.credibility_score < 0.70
 
 
+def test_stockstotrade_source_profile_is_resolved_conservatively():
+    for source in ("StocksToTrade", "stockstotrade", "stockstotrade.com", "Stocks To Trade"):
+        profile = resolve_news_source_profile(source)
+        assert profile.name == "StocksToTrade"
+        assert profile.source_type == "financial_media"
+        assert profile.credibility_score == 0.48
+        assert profile.market_impact_weight == 0.30
+
+
 def test_late_july_unknown_source_profiles_are_resolved_conservatively():
     expected = {
         "CarbonCredits.com": ("CarbonCredits.com", "general_news", 0.30),
