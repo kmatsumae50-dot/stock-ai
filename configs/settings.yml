@@ -37,6 +37,24 @@ operations:
       reason: "The PC was off at the 2026-07-21 10:30 schedule. A catch-up run on 2026-07-22 00:23 built features through 2026-07-21, but predict-binary failed with an empty-input ValueError before either binary or multiclass live predictions were saved."
       action: "do_not_create_live_prediction"
       allow_backfill: true
+    - date: "2026-08-07"
+      ticker: "7203.T"
+      reason_code: "task_scheduler_not_run"
+      reason: "Windows System logs show the PC shut down at 2026-08-06 20:54 and did not start again until 2026-08-13 23:29, so the 2026-08-07 10:30 scheduled daily_predict run could not occur."
+      action: "do_not_create_live_prediction"
+      allow_backfill: true
+    - date: "2026-08-10"
+      ticker: "7203.T"
+      reason_code: "task_scheduler_not_run"
+      reason: "Windows System logs show the PC shut down at 2026-08-06 20:54 and did not start again until 2026-08-13 23:29, so the 2026-08-10 10:30 scheduled daily_predict run could not occur."
+      action: "do_not_create_live_prediction"
+      allow_backfill: true
+    - date: "2026-08-12"
+      ticker: "7203.T"
+      reason_code: "task_scheduler_not_run"
+      reason: "Windows System logs show the PC shut down at 2026-08-06 20:54 and did not start again until 2026-08-13 23:29, so the 2026-08-12 10:30 scheduled daily_predict run could not occur."
+      action: "do_not_create_live_prediction"
+      allow_backfill: true
 
 labels:
   surge_threshold: 0.05

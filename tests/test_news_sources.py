@@ -137,6 +137,30 @@ def test_late_july_unknown_source_profiles_are_resolved_conservatively():
         assert resolve_news_source_profile(source).credibility_score < 0.60
 
 
+def test_august_unknown_source_profiles_are_resolved_conservatively():
+    expected = {
+        "AOL.com": ("AOL", "aggregator", 0.30),
+        "Car Watch": ("Car Watch", "general_news", 0.35),
+        "car.watch.impress.co.jp": ("Car Watch", "general_news", 0.35),
+        "CnEVPost": ("CnEVPost", "general_news", 0.35),
+        "cnevpost.com": ("CnEVPost", "general_news", 0.35),
+        "Sahm": ("Sahm", "financial_media", 0.40),
+        "sahmcapital.com": ("Sahm", "financial_media", 0.40),
+        "Stock Traders Daily": ("Stock Traders Daily", "financial_media", 0.30),
+        "stocktradersdaily.com": ("Stock Traders Daily", "financial_media", 0.30),
+        "qz.com": ("Quartz", "financial_media", 0.45),
+        "中日BIZナビ": ("Chunichi BIZ Navi", "financial_media", 0.40),
+        "biz.chunichi.co.jp": ("Chunichi BIZ Navi", "financial_media", 0.40),
+    }
+
+    for source, (name, source_type, maximum_impact) in expected.items():
+        profile = resolve_news_source_profile(source)
+        assert profile.name == name
+        assert profile.source_type == source_type
+        assert profile.market_impact_weight <= maximum_impact
+        assert profile.credibility_score < 0.70
+
+
 def test_load_news_source_profiles_from_yaml(tmp_path):
     path = tmp_path / "news_sources.yaml"
     path.write_text(

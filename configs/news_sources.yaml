@@ -383,6 +383,48 @@
     market_impact_weight: 0.15
     source_type: general_news
 
+  - name: AOL
+    aliases: ["aol.com", "aol news"]
+    credibility_score: 0.55
+    market_impact_weight: 0.25
+    source_type: aggregator
+
+  - name: Car Watch
+    aliases: ["car watch", "car.watch.impress.co.jp"]
+    credibility_score: 0.68
+    market_impact_weight: 0.30
+    source_type: general_news
+
+  - name: CnEVPost
+    aliases: ["cnevpost", "cnevpost.com"]
+    credibility_score: 0.58
+    market_impact_weight: 0.30
+    source_type: general_news
+
+  - name: Sahm
+    aliases: ["sahm", "sahm capital", "sahmcapital.com"]
+    credibility_score: 0.52
+    market_impact_weight: 0.35
+    source_type: financial_media
+
+  - name: Stock Traders Daily
+    aliases: ["stock traders daily", "stocktradersdaily", "stocktradersdaily.com"]
+    credibility_score: 0.42
+    market_impact_weight: 0.25
+    source_type: financial_media
+
+  - name: Quartz
+    aliases: ["qz.com", "quartz"]
+    credibility_score: 0.65
+    market_impact_weight: 0.42
+    source_type: financial_media
+
+  - name: Chunichi BIZ Navi
+    aliases: ["中日BIZナビ", "中日bizナビ", "biz.chunichi.co.jp"]
+    credibility_score: 0.64
+    market_impact_weight: 0.38
+    source_type: financial_media
+
   - name: Google News
     aliases: ["google news"]
     credibility_score: 0.50
