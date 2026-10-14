@@ -8,8 +8,10 @@ Provides Clean Test calibrated Quantile bands (Q1-Q5) and historical win rates.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from stock_ai.labels.targets import TARGET_NEXT_OPEN_BINARY, add_next_open_binary_target
@@ -71,25 +73,89 @@ OVERNIGHT_QUANTILE_CUTOFFS = [
 ]
 
 
-def classify_overnight_quantile(p_up: float) -> dict[str, Any]:
+def compute_empirical_quantile_cutoffs(
+    y_true: pd.Series | np.ndarray,
+    y_prob: pd.Series | np.ndarray,
+) -> list[dict[str, Any]]:
+    """Compute empirical 5-quantile cutoffs and historical win rates from holdout predictions."""
+    y_t = np.asarray(y_true, dtype=int)
+    y_p = np.asarray(y_prob, dtype=float)
+
+    if len(y_t) < 5 or len(np.unique(y_t)) < 2:
+        return OVERNIGHT_QUANTILE_CUTOFFS
+
+    sub = pd.DataFrame({"y": y_t, "p": y_p})
+    sub["rank"] = sub["p"].rank(method="first")
+    sub["quantile"] = pd.qcut(sub["rank"], q=5, labels=["Q1", "Q2", "Q3", "Q4", "Q5"])
+
+    labels_map = {
+        "Q1": ("ギャップダウン警戒帯", "down", "陰線・下落警戒"),
+        "Q2": ("弱気帯", "down", "弱気"),
+        "Q3": ("中立帯", "neutral", "中立・推移注視"),
+        "Q4": ("強気先行帯", "up", "堅調"),
+        "Q5": ("強気ギャップアップ帯", "up", "最高勝率群"),
+    }
+
+    cutoffs = []
+    q_labels = ["Q1", "Q2", "Q3", "Q4", "Q5"]
+    for i, q_name in enumerate(q_labels):
+        q_rows = sub[sub["quantile"] == q_name]
+        min_p = float(q_rows["p"].min()) if i > 0 else 0.0
+        max_p = float(q_rows["p"].max()) if i < 4 else 1.0
+        win_rate = float(q_rows["y"].mean()) if len(q_rows) > 0 else 0.5
+        label, direction, desc_suffix = labels_map[q_name]
+
+        cutoffs.append(
+            {
+                "quantile": q_name,
+                "min_p": round(min_p, 4),
+                "max_p": round(max_p, 4),
+                "label": label,
+                "direction": direction,
+                "historical_win_rate": round(win_rate, 4),
+                "description": f"実績ギャップアップ率 {win_rate * 100:.1f}%（{desc_suffix}）",
+            }
+        )
+    return cutoffs
+
+
+def load_overnight_quantile_cutoffs(
+    ticker: str | None = None,
+    metrics_dir: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """Load ticker-specific quantile cutoffs from metrics JSON, falling back to 7203.T defaults."""
+    if ticker:
+        m_dir = Path(metrics_dir) if metrics_dir else Path("reports") / "metrics"
+        m_path = m_dir / OVERNIGHT_METRICS_FILENAME.format(ticker=ticker)
+        if m_path.exists():
+            try:
+                data = json.loads(m_path.read_text(encoding="utf-8"))
+                if "quantile_cutoffs" in data and len(data["quantile_cutoffs"]) == 5:
+                    return data["quantile_cutoffs"]
+            except Exception:
+                pass
+    return OVERNIGHT_QUANTILE_CUTOFFS
+
+
+def classify_overnight_quantile(
+    p_up: float,
+    ticker: str | None = None,
+    metrics_dir: str | Path | None = None,
+) -> dict[str, Any]:
     """Determine the empirical 5-quantile band and expected edge for an overnight p_up."""
-    if p_up >= 0.6059:
-        q_info = OVERNIGHT_QUANTILE_CUTOFFS[4]
-    elif p_up >= 0.5332:
-        q_info = OVERNIGHT_QUANTILE_CUTOFFS[3]
-    elif p_up >= 0.4638:
-        q_info = OVERNIGHT_QUANTILE_CUTOFFS[2]
-    elif p_up >= 0.3846:
-        q_info = OVERNIGHT_QUANTILE_CUTOFFS[1]
-    else:
-        q_info = OVERNIGHT_QUANTILE_CUTOFFS[0]
+    cutoffs = load_overnight_quantile_cutoffs(ticker=ticker, metrics_dir=metrics_dir)
+    q_info = cutoffs[0]
+    for info in reversed(cutoffs):
+        if p_up >= info.get("min_p", 0.0):
+            q_info = info
+            break
 
     return {
         "quantile": q_info["quantile"],
         "label": q_info["label"],
         "direction": q_info["direction"],
-        "historical_win_rate": q_info["historical_win_rate"],
-        "description": q_info["description"],
+        "historical_win_rate": q_info.get("historical_win_rate"),
+        "description": q_info.get("description", ""),
         "p_up": round(p_up, 4),
     }
 
@@ -146,6 +212,8 @@ def predict_latest_overnight_rows(
     top_features: list[dict[str, float]] | None = None,
     target: str = OVERNIGHT_TARGET,
     model_name: str = OVERNIGHT_MODEL_NAME,
+    ticker: str | None = None,
+    metrics_dir: str | Path | None = None,
 ) -> pd.DataFrame:
     """Generate latest overnight prediction row with quantile metadata."""
     latest_rows = data.sort_values(["ticker", "date"]).groupby("ticker", as_index=False).tail(1)
@@ -174,7 +242,15 @@ def predict_latest_overnight_rows(
     result["probability_up"] = probability_up
     result["probability_down"] = probability_down
 
-    quantile_infos = [classify_overnight_quantile(float(p)) for p in probability_up]
+    row_tickers = (
+        latest_rows["ticker"].tolist()
+        if "ticker" in latest_rows.columns
+        else [ticker] * len(probability_up)
+    )
+    quantile_infos = [
+        classify_overnight_quantile(float(p), ticker=t or ticker, metrics_dir=metrics_dir)
+        for p, t in zip(probability_up, row_tickers)
+    ]
     result["notes"] = [json.dumps(qinfo, ensure_ascii=False) for qinfo in quantile_infos]
 
     result["top_features"] = [

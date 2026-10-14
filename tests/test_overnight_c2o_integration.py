@@ -275,3 +275,81 @@ def test_sqlite_parallel_storage_and_evaluation_without_collision(tmp_path: Path
     assert c2o_metrics["correct_predictions"] == 1
     assert c2o_history.iloc[0]["actual_class"] == 1
     assert pytest.approx(c2o_history.iloc[0]["actual_return"], 1e-4) == 0.05
+
+
+def test_compute_empirical_quantile_cutoffs_and_ticker_specific_classification(tmp_path: Path):
+    """Test dynamic quantile calibration and ticker-specific cutoff loading with fallback."""
+    from stock_ai.models.overnight import (
+        compute_empirical_quantile_cutoffs,
+        load_overnight_quantile_cutoffs,
+    )
+
+    y_true = np.array([0, 0, 0, 0, 1, 0, 1, 1, 1, 1])
+    y_prob = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95])
+
+    cutoffs = compute_empirical_quantile_cutoffs(y_true, y_prob)
+    assert len(cutoffs) == 5
+    assert cutoffs[0]["quantile"] == "Q1"
+    assert cutoffs[4]["quantile"] == "Q5"
+    assert cutoffs[4]["historical_win_rate"] == 1.0
+
+    # Save mock metrics JSON for ticker 8035.T
+    metrics_file = tmp_path / "lightgbm_overnight_binary_8035.T.json"
+    metrics_file.write_text(
+        json.dumps({"metrics": {"auc": 0.65}, "quantile_cutoffs": cutoffs}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    # With ticker specified and custom metrics_dir, should use 8035.T custom cutoffs
+    loaded_cutoffs = load_overnight_quantile_cutoffs(ticker="8035.T", metrics_dir=tmp_path)
+    assert loaded_cutoffs == cutoffs
+
+    custom_q = classify_overnight_quantile(0.92, ticker="8035.T", metrics_dir=tmp_path)
+    assert custom_q["quantile"] == "Q5"
+    assert custom_q["historical_win_rate"] == 1.0
+
+    # For unknown ticker or None, should fall back to default cutoffs
+    default_q = classify_overnight_quantile(0.92, ticker="UNKNOWN.T", metrics_dir=tmp_path)
+    assert default_q["quantile"] == "Q5"
+    assert default_q["historical_win_rate"] == 0.6446
+
+
+def test_technical_features_zero_volume_inf_protection():
+    """Verify that zero volume and zero range do not turn columns into object dtype."""
+    from stock_ai.features.technical import add_technical_features
+
+    df = pd.DataFrame(
+        {
+            "date": pd.date_range("2024-01-01", periods=10, freq="D"),
+            "ticker": ["TEST.T"] * 10,
+            "open": [100.0] * 10,
+            "high": [100.0] * 10,  # high == low causes division by zero in close_position
+            "low": [100.0] * 10,
+            "close": [100.0] * 10,
+            "volume": [0] * 10,  # volume == 0 causes inf in volume_change_1d
+        }
+    )
+
+    result = add_technical_features(df)
+
+    assert "volume_change_1d" in result.columns
+    assert "close_position" in result.columns
+    assert pd.api.types.is_numeric_dtype(result["volume_change_1d"])
+    assert pd.api.types.is_numeric_dtype(result["close_position"])
+    assert not np.isinf(result["volume_change_1d"].dropna()).any()
+    assert not np.isinf(result["close_position"].dropna()).any()
+
+
+def test_multi_ticker_overnight_universe_structure():
+    """Verify universe.yml contains all 5 core tickers with sector metadata."""
+    from stock_ai.data.universe import load_universe
+
+    universe = load_universe()
+    codes = [t.code for t in universe]
+
+    for expected in ["7203.T", "7267.T", "7201.T", "8035.T", "8306.T"]:
+        assert expected in codes
+
+    auto_tickers = [t for t in universe if t.sector == "Automotive"]
+    assert len(auto_tickers) == 3
+

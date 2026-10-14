@@ -15,13 +15,21 @@ from stock_ai.config import PROJECT_ROOT
 class TickerInfo:
     code: str
     name: str = ""
+    sector: str = ""
 
 
 def load_universe(path: str | Path | None = None) -> list[TickerInfo]:
     universe_path = Path(path) if path else PROJECT_ROOT / "configs" / "universe.yml"
     if yaml is not None:
         raw = yaml.safe_load(universe_path.read_text(encoding="utf-8"))
-        return [TickerInfo(code=item["code"], name=item.get("name", "")) for item in raw["tickers"]]
+        return [
+            TickerInfo(
+                code=item["code"],
+                name=item.get("name", ""),
+                sector=item.get("sector", ""),
+            )
+            for item in raw["tickers"]
+        ]
     return _load_simple_universe(universe_path)
 
 
@@ -36,7 +44,13 @@ def _load_simple_universe(path: Path) -> list[TickerInfo]:
 
         if line.startswith("- "):
             if current:
-                tickers.append(TickerInfo(code=current.get("code", ""), name=current.get("name", "")))
+                tickers.append(
+                    TickerInfo(
+                        code=current.get("code", ""),
+                        name=current.get("name", ""),
+                        sector=current.get("sector", ""),
+                    )
+                )
             current = {}
             line = line[2:].strip()
 
@@ -45,6 +59,12 @@ def _load_simple_universe(path: Path) -> list[TickerInfo]:
             current[key.strip()] = value.strip().strip('"').strip("'")
 
     if current:
-        tickers.append(TickerInfo(code=current.get("code", ""), name=current.get("name", "")))
+        tickers.append(
+            TickerInfo(
+                code=current.get("code", ""),
+                name=current.get("name", ""),
+                sector=current.get("sector", ""),
+            )
+        )
 
     return [ticker for ticker in tickers if ticker.code]

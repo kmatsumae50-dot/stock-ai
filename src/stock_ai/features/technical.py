@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+import numpy as np
 import pandas as pd
 
 
@@ -55,7 +54,7 @@ def add_technical_features(
     result["intraday_return"] = result["close"] / result["open"] - 1
     result["high_low_range"] = result["high"] / result["low"] - 1
     result["close_position"] = (result["close"] - result["low"]) / (result["high"] - result["low"])
-    result["close_position"] = result["close_position"].replace([float("inf"), -float("inf")], pd.NA)
+    result["close_position"] = result["close_position"].replace([float("inf"), -float("inf")], np.nan)
 
     for window in moving_average_windows:
         ma = grouped["close"].rolling(window=window, min_periods=window).mean()
@@ -91,7 +90,15 @@ def add_technical_features(
     result["macd_signal"] = grouped["close"].transform(_macd_signal)
     result["macd_hist"] = result["macd"] - result["macd_signal"]
 
-    return result.replace([float("inf"), -float("inf")], pd.NA)
+    # Replace any remaining infinite values with np.nan and cast technical columns to numeric
+    for col in TECHNICAL_DISPLAY_COLUMNS:
+        if col in result.columns:
+            result[col] = pd.to_numeric(
+                result[col].replace([float("inf"), -float("inf")], np.nan),
+                errors="coerce",
+            )
+
+    return result
 
 
 def _rsi(close: pd.Series, window: int) -> pd.Series:

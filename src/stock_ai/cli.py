@@ -19,6 +19,7 @@ from stock_ai.labels import distribution as label_distribution
 from stock_ai.labels.targets import (
     add_next_close_binary_target,
     add_next_close_target,
+    add_next_open_binary_target,
     add_open_to_close_target,
 )
 from stock_ai.narrative.rule_based import add_narrative_features
@@ -1565,6 +1566,8 @@ def main() -> None:
         from stock_ai.models.overnight import (
             OVERNIGHT_ARTIFACT_FILENAME,
             OVERNIGHT_METRICS_FILENAME,
+            OVERNIGHT_QUANTILE_CUTOFFS,
+            compute_empirical_quantile_cutoffs,
             train_lightgbm_overnight_classifier,
         )
 
@@ -1580,6 +1583,17 @@ def main() -> None:
             feature_columns,
             target_column=TARGET_NEXT_OPEN_BINARY,
         )
+        test_sub = test_data.dropna(subset=feature_columns + [TARGET_NEXT_OPEN_BINARY])
+        test_sub = test_sub[test_sub[TARGET_NEXT_OPEN_BINARY].isin([0, 1])]
+        if not test_sub.empty:
+            test_probs = model.predict_proba(test_sub[feature_columns])[:, 1]
+            quantile_cutoffs = compute_empirical_quantile_cutoffs(
+                test_sub[TARGET_NEXT_OPEN_BINARY].to_numpy(),
+                test_probs,
+            )
+        else:
+            quantile_cutoffs = OVERNIGHT_QUANTILE_CUTOFFS
+
         top_features = get_feature_importance(model, feature_columns, top_n=10)
         model_filename = OVERNIGHT_ARTIFACT_FILENAME.format(ticker=args.ticker)
         model_path = settings.paths.model_dir / model_filename
@@ -1590,6 +1604,7 @@ def main() -> None:
             metadata={
                 "target": TARGET_NEXT_OPEN_BINARY,
                 "metrics": metrics,
+                "quantile_cutoffs": quantile_cutoffs,
                 "top_features": top_features,
             },
         )
@@ -1600,10 +1615,12 @@ def main() -> None:
             json.dumps(
                 {
                     "metrics": metrics,
+                    "quantile_cutoffs": quantile_cutoffs,
                     "feature_columns": feature_columns,
                     "top_features": top_features,
                 },
                 indent=2,
+                ensure_ascii=False,
             ),
             encoding="utf-8",
         )
@@ -2467,6 +2484,7 @@ def _build_features_for_ticker(ticker: str, settings) -> Path:
         crash_threshold=settings.labels.crash_threshold,
     )
     features = add_next_close_binary_target(features)
+    features = add_next_open_binary_target(features)
     features = add_open_to_close_target(
         features,
         surge_threshold=settings.labels.surge_threshold,

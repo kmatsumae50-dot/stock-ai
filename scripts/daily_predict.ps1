@@ -239,11 +239,15 @@ try {
             }
             Invoke-PythonStep "build-features $CurrentTicker" @("main.py", "build-features", "--ticker", $CurrentTicker)
             Invoke-PythonStep "data-freshness $CurrentTicker" @("main.py", "data-freshness", "--ticker", $CurrentTicker)
-            Invoke-PythonStep "train-binary $CurrentTicker" @("main.py", "train-binary", "--ticker", $CurrentTicker)
-            Invoke-PythonStep "predict-binary $CurrentTicker" @("main.py", "predict-binary", "--ticker", $CurrentTicker)
-            Invoke-PythonStep "train-multiclass $CurrentTicker" @("main.py", "train-multiclass", "--ticker", $CurrentTicker, "--threshold-profile", $MulticlassThresholdProfile, "--weight-mode", $MulticlassWeightMode)
-            Invoke-PythonStep "predict-multiclass $CurrentTicker" @("main.py", "predict-multiclass", "--ticker", $CurrentTicker, "--threshold-profile", $MulticlassThresholdProfile, "--weight-mode", $MulticlassWeightMode)
-            Write-Log "Binary and multiclass prediction saves confirmed for $CurrentTicker"
+            try {
+                Invoke-PythonStep "train-binary $CurrentTicker" @("main.py", "train-binary", "--ticker", $CurrentTicker)
+                Invoke-PythonStep "predict-binary $CurrentTicker" @("main.py", "predict-binary", "--ticker", $CurrentTicker)
+                Invoke-PythonStep "train-multiclass $CurrentTicker" @("main.py", "train-multiclass", "--ticker", $CurrentTicker, "--threshold-profile", $MulticlassThresholdProfile, "--weight-mode", $MulticlassWeightMode)
+                Invoke-PythonStep "predict-multiclass $CurrentTicker" @("main.py", "predict-multiclass", "--ticker", $CurrentTicker, "--threshold-profile", $MulticlassThresholdProfile, "--weight-mode", $MulticlassWeightMode)
+                Write-Log "Binary and multiclass prediction saves confirmed for $CurrentTicker"
+            } catch {
+                Write-Log "C2C WARN: Binary/multiclass step for $CurrentTicker had an issue: $($_.Exception.Message); proceeding to overnight step"
+            }
 
             # Overnight (Close-to-Open) shadow production pillar prediction
             try {

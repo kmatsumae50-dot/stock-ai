@@ -1635,6 +1635,139 @@ def _daily_brief_profile_news_impact_messages(
         return []
 
 
+def _render_multi_ticker_overnight_scanner(
+    database_path,
+    universe: list[TickerInfo],
+    selected_ticker: str,
+) -> None:
+    st.markdown("---")
+    st.subheader("🌐 Multi-Ticker Overnight Scanner（5銘柄横断ランキング一覧表）")
+    st.caption("全監視銘柄の前日終値→翌朝始値ギャップ予測（Overnight p_up）を比較し、最有望銘柄と警戒銘柄を即座に一覧化します。")
+
+    all_preds = read_latest_predictions(database_path)
+    overnight_preds = (
+        all_preds[all_preds["target"] == "next_open_binary"].copy()
+        if not all_preds.empty and "target" in all_preds.columns
+        else pd.DataFrame()
+    )
+
+    rows: list[dict] = []
+    for t_info in universe:
+        t_code = t_info.code
+        t_name = t_info.name
+        t_sector = getattr(t_info, "sector", "") or ""
+
+        t_pred = None
+        if not overnight_preds.empty:
+            match = overnight_preds[overnight_preds["ticker"] == t_code]
+            if not match.empty:
+                t_pred = match.iloc[0]
+
+        auc_val = None
+        m_path = Path("reports") / "metrics" / f"lightgbm_overnight_binary_{t_code}.json"
+        if m_path.exists():
+            try:
+                m_data = json.loads(m_path.read_text(encoding="utf-8"))
+                auc_val = m_data.get("metrics", {}).get("auc")
+            except Exception:
+                pass
+
+        if t_pred is not None:
+            p_up = safe_float(t_pred.get("probability_up"))
+            raw_date = t_pred.get("date")
+            p_date = pd.Timestamp(raw_date).strftime("%Y-%m-%d") if pd.notna(raw_date) else "-"
+            direction = "Up ⬆️" if (p_up is not None and p_up >= 0.5) else "Down ⬇️"
+
+            notes_raw = t_pred.get("notes")
+            notes = json.loads(notes_raw) if notes_raw else {}
+            if not notes and p_up is not None:
+                from stock_ai.models.overnight import classify_overnight_quantile
+
+                notes = classify_overnight_quantile(float(p_up), ticker=t_code)
+
+            q_band = notes.get("quantile", "-")
+            q_label = notes.get("label", "")
+            q_win = notes.get("historical_win_rate")
+
+            rows.append(
+                {
+                    "ticker": t_code,
+                    "name": t_name,
+                    "sector": t_sector,
+                    "date": p_date,
+                    "p_up": p_up if p_up is not None else -1.0,
+                    "direction": direction,
+                    "quantile": f"{q_band} ({q_label})" if q_label else q_band,
+                    "win_rate": q_win,
+                    "auc": auc_val,
+                    "is_active": (t_code == selected_ticker),
+                }
+            )
+        else:
+            rows.append(
+                {
+                    "ticker": t_code,
+                    "name": t_name,
+                    "sector": t_sector,
+                    "date": "-",
+                    "p_up": -1.0,
+                    "direction": "未実行",
+                    "quantile": "-",
+                    "win_rate": None,
+                    "auc": auc_val,
+                    "is_active": (t_code == selected_ticker),
+                }
+            )
+
+    if not rows:
+        st.info("No overnight predictions found.")
+        return
+
+    rows.sort(key=lambda r: r["p_up"], reverse=True)
+
+    valid_rows = [r for r in rows if r["p_up"] >= 0]
+    if valid_rows:
+        top_pick = valid_rows[0]
+        bottom_pick = valid_rows[-1]
+        c1, c2, c3 = st.columns(3)
+        c1.metric(
+            "🌟 最有望 Overnight (Top Bullish)",
+            f"{top_pick['ticker']} ({top_pick['name']})",
+            f"p_up {_format_percent(top_pick['p_up'])} | {top_pick['quantile']}",
+        )
+        c2.metric(
+            "⚠️ 最大警戒 Overnight (Bottom Down)",
+            f"{bottom_pick['ticker']} ({bottom_pick['name']})",
+            f"p_up {_format_percent(bottom_pick['p_up'])} | {bottom_pick['quantile']}",
+            delta_color="inverse",
+        )
+        avg_pup = sum(r["p_up"] for r in valid_rows) / len(valid_rows)
+        c3.metric(
+            "📊 ユニバース平均 Overnight p_up",
+            _format_percent(avg_pup),
+            "強気優勢" if avg_pup >= 0.5 else "弱気警戒",
+        )
+
+    display_data = []
+    for rank, r in enumerate(rows, 1):
+        display_data.append(
+            {
+                "順位": f"#{rank}",
+                "銘柄コード": r["ticker"] + (" 👈 選択中" if r["is_active"] else ""),
+                "銘柄名": r["name"],
+                "セクター": r["sector"],
+                "最新予測日": r["date"],
+                "Overnight Up確率": _format_percent(r["p_up"]) if r["p_up"] >= 0 else "-",
+                "予測方向": r["direction"],
+                "Quantile帯": r["quantile"],
+                "過去実績勝率": _format_percent(r["win_rate"]) if r["win_rate"] is not None else "-",
+                "C2O AUC": _format_percent(r["auc"]) if r["auc"] is not None else "-",
+            }
+        )
+
+    st.dataframe(pd.DataFrame(display_data), use_container_width=True, hide_index=True)
+
+
 def _render_overnight_prediction_section(
     latest_overnight: pd.Series | None,
     overnight_metrics: dict[str, object],
@@ -1656,7 +1789,7 @@ def _render_overnight_prediction_section(
         if not o_notes and o_up is not None:
             from stock_ai.models.overnight import classify_overnight_quantile
 
-            o_notes = classify_overnight_quantile(float(o_up))
+            o_notes = classify_overnight_quantile(float(o_up), ticker=ticker)
 
         prediction_label = "Up" if safe_float(o_up, 0.0) >= 0.5 else "Down"
         q_band = o_notes.get("quantile", "N/A")
@@ -1846,7 +1979,7 @@ def _render_prediction_tab(
             if not o_notes and p_up_c2o is not None:
                 from stock_ai.models.overnight import classify_overnight_quantile
 
-                o_notes = classify_overnight_quantile(float(p_up_c2o))
+                o_notes = classify_overnight_quantile(float(p_up_c2o), ticker=ticker)
             q_band = o_notes.get("quantile", "N/A")
             q_label = o_notes.get("label", "")
             q_win = o_notes.get("historical_win_rate")
@@ -1859,6 +1992,8 @@ def _render_prediction_tab(
             )
         else:
             st.caption("未実行 (predict-overnight を実行してください)")
+
+    _render_multi_ticker_overnight_scanner(database_path, load_universe(), ticker)
 
     st.markdown("---")
     st.caption("1. Close-to-Close (翌日終値) 詳細")

@@ -1,2 +1,6 @@
 # One ticker per line. Comma-separated values are also supported.
 7203.T
+7267.T
+7201.T
+8035.T
+8306.T
