@@ -1833,6 +1833,149 @@ def _render_multi_ticker_overnight_scanner(
     st.dataframe(pd.DataFrame(display_data), use_container_width=True, hide_index=True)
 
 
+def _render_overnight_paper_trader_section(universe: list[TickerInfo]) -> None:
+    st.markdown("---")
+    st.subheader("💰 AI Overnight Paper Trader (仮想100万円運用シミュレーター)")
+    st.caption("東証プライム主力20銘柄のOvernightモデルシグナルに基づく、100万円元本ペーパートレードの損益曲線と最新売買台帳")
+
+    results_path = Path("reports") / "autonomous" / "overnight_portfolio_simulation_results.json"
+    sim_data = None
+    if results_path.exists():
+        try:
+            sim_data = json.loads(results_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    if sim_data is None:
+        from stock_ai.backtest.overnight_portfolio import (
+            export_portfolio_simulation_reports,
+            run_full_overnight_portfolio_backtest,
+        )
+
+        with st.spinner("Overnight ポートフォリオバックテストを実行中..."):
+            sim_data = run_full_overnight_portfolio_backtest(universe=universe)
+            export_portfolio_simulation_reports(sim_data)
+
+    res_by_cost = sim_data.get("results_by_cost", {})
+    if not res_by_cost:
+        st.info("ペーパートレードデータがありません。")
+        return
+
+    col_strat, col_cost = st.columns([3, 2])
+    with col_strat:
+        strat_label = st.selectbox(
+            "運用戦略を選択",
+            options=[
+                "Strategy B: 精鋭集中ロング (AUC>=0.58 上位2銘柄)",
+                "Strategy A: Q5 均等配分ロング (最大5銘柄)",
+                "Strategy C: Long/Short スプレッド (B Long + Q1 Short)",
+            ],
+            index=0,
+            key="paper_trader_strat_choice",
+        )
+    with col_cost:
+        cost_label = st.selectbox(
+            "想定取引コスト（往復スリッページ）",
+            options=[
+                "5 bps (0.05% 実運用想定)",
+                "0 bps (理論値)",
+            ],
+            index=0,
+            key="paper_trader_cost_choice",
+        )
+
+    strat_map = {
+        "Strategy B: 精鋭集中ロング (AUC>=0.58 上位2銘柄)": "elite_top2_long",
+        "Strategy A: Q5 均等配分ロング (最大5銘柄)": "q5_equal_weight",
+        "Strategy C: Long/Short スプレッド (B Long + Q1 Short)": "long_short_spread",
+    }
+    cost_map = {
+        "5 bps (0.05% 実運用想定)": "5bps",
+        "0 bps (理論値)": "0bps",
+    }
+
+    strat_key = strat_map[strat_label]
+    cost_key = cost_map[cost_label]
+
+    strat_data = res_by_cost.get(cost_key, {}).get(strat_key, {})
+    if not strat_data:
+        st.warning("選択した戦略のデータが見つかりません。")
+        return
+
+    m = strat_data["metrics"]
+
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("現在資産額 (元本100万)", f"{m['final_equity']:,.0f} 円", f"{m['cumulative_return']:+.1%}")
+    k2.metric("年率リターン (CAGR)", f"{m['cagr']:+.1%}", f"取引日数 {m['active_days']}日")
+    k3.metric("Sharpe Ratio", f"{m['sharpe_ratio']:.2f}")
+    k4.metric("日次勝率 / PF", f"{m['win_rate']:.1%}", f"PF {m['profit_factor']:.2f}")
+    k5.metric("最大ドローダウン", f"{m['max_drawdown']:.1%}", delta_color="inverse")
+
+    # Pending Allocation Card
+    pending = sim_data.get("latest_pending", {})
+    p_strat = pending.get("strategies", {}).get(strat_key, {})
+    long_picks = p_strat.get("long_picks", [])
+    short_picks = p_strat.get("short_picks", [])
+    curr_equity = m["final_equity"]
+
+    st.markdown(f"##### 🌙 本日大引け ({pending.get('date', '-')}) の仮想エントリー予定（翌朝寄り付き決済）")
+    if long_picks or short_picks:
+        total_slots = len(long_picks) + len(short_picks)
+        p_cols = st.columns(min(max(total_slots, 1), 4))
+        idx = 0
+        meta_dict = {t.code: (t.name, getattr(t, "sector_ja", t.sector)) for t in universe}
+
+        for p in long_picks:
+            col = p_cols[idx % len(p_cols)]
+            name, sec = meta_dict.get(p, (p, ""))
+            weight = (0.5 / len(long_picks)) if (long_picks and short_picks) else (1.0 / len(long_picks))
+            alloc = curr_equity * weight
+            col.success(f"🟢 **LONG: {p}**\n\n{name} ({sec})\n\n配分: **{weight:.0%}** (約 **{alloc:,.0f} 円**)")
+            idx += 1
+
+        for p in short_picks:
+            col = p_cols[idx % len(p_cols)]
+            name, sec = meta_dict.get(p, (p, ""))
+            weight = (0.5 / len(short_picks)) if (long_picks and short_picks) else (1.0 / len(short_picks))
+            alloc = curr_equity * weight
+            col.error(f"🔴 **SHORT: {p}**\n\n{name} ({sec})\n\n配分: **{weight:.0%}** (約 **{alloc:,.0f} 円**)")
+            idx += 1
+    else:
+        st.info("本日のシグナル基準該当銘柄はありません（キャッシュ100%保有）")
+
+    # Equity Curve
+    st.markdown("##### 📈 累積資産推移 (Equity Curve: 100万円元本からの推移)")
+    eq_list = strat_data.get("equity_curve", [])
+    if eq_list:
+        eq_df = pd.DataFrame(eq_list)
+        eq_df["date"] = pd.to_datetime(eq_df["date"])
+        eq_df = eq_df.set_index("date")
+        st.line_chart(eq_df["equity"], use_container_width=True)
+
+    # Recent Trades Table
+    st.markdown("##### 📜 直近の仮想トレード履歴 (最新15営業日)")
+    trade_logs = strat_data.get("trade_logs", [])
+    settled_trades = [t for t in trade_logs if not t.get("is_pending")]
+    if settled_trades:
+        recent = settled_trades[-15:][::-1]
+        log_display = []
+        for r in recent:
+            l_str = ", ".join(r.get("long_picks", [])) or "なし"
+            s_str = ", ".join(r.get("short_picks", [])) or "なし"
+            log_display.append(
+                {
+                    "取引日": r.get("date"),
+                    "Long銘柄": l_str,
+                    "Short銘柄": s_str,
+                    "実現Overnightリターン": _format_percent(r.get("gross_return")) if (r.get("long_picks") or r.get("short_picks")) else "0.0%",
+                    "コスト控除後リターン": _format_percent(r.get("net_return")) if (r.get("long_picks") or r.get("short_picks")) else "0.0%",
+                    "日次損益 (円)": f"{r.get('pnl', 0.0):+,.0f} 円",
+                    "資産残高 (円)": f"{r.get('equity', 0.0):,.0f} 円",
+                }
+            )
+        st.dataframe(pd.DataFrame(log_display), use_container_width=True, hide_index=True)
+
+
 def _render_overnight_prediction_section(
     latest_overnight: pd.Series | None,
     overnight_metrics: dict[str, object],
@@ -2059,6 +2202,7 @@ def _render_prediction_tab(
             st.caption("未実行 (predict-overnight を実行してください)")
 
     _render_multi_ticker_overnight_scanner(database_path, load_universe(), ticker)
+    _render_overnight_paper_trader_section(load_universe())
 
     st.markdown("---")
     st.caption("1. Close-to-Close (翌日終値) 詳細")

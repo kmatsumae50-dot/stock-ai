@@ -389,4 +389,84 @@ def test_sync_overnight_universe_cli_parser_options():
     cli_source = inspect.getsource(main)
     assert "sync-overnight-universe" in cli_source
     assert "--all-universe" in cli_source
+    assert "run-overnight-paper-trader" in cli_source
+
+
+def test_simulate_overnight_strategy_pnl_and_cost_deduction():
+    """Verify simulate_overnight_strategy correctly computes returns, costs, equity, and pending state."""
+    from stock_ai.backtest.overnight_portfolio import simulate_overnight_strategy
+
+    dates = [
+        pd.Timestamp("2024-04-01"),
+        pd.Timestamp("2024-04-02"),
+        pd.Timestamp("2024-04-03"),  # latest pending day
+    ]
+    # Create synthetic day slices for 2 tickers (T1: Q5, T2: Q1)
+    df = pd.DataFrame([
+        # Day 1: T1 returns +2%
+        {
+            "date": dates[0], "ticker": "T1", "name": "Test1", "sector": "Auto",
+            "close": 1000.0, "next_open_return": 0.02, "p_up": 0.65,
+            "quantile": "Q5", "win_rate": 0.65, "direction": "up", "auc": 0.62,
+        },
+        {
+            "date": dates[0], "ticker": "T2", "name": "Test2", "sector": "Bank",
+            "close": 500.0, "next_open_return": -0.01, "p_up": 0.35,
+            "quantile": "Q1", "win_rate": 0.45, "direction": "down", "auc": 0.60,
+        },
+        # Day 2: T1 returns -1%
+        {
+            "date": dates[1], "ticker": "T1", "name": "Test1", "sector": "Auto",
+            "close": 1020.0, "next_open_return": -0.01, "p_up": 0.62,
+            "quantile": "Q5", "win_rate": 0.65, "direction": "up", "auc": 0.62,
+        },
+        {
+            "date": dates[1], "ticker": "T2", "name": "Test2", "sector": "Bank",
+            "close": 495.0, "next_open_return": 0.005, "p_up": 0.38,
+            "quantile": "Q1", "win_rate": 0.45, "direction": "down", "auc": 0.60,
+        },
+        # Day 3 (latest): pending, next_open_return is NaN
+        {
+            "date": dates[2], "ticker": "T1", "name": "Test1", "sector": "Auto",
+            "close": 1010.0, "next_open_return": np.nan, "p_up": 0.68,
+            "quantile": "Q5", "win_rate": 0.65, "direction": "up", "auc": 0.62,
+        },
+        {
+            "date": dates[2], "ticker": "T2", "name": "Test2", "sector": "Bank",
+            "close": 500.0, "next_open_return": np.nan, "p_up": 0.32,
+            "quantile": "Q1", "win_rate": 0.45, "direction": "down", "auc": 0.60,
+        },
+    ])
+
+    # Run Strategy A (Q5 equal weight) with 5bps cost
+    res = simulate_overnight_strategy(
+        df, dates, strategy_name="q5_equal_weight", cost=0.0005, initial_capital=1_000_000.0
+    )
+    logs = res["trade_logs"]
+    metrics = res["metrics"]
+
+    assert len(logs) == 3
+    # Day 1: +2% gross, -5bps cost -> +1.95% net
+    assert pytest.approx(logs[0]["gross_return"], rel=1e-4) == 0.02
+    assert pytest.approx(logs[0]["net_return"], rel=1e-4) == 0.0195
+    assert pytest.approx(logs[0]["equity"], rel=1e-4) == 1_019_500.0
+    assert not logs[0]["is_pending"]
+
+    # Day 2: -1% gross, -5bps cost -> -1.05% net
+    assert pytest.approx(logs[1]["gross_return"], rel=1e-4) == -0.01
+    assert pytest.approx(logs[1]["net_return"], rel=1e-4) == -0.0105
+    expected_day2_eq = 1_019_500.0 * (1 - 0.0105)
+    assert pytest.approx(logs[1]["equity"], rel=1e-4) == expected_day2_eq
+    assert not logs[1]["is_pending"]
+
+    # Day 3: pending day
+    assert logs[2]["is_pending"] is True
+    assert logs[2]["long_picks"] == ["T1"]
+    assert pytest.approx(logs[2]["equity"], rel=1e-4) == expected_day2_eq
+
+    # Metrics
+    assert metrics["total_days"] == 2
+    assert metrics["active_days"] == 2
+    assert metrics["win_rate"] == 0.5  # 1 win, 1 loss
+    assert metrics["final_equity"] == pytest.approx(expected_day2_eq, rel=1e-4)
 

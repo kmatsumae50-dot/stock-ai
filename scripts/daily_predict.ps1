@@ -275,6 +275,15 @@ try {
         throw "Failed tickers: $($FailedTickers -join ', ')"
     }
 
+    # Overnight Paper Trader portfolio simulation & ledger update
+    try {
+        Write-Log "START: run-overnight-paper-trader"
+        Invoke-PythonStep "run-overnight-paper-trader" @("main.py", "run-overnight-paper-trader")
+        Write-Log "DONE: run-overnight-paper-trader"
+    } catch {
+        Write-Log "PAPER TRADER WARN: run-overnight-paper-trader failed: $($_.Exception.Message); continuing"
+    }
+
     Write-Log "daily_predict finished successfully"
     exit 0
 } catch {

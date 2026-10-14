@@ -280,6 +280,27 @@ def main() -> None:
     )
     overnight_status.add_argument("--ticker", required=True)
 
+    paper_trader = subparsers.add_parser(
+        "run-overnight-paper-trader",
+        help="Run 20-ticker overnight portfolio backtest simulation and update paper trader reports",
+    )
+    paper_trader.add_argument(
+        "--output-json",
+        default="reports/autonomous/overnight_portfolio_simulation_results.json",
+        help="Output path for simulation JSON results",
+    )
+    paper_trader.add_argument(
+        "--output-md",
+        default="reports/autonomous/overnight_portfolio_simulation_report.md",
+        help="Output path for simulation Markdown report",
+    )
+    paper_trader.add_argument(
+        "--initial-capital",
+        type=float,
+        default=1_000_000.0,
+        help="Initial capital in JPY",
+    )
+
     shadow_predict = subparsers.add_parser(
         "binary-shadow-predict",
         help="Create binary shadow predictions in report files without writing SQLite",
@@ -2205,6 +2226,33 @@ def main() -> None:
                 "notes": q_info,
             }
         print(json.dumps(status_info, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "run-overnight-paper-trader":
+        from stock_ai.backtest.overnight_portfolio import (
+            export_portfolio_simulation_reports,
+            run_full_overnight_portfolio_backtest,
+        )
+
+        sim_data = run_full_overnight_portfolio_backtest(
+            initial_capital=args.initial_capital,
+        )
+        export_portfolio_simulation_reports(
+            sim_data,
+            output_json_path=args.output_json,
+            output_md_path=args.output_md,
+        )
+        res_5 = sim_data["results_by_cost"]["5bps"]
+        print("=== Overnight Paper Trader Simulation Complete ===")
+        print(f"Period: {sim_data['start_date']} to {sim_data['end_date']} ({sim_data['total_days']} days)")
+        for s, s_data in res_5.items():
+            m = s_data["metrics"]
+            print(
+                f"[{s}] Return: {m['cumulative_return']:+.1%} | Final: {m['final_equity']:,.0f} JPY | "
+                f"Sharpe: {m['sharpe_ratio']:.2f} | MaxDD: {m['max_drawdown']:.1%} | WinRate: {m['win_rate']:.1%}"
+            )
+        print(f"Saved JSON: {args.output_json}")
+        print(f"Saved Report: {args.output_md}")
         return
 
     if args.command == "binary-shadow-predict":
