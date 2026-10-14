@@ -14,6 +14,9 @@ TARGET_COLUMNS = {
     "target_next_close_binary",
     "open_to_close_return",
     "target_open_to_close_class",
+    "next_open",
+    "next_open_return",
+    "target_next_open_binary",
 }
 
 NON_FEATURE_COLUMNS = {

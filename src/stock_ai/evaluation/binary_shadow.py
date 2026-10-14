@@ -77,6 +77,11 @@ class BinaryShadowEvaluationResult:
     conclusions: list[str]
 
 
+def read_shadow_predictions(path: str | Path) -> pd.DataFrame:
+    """Read the shadow audit file without changing it."""
+    return _read_shadow_predictions(path)
+
+
 def default_shadow_candidates() -> list[ShadowCandidate]:
     return [
         ShadowCandidate(
@@ -164,8 +169,10 @@ def evaluate_shadow_predictions(
     output_dir: str | Path,
     live_predictions: pd.DataFrame | None = None,
     run_date: str | None = None,
+    persist: bool = True,
 ) -> BinaryShadowEvaluationResult:
-    predictions = _read_shadow_predictions(shadow_path)
+    all_predictions = _read_shadow_predictions(shadow_path)
+    predictions = all_predictions
     if not predictions.empty:
         predictions = predictions[predictions["ticker"].astype(str).eq(ticker)].copy()
     predictions = _evaluate_prediction_rows(predictions, feature_data)
@@ -173,34 +180,92 @@ def evaluate_shadow_predictions(
     comparison = compare_shadow_with_live(predictions, live_predictions)
     conclusions = classify_shadow_conclusions(summary)
 
-    output = Path(output_dir)
-    output.mkdir(parents=True, exist_ok=True)
-    predictions.to_csv(output / "binary_shadow_predictions.csv", index=False, encoding="utf-8-sig")
-    (output / "binary_shadow_predictions.json").write_text(
-        json.dumps(
-            {
-                "generated_at": pd.Timestamp.now().isoformat(timespec="seconds"),
-                "rows": _json_records(predictions),
-            },
-            indent=2,
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-    stamp = run_date or date.today().isoformat()
-    md_path = output / f"binary_shadow_summary_{stamp}.md"
-    md_path.write_text(_summary_markdown(summary, comparison, predictions, conclusions), encoding="utf-8")
+    saved_paths: dict[str, str] = {}
+    if persist:
+        output = Path(output_dir)
+        output.mkdir(parents=True, exist_ok=True)
+        other_tickers = all_predictions[
+            ~all_predictions["ticker"].astype(str).eq(ticker)
+        ].copy() if not all_predictions.empty else pd.DataFrame(columns=SHADOW_COLUMNS)
+        persisted = pd.concat([other_tickers, predictions], ignore_index=True)[SHADOW_COLUMNS]
+        persisted.to_csv(output / "binary_shadow_predictions.csv", index=False, encoding="utf-8-sig")
+        (output / "binary_shadow_predictions.json").write_text(
+            json.dumps(
+                {
+                    "generated_at": pd.Timestamp.now().isoformat(timespec="seconds"),
+                    "rows": _json_records(persisted),
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        stamp = run_date or date.today().isoformat()
+        md_path = output / f"binary_shadow_summary_{stamp}.md"
+        md_path.write_text(_summary_markdown(summary, comparison, predictions, conclusions), encoding="utf-8")
+        saved_paths = {
+            "csv": str(output / "binary_shadow_predictions.csv"),
+            "json": str(output / "binary_shadow_predictions.json"),
+            "md": str(md_path),
+        }
     return BinaryShadowEvaluationResult(
         predictions=predictions,
         summary=summary,
         comparison=comparison,
-        saved_paths={
-            "csv": str(output / "binary_shadow_predictions.csv"),
-            "json": str(output / "binary_shadow_predictions.json"),
-            "md": str(md_path),
-        },
+        saved_paths=saved_paths,
         conclusions=conclusions,
     )
+
+
+def summarize_shadow_lifecycle(
+    predictions: pd.DataFrame,
+    feature_data: pd.DataFrame,
+    *,
+    ticker: str,
+) -> dict[str, object]:
+    """Build a read-only lifecycle summary for the fixed shadow candidate set."""
+    rows = predictions.copy()
+    if not rows.empty:
+        rows = rows[rows["ticker"].astype(str).eq(ticker)].copy()
+    for column in SHADOW_COLUMNS:
+        if column not in rows.columns:
+            rows[column] = ""
+    evaluated = _evaluate_prediction_rows(rows, feature_data)
+    result_values = rows.get("result", pd.Series(dtype=object)).fillna("").astype(str)
+    evaluated_values = evaluated.get("result", pd.Series(dtype=object)).fillna("").astype(str)
+    ready_mask = result_values.eq("pending") & evaluated_values.isin(["hit", "miss"])
+    key_columns = ["ticker", "feature_date", "candidate_name"]
+    duplicate_count = int(rows.duplicated(key_columns, keep="first").sum()) if not rows.empty else 0
+    expected_candidates = [candidate.name for candidate in default_shadow_candidates()]
+    candidates = sorted(rows["candidate_name"].dropna().astype(str).unique().tolist()) if not rows.empty else []
+    latest_feature = _latest_feature_date(feature_data, ticker)
+    latest_existing = set(
+        rows.loc[rows["feature_date"].astype(str).eq(latest_feature), "candidate_name"].astype(str)
+    ) if latest_feature else set()
+    confirmed_count = int(result_values.isin(["hit", "miss"]).sum())
+    pending_count = int(result_values.eq("pending").sum())
+    return {
+        "ticker": ticker,
+        "total_rows": int(len(rows)),
+        "pending_count": pending_count,
+        "confirmed_count": confirmed_count,
+        "hit_count": int(result_values.eq("hit").sum()),
+        "miss_count": int(result_values.eq("miss").sum()),
+        "latest_feature_date": _latest_shadow_feature_date(rows),
+        "latest_available_feature_date": latest_feature,
+        "candidates": candidates,
+        "expected_candidates": expected_candidates,
+        "target_close_available_count": int(ready_mask.sum()),
+        "rows_ready_for_evaluation": int(ready_mask.sum()),
+        "stale_pending_count": int(ready_mask.sum()),
+        "duplicate_count": duplicate_count,
+        "next_generation_eligible": bool(
+            latest_feature and not set(expected_candidates).issubset(latest_existing)
+        ),
+        "generation_mode": "manual_opt_in",
+        "evaluation_persistence_supported": True,
+        "sqlite_saved": False,
+    }
 
 
 def summarize_shadow_predictions(predictions: pd.DataFrame) -> pd.DataFrame:
@@ -428,6 +493,7 @@ def _evaluate_prediction_rows(predictions: pd.DataFrame, feature_data: pd.DataFr
         if column not in rows.columns:
             rows[column] = ""
     for index, row in rows.iterrows():
+        previous_result = str(row.get("result") or "")
         feature_date = pd.to_datetime(row.get("feature_date"), errors="coerce")
         if pd.isna(feature_date):
             rows.loc[index, "result"] = "pending"
@@ -444,7 +510,7 @@ def _evaluate_prediction_rows(predictions: pd.DataFrame, feature_data: pd.DataFr
         rows.loc[index, "actual_return"] = actual_return
         rows.loc[index, "actual_direction"] = actual_direction
         rows.loc[index, "result"] = result
-        if result != "pending":
+        if result != "pending" and previous_result not in {"hit", "miss"}:
             rows.loc[index, "evaluated_at"] = pd.Timestamp.now().isoformat(timespec="seconds")
     return rows[SHADOW_COLUMNS].reset_index(drop=True)
 
@@ -504,6 +570,23 @@ def _merge_shadow_predictions(existing: pd.DataFrame, new_rows: pd.DataFrame) ->
     combined = combined.drop_duplicates(["ticker", "feature_date", "candidate_name"], keep="last")
     combined = combined.drop(columns=["_feature_date_sort", "_run_sort"])
     return combined.sort_values(["feature_date", "candidate_name"]).reset_index(drop=True)
+
+
+def _latest_feature_date(feature_data: pd.DataFrame, ticker: str) -> str | None:
+    if feature_data.empty or "date" not in feature_data.columns:
+        return None
+    rows = feature_data.copy()
+    if "ticker" in rows.columns:
+        rows = rows[rows["ticker"].astype(str).eq(ticker)]
+    dates = pd.to_datetime(rows["date"], errors="coerce").dropna()
+    return pd.Timestamp(dates.max()).strftime("%Y-%m-%d") if not dates.empty else None
+
+
+def _latest_shadow_feature_date(rows: pd.DataFrame) -> str | None:
+    if rows.empty:
+        return None
+    dates = pd.to_datetime(rows["feature_date"], errors="coerce").dropna()
+    return pd.Timestamp(dates.max()).strftime("%Y-%m-%d") if not dates.empty else None
 
 
 def _normalize_live_predictions(live_predictions: pd.DataFrame | None) -> pd.DataFrame:

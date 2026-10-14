@@ -8,6 +8,7 @@ from stock_ai.evaluation.binary_shadow import (
     compare_shadow_with_live,
     evaluate_shadow_predictions,
     save_shadow_predictions,
+    summarize_shadow_lifecycle,
     summarize_shadow_predictions,
 )
 
@@ -183,6 +184,101 @@ def test_target_actual_missing_stays_pending(tmp_path):
 
     assert result.predictions["result"].iloc[0] == "pending"
     assert result.summary["pending_count"].iloc[0] == 1
+
+
+def test_shadow_lifecycle_distinguishes_ready_pending_and_generation_eligibility():
+    feature_data = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-07-08", "2026-07-09", "2026-07-10"]),
+            "ticker": ["7203.T"] * 3,
+            "close": [2500.0, 2525.0, 2510.0],
+        }
+    )
+    predictions = pd.DataFrame(
+        [_shadow_row_for_test("production_current"), _shadow_row_for_test("class_weight_balanced")]
+    )
+
+    summary = summarize_shadow_lifecycle(predictions, feature_data, ticker="7203.T")
+
+    assert summary["total_rows"] == 2
+    assert summary["pending_count"] == 2
+    assert summary["confirmed_count"] == 0
+    assert summary["rows_ready_for_evaluation"] == 2
+    assert summary["stale_pending_count"] == 2
+    assert summary["duplicate_count"] == 0
+    assert summary["next_generation_eligible"] is True
+    assert summary["generation_mode"] == "manual_opt_in"
+    assert summary["sqlite_saved"] is False
+
+
+def test_shadow_evaluation_dry_run_does_not_persist(tmp_path):
+    feature_data = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-07-08", "2026-07-09"]),
+            "ticker": ["7203.T", "7203.T"],
+            "close": [2500.0, 2525.0],
+        }
+    )
+    shadow_path = tmp_path / "input.csv"
+    pd.DataFrame([_shadow_row_for_test("production_current")]).to_csv(shadow_path, index=False)
+    before = shadow_path.read_bytes()
+
+    result = evaluate_shadow_predictions(
+        shadow_path,
+        feature_data,
+        ticker="7203.T",
+        output_dir=tmp_path / "output",
+        persist=False,
+    )
+
+    assert result.predictions.iloc[0]["result"] == "hit"
+    assert result.saved_paths == {}
+    assert shadow_path.read_bytes() == before
+    assert not (tmp_path / "output").exists()
+
+
+def test_shadow_evaluation_is_idempotent_and_preserves_other_tickers(tmp_path):
+    feature_data = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-07-08", "2026-07-09"]),
+            "ticker": ["7203.T", "7203.T"],
+            "close": [2500.0, 2525.0],
+        }
+    )
+    toyota = _shadow_row_for_test("production_current")
+    other = _shadow_row_for_test("production_current")
+    other["ticker"] = "9999.T"
+    shadow_path = tmp_path / "binary_shadow_predictions.csv"
+    pd.DataFrame([toyota, other]).to_csv(shadow_path, index=False)
+
+    first = evaluate_shadow_predictions(shadow_path, feature_data, ticker="7203.T", output_dir=tmp_path)
+    evaluated_at = first.predictions.iloc[0]["evaluated_at"]
+    second = evaluate_shadow_predictions(shadow_path, feature_data, ticker="7203.T", output_dir=tmp_path)
+    persisted = pd.read_csv(shadow_path)
+
+    assert second.predictions.iloc[0]["evaluated_at"] == evaluated_at
+    assert set(persisted["ticker"]) == {"7203.T", "9999.T"}
+
+
+def _shadow_row_for_test(candidate_name: str) -> dict[str, object]:
+    return {
+        "run_timestamp": "2026-07-08T16:48:55",
+        "ticker": "7203.T",
+        "feature_date": "2026-07-08",
+        "target_close_date": "2026-07-09",
+        "candidate_name": candidate_name,
+        "predicted_direction": "up",
+        "probability_up": 0.55,
+        "probability_down": 0.45,
+        "confidence": 0.55,
+        "source": "shadow",
+        "model_note": "test",
+        "actual_return": None,
+        "actual_direction": "",
+        "result": "pending",
+        "evaluated_at": "",
+        "caveat": "shadow only",
+    }
 
 
 def _features(rows: int) -> pd.DataFrame:

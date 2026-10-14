@@ -1,4 +1,4 @@
-﻿param(
+param(
     [string[]]$Ticker = @(),
     [string]$TickerFile = "",
     [string]$Start = "2010-01-01",
@@ -244,6 +244,19 @@ try {
             Invoke-PythonStep "train-multiclass $CurrentTicker" @("main.py", "train-multiclass", "--ticker", $CurrentTicker, "--threshold-profile", $MulticlassThresholdProfile, "--weight-mode", $MulticlassWeightMode)
             Invoke-PythonStep "predict-multiclass $CurrentTicker" @("main.py", "predict-multiclass", "--ticker", $CurrentTicker, "--threshold-profile", $MulticlassThresholdProfile, "--weight-mode", $MulticlassWeightMode)
             Write-Log "Binary and multiclass prediction saves confirmed for $CurrentTicker"
+
+            # Overnight (Close-to-Open) shadow production pillar prediction
+            try {
+                $OvernightModelPath = Join-Path $ProjectRoot "models\artifacts\lightgbm_overnight_binary_${CurrentTicker}.joblib"
+                if (Test-Path -LiteralPath $OvernightModelPath) {
+                    Invoke-PythonStep "predict-overnight $CurrentTicker" @("main.py", "predict-overnight", "--ticker", $CurrentTicker)
+                    Write-Log "Overnight prediction save confirmed for $CurrentTicker"
+                } else {
+                    Write-Log "OVERNIGHT SKIP: Model artifact not found for $CurrentTicker ($OvernightModelPath)"
+                }
+            } catch {
+                Write-Log "OVERNIGHT WARN: predict-overnight for $CurrentTicker failed: $($_.Exception.Message); continuing main flow"
+            }
         } catch {
             Write-Log "ERROR for ${CurrentTicker}: $($_.Exception.Message)"
             Write-Log $_.ScriptStackTrace

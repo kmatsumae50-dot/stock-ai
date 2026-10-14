@@ -22,6 +22,7 @@ HISTORY_COLUMNS = [
     "confidence",
     "close",
     "next_close",
+    "next_open",
     "actual_return",
     "actual_class",
     "actual_direction",
@@ -63,8 +64,13 @@ def build_prediction_outcomes(
         return _empty_history()
 
     rows = _normalize_predictions(rows)
+    eval_frame = (
+        _next_open_frame(prices)
+        if target in ("next_open_binary", "target_next_open_binary")
+        else _next_close_frame(prices)
+    )
     outcome = rows.merge(
-        _next_close_frame(prices),
+        eval_frame,
         on=["date", "ticker"],
         how="left",
     )
@@ -336,6 +342,23 @@ def _next_close_frame(prices: pd.DataFrame) -> pd.DataFrame:
     frame = frame.sort_values(["ticker", "date"]).reset_index(drop=True)
     frame["next_close"] = frame.groupby("ticker")["close"].shift(-1)
     frame["actual_return"] = frame["next_close"] / frame["close"] - 1
+    return frame
+
+
+def _next_open_frame(prices: pd.DataFrame) -> pd.DataFrame:
+    required = {"date", "ticker", "close", "open"}
+    if prices.empty or not required.issubset(prices.columns):
+        return pd.DataFrame(columns=["date", "ticker", "close", "next_open", "actual_return"])
+
+    frame = prices[["date", "ticker", "close", "open"]].copy()
+    frame["date"] = pd.to_datetime(frame["date"], errors="coerce").dt.normalize()
+    frame["ticker"] = frame["ticker"].astype(str)
+    frame["close"] = frame["close"].map(safe_float)
+    frame["open"] = frame["open"].map(safe_float)
+    frame = frame.dropna(subset=["date", "ticker", "close", "open"])
+    frame = frame.sort_values(["ticker", "date"]).reset_index(drop=True)
+    frame["next_open"] = frame.groupby("ticker")["open"].shift(-1)
+    frame["actual_return"] = frame["next_open"] / frame["close"] - 1
     return frame
 
 

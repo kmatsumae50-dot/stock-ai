@@ -6,6 +6,7 @@ param(
     [double]$DependencyWaitMinutes = 30,
     [int]$DependencyPollSeconds = 60,
     [double]$OperationsFreshnessMinutes = 180,
+    [double]$StaleLockMinutes = 150,
     [switch]$Force,
     [switch]$SkipShadow,
     [switch]$SkipOffline
@@ -19,6 +20,7 @@ $ReportDir = Join-Path $ProjectRoot "reports\autonomous"
 $LogDir = Join-Path $ProjectRoot "logs\autonomous"
 $LockPath = Join-Path $ReportDir ".research.lock"
 $HelperScript = Join-Path $ProjectRoot "scripts\autonomous_research_wrapper_helpers.ps1"
+$LockHelperScript = Join-Path $ProjectRoot "scripts\autonomous_lock_helpers.ps1"
 
 if ((Resolve-Path $PSScriptRoot).Path -ne (Join-Path $ProjectRoot "scripts")) {
     throw "Refusing to run outside the formal project root: $ProjectRoot"
@@ -29,37 +31,43 @@ if (-not (Test-Path -LiteralPath $Python)) {
 if (-not (Test-Path -LiteralPath $HelperScript)) {
     throw "Research wrapper helper is missing: $HelperScript"
 }
+if (-not (Test-Path -LiteralPath $LockHelperScript)) {
+    throw "Autonomous lock helper is missing: $LockHelperScript"
+}
 if ($MaxRuntimeMinutes -le 0 -or $MaxRuntimeMinutes -gt 120) {
     throw "MaxRuntimeMinutes must be in (0, 120]."
 }
 if ($DependencyWaitMinutes -lt 0) { throw "DependencyWaitMinutes cannot be negative." }
 if ($DependencyPollSeconds -le 0) { throw "DependencyPollSeconds must be positive." }
 if ($OperationsFreshnessMinutes -le 0) { throw "OperationsFreshnessMinutes must be positive." }
+if ($StaleLockMinutes -le $MaxRuntimeMinutes) {
+    throw "StaleLockMinutes must be greater than MaxRuntimeMinutes."
+}
 . $HelperScript
+. $LockHelperScript
 
 New-Item -ItemType Directory -Force -Path $ReportDir, $LogDir | Out-Null
 Set-Location -LiteralPath $ProjectRoot
-
-if (Test-Path -LiteralPath $LockPath) {
-    try {
-        $payload = Get-Content -LiteralPath $LockPath -Raw | ConvertFrom-Json
-        $owner = Get-Process -Id ([int]$payload.pid) -ErrorAction SilentlyContinue
-    } catch {
-        $owner = $null
-    }
-    if ($null -ne $owner) {
-        Write-Host "Research lock belongs to an active process: $LockPath"
-        exit 125
-    }
-    if (-not $Force) {
-        Write-Host "Stale or unreadable Research lock exists. Use -Force to remove it: $LockPath"
-        exit 125
-    }
-    Remove-Item -LiteralPath $LockPath -Force
-}
-
 $stamp = Get-Date -Format "yyyy-MM-dd_HHmm"
 $logPath = Join-Path $LogDir "research_$stamp.log"
+$PreflightLogLines = @()
+
+if (Test-Path -LiteralPath $LockPath) {
+    $LockState = Get-AutonomousLockState -LockPath $LockPath -StaleAfterMinutes $StaleLockMinutes
+    if (-not [bool]$LockState.CanRecover) {
+        $Message = "Research lock stop: classification=$($LockState.Classification), reason=$($LockState.Reason), path=$LockPath"
+        $Message | Tee-Object -FilePath $logPath -Append
+        exit 125
+    }
+    $Recovery = Move-AutonomousStaleLock `
+        -LockPath $LockPath `
+        -QuarantineDirectory (Join-Path $LogDir "stale_locks") `
+        -LockState $LockState
+    $PreflightLogLines += "lock_recovery_status: $($Recovery.Status)"
+    $PreflightLogLines += "lock_recovery_age_minutes: $([Math]::Round($Recovery.AgeMinutes, 2))"
+    $PreflightLogLines += "lock_recovery_quarantine_path: $($Recovery.QuarantinePath)"
+}
+
 $lockPayload = @{ pid = $PID; created_at = (Get-Date).ToString("o"); wrapper = $true } | ConvertTo-Json
 Set-Content -LiteralPath $LockPath -Value $lockPayload -Encoding UTF8
 
@@ -70,7 +78,7 @@ try {
         -WaitMinutes $DependencyWaitMinutes `
         -PollSeconds $DependencyPollSeconds `
         -FreshnessMinutes $OperationsFreshnessMinutes
-    @(
+    $PreflightLogLines + @(
         "Research dependency gate",
         "operations_task_name: $OperationsTaskName",
         "dependency_wait_minutes: $DependencyWaitMinutes",
@@ -78,6 +86,13 @@ try {
         "operations_freshness_minutes: $OperationsFreshnessMinutes"
     ) + @($dependency.LogLines) | Tee-Object -FilePath $logPath -Append
     if (-not [bool]$dependency.ShouldProceed) {
+        $ExitClassification = if ([int]$dependency.ExitCode -eq 3) {
+            "safe_operations_unhealthy_skip"
+        } else {
+            "technical_or_concurrency_dependency_stop"
+        }
+        "dependency_exit_classification: $ExitClassification" |
+            Tee-Object -FilePath $logPath -Append
         "Research was not started because dependency_status=$($dependency.Status)." |
             Tee-Object -FilePath $logPath -Append
         exit ([int]$dependency.ExitCode)

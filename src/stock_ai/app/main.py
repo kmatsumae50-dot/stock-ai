@@ -1635,6 +1635,93 @@ def _daily_brief_profile_news_impact_messages(
         return []
 
 
+def _render_overnight_prediction_section(
+    latest_overnight: pd.Series | None,
+    overnight_metrics: dict[str, object],
+    ticker: str,
+) -> None:
+    st.subheader("Overnight Gap (Close-to-Open) Prediction")
+    st.caption("前日終値 → 翌朝9:00始値のギャップ方向予測（Parallel Shadow Pillar）")
+
+    if latest_overnight is not None:
+        o_up = latest_overnight.get("probability_up")
+        o_down = latest_overnight.get("probability_down")
+        o_notes_raw = latest_overnight.get("notes") if "notes" in latest_overnight else None
+        o_notes = {}
+        if o_notes_raw:
+            try:
+                o_notes = json.loads(o_notes_raw)
+            except Exception:
+                pass
+        if not o_notes and o_up is not None:
+            from stock_ai.models.overnight import classify_overnight_quantile
+
+            o_notes = classify_overnight_quantile(float(o_up))
+
+        prediction_label = "Up" if safe_float(o_up, 0.0) >= 0.5 else "Down"
+        q_band = o_notes.get("quantile", "N/A")
+        q_label = o_notes.get("label", "")
+        q_hist_win = o_notes.get("historical_win_rate")
+
+        cols = st.columns(4)
+        cols[0].metric("Up probability", _format_percent(o_up))
+        cols[1].metric("Down probability", _format_percent(o_down))
+        cols[2].metric("Prediction", prediction_label)
+        cols[3].metric(
+            "Quantile Band (Win Rate)",
+            f"{q_band}: {q_label}" + (f" ({_format_percent(q_hist_win)})" if q_hist_win else ""),
+        )
+
+        st.plotly_chart(
+            _build_probability_chart(o_up, o_down),
+            use_container_width=True,
+            key=f"overnight_prob_chart_{ticker}",
+        )
+
+        if overnight_metrics:
+            m_cols = st.columns(4)
+            m = overnight_metrics.get("metrics", {})
+            m_cols[0].metric("Accuracy", _format_percent(m.get("accuracy")))
+            m_cols[1].metric("F1", _format_percent(m.get("f1")))
+            m_cols[2].metric("AUC", _format_percent(m.get("auc")))
+            m_cols[3].metric("Test rows", _format_number(m.get("rows"), digits=0))
+
+        with st.expander("Clean Test Quantile 帯域特性（検証勝率基準）", expanded=True):
+            st.markdown(
+                f"**現在の判定:** **{q_band} - {q_label}**（{o_notes.get('description', '')}）\n\n"
+                "| Quantile | 予測確率帯 (p_up) | 特性・シグナル | Clean Test 勝率 | 2026年勝率 |\n"
+                "|---|---|---|---|---|\n"
+                "| **Q5** | `>= 0.6059` | **強気ギャップアップ帯** | **64.5%** | **68.6%** |\n"
+                "| **Q4** | `0.5332 - 0.6059` | 強気先行帯 | 57.9% | 53.6% |\n"
+                "| **Q3** | `0.4638 - 0.5332` | 中立帯 | 62.5% | 61.1% |\n"
+                "| **Q2** | `0.3846 - 0.4638` | 弱気帯 | 44.6% | 46.2% |\n"
+                "| **Q1** | `<= 0.3846` | **ギャップダウン警戒帯** | **41.3%** | **41.7%** |\n"
+            )
+
+        o_features = _parse_top_features(latest_overnight.get("top_features"))
+        if not o_features and overnight_metrics:
+            o_features = overnight_metrics.get("top_features", []) or []
+        if o_features:
+            with st.expander("Overnight SHAP / explanation details", expanded=False):
+                if _has_shap_contributions(o_features):
+                    _render_shap_explanation(o_features, prediction_label)
+                else:
+                    st.caption("Feature importance top 10")
+                    st.plotly_chart(
+                        _build_feature_contribution_chart(o_features),
+                        use_container_width=True,
+                        key=f"overnight_features_chart_{ticker}",
+                    )
+                    st.dataframe(pd.DataFrame(o_features), use_container_width=True)
+    else:
+        st.info("Overnight prediction is not available. Run predict-overnight first.")
+        st.code(
+            f"python main.py train-overnight --ticker {ticker}\n"
+            f"python main.py predict-overnight --ticker {ticker}",
+            language="powershell",
+        )
+
+
 def _render_prediction_tab(
     ticker: str,
     data: pd.DataFrame,
@@ -1701,6 +1788,15 @@ def _render_prediction_tab(
     )
     binary_metrics = _load_binary_metrics(ticker)
     latest_binary = binary_predictions.iloc[0] if not binary_predictions.empty else None
+    overnight_predictions = _filter_prediction_rows(
+        predictions,
+        target="next_open_binary",
+        model_name="lightgbm_overnight_binary",
+    )
+    latest_overnight = (
+        overnight_predictions.iloc[0] if not overnight_predictions.empty else None
+    )
+    overnight_metrics = _load_overnight_metrics(ticker)
     up_probability = None
     down_probability = None
     prediction_label = "unknown"
@@ -1717,8 +1813,55 @@ def _render_prediction_tab(
         basic_reasons=basic_reasons,
     )
 
-    st.subheader("Current Prediction")
-    st.caption("Binary Prediction")
+    st.subheader("Current Prediction (Parallel Pillars)")
+    st.caption("翌日終値（Close-to-Close: 日中リターン）と翌朝始値（Close-to-Open: 夜間ギャップ）の並行シグナル")
+
+    pillar_col1, pillar_col2 = st.columns(2)
+    with pillar_col1:
+        st.markdown("##### 📈 翌日終値予測 (Close-to-Close / Primary)")
+        if latest_binary is not None:
+            p_up_c2c = latest_binary.get("probability_up")
+            lbl_c2c = _prediction_class_name(
+                latest_binary.get("predicted_class"),
+                latest_binary.get("target"),
+            )
+            auc_c2c = binary_metrics.get("metrics", {}).get("auc") if binary_metrics else None
+            m_c1, m_c2, m_c3 = st.columns(3)
+            m_c1.metric("判定", lbl_c2c)
+            m_c2.metric("Up 確率", _format_percent(p_up_c2c))
+            m_c3.metric("AUC", _format_percent(auc_c2c) if auc_c2c else "-")
+        else:
+            st.caption("未実行 (predict-binary を実行してください)")
+
+    with pillar_col2:
+        st.markdown("##### 🌙 翌朝始値予測 (Overnight Gap / Shadow Pillar)")
+        if latest_overnight is not None:
+            p_up_c2o = latest_overnight.get("probability_up")
+            lbl_c2o = _prediction_class_name(
+                latest_overnight.get("predicted_class"),
+                latest_overnight.get("target"),
+            )
+            o_notes_raw = latest_overnight.get("notes") if "notes" in latest_overnight else None
+            o_notes = json.loads(o_notes_raw) if o_notes_raw else {}
+            if not o_notes and p_up_c2o is not None:
+                from stock_ai.models.overnight import classify_overnight_quantile
+
+                o_notes = classify_overnight_quantile(float(p_up_c2o))
+            q_band = o_notes.get("quantile", "N/A")
+            q_label = o_notes.get("label", "")
+            q_win = o_notes.get("historical_win_rate")
+            m_o1, m_o2, m_o3 = st.columns(3)
+            m_o1.metric("判定", lbl_c2o)
+            m_o2.metric("Up 確率", _format_percent(p_up_c2o))
+            m_o3.metric(
+                "Quantile帯 (勝率)",
+                f"{q_band}: {q_label}" + (f" ({_format_percent(q_win)})" if q_win else ""),
+            )
+        else:
+            st.caption("未実行 (predict-overnight を実行してください)")
+
+    st.markdown("---")
+    st.caption("1. Close-to-Close (翌日終値) 詳細")
     if latest_binary is not None:
         up_probability = latest_binary.get("probability_up")
         down_probability = latest_binary.get("probability_down")
@@ -1788,6 +1931,12 @@ def _render_prediction_tab(
             f"python main.py predict-binary --ticker {ticker}",
             language="powershell",
         )
+
+    _render_overnight_prediction_section(
+        latest_overnight=latest_overnight,
+        overnight_metrics=overnight_metrics,
+        ticker=ticker,
+    )
 
     if not multiclass_predictions.empty:
         _render_multiclass_prediction_section(
@@ -2026,6 +2175,9 @@ def _filter_prediction_rows(
                 na=False,
             )
 
+    if "target" in predictions.columns and predictions["target"].notna().any():
+        if model_name is not None or model_name_contains is not None:
+            return predictions[target_match & model_match].copy()
     if model_name is not None:
         return predictions[target_match & model_match].copy()
     return predictions[target_match | model_match].copy()
@@ -15063,6 +15215,18 @@ def _load_binary_metrics(ticker: str) -> dict[str, object]:
     except (json.JSONDecodeError, OSError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _load_overnight_metrics(ticker: str) -> dict[str, object]:
+    metrics_path = PROJECT_ROOT / "reports" / "metrics" / f"lightgbm_overnight_binary_{ticker}.json"
+    if not metrics_path.exists():
+        return {}
+    try:
+        data = json.loads(metrics_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
 
 
 def _load_multiclass_metrics(

@@ -431,6 +431,42 @@
     market_impact_weight: 0.40
     source_type: aggregator
 
+  - name: TechStock2
+    aliases: ["TechStock²", "techstock2", "ts2.tech"]
+    credibility_score: 0.48
+    market_impact_weight: 0.34
+    source_type: general_news
+
+  - name: CryptoRank
+    aliases: ["cryptorank", "cryptorank.io"]
+    credibility_score: 0.45
+    market_impact_weight: 0.22
+    source_type: general_news
+
+  - name: NHK News
+    aliases: ["NHKニュース", "nhk news", "nhk.or.jp"]
+    credibility_score: 0.82
+    market_impact_weight: 0.38
+    source_type: general_news
+
+  - name: Visual Capitalist
+    aliases: ["visualcapitalist", "visualcapitalist.com"]
+    credibility_score: 0.62
+    market_impact_weight: 0.25
+    source_type: general_news
+
+  - name: Minkabu
+    aliases: ["みんかぶ", "minkabu", "minkabu.jp"]
+    credibility_score: 0.68
+    market_impact_weight: 0.46
+    source_type: financial_media
+
+  - name: NewsSwitch by Nikkan Kogyo Shimbun
+    aliases: ["ニュースイッチ by 日刊工業新聞社", "ニュースイッチ", "newswitch", "newswitch.jp"]
+    credibility_score: 0.70
+    market_impact_weight: 0.38
+    source_type: general_news
+
   - name: Unknown
     aliases: ["unknown", ""]
     credibility_score: 0.30

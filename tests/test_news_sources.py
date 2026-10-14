@@ -161,6 +161,42 @@ def test_august_unknown_source_profiles_are_resolved_conservatively():
         assert profile.credibility_score < 0.70
 
 
+def test_techstock2_source_profile_is_resolved_conservatively():
+    for source in ("TechStock²", "techstock2", "ts2.tech"):
+        profile = resolve_news_source_profile(source)
+        assert profile.name == "TechStock2"
+        assert profile.source_type == "general_news"
+        assert profile.credibility_score == 0.48
+        assert profile.market_impact_weight == 0.34
+
+
+def test_late_august_unknown_source_profiles_are_resolved_conservatively():
+    expected = {
+        "CryptoRank": ("CryptoRank", "general_news", 0.45, 0.22),
+        "cryptorank.io": ("CryptoRank", "general_news", 0.45, 0.22),
+        "NHKニュース": ("NHK News", "general_news", 0.82, 0.38),
+        "nhk.or.jp": ("NHK News", "general_news", 0.82, 0.38),
+        "Visual Capitalist": ("Visual Capitalist", "general_news", 0.62, 0.25),
+        "visualcapitalist.com": ("Visual Capitalist", "general_news", 0.62, 0.25),
+        "みんかぶ": ("Minkabu", "financial_media", 0.68, 0.46),
+        "minkabu.jp": ("Minkabu", "financial_media", 0.68, 0.46),
+        "ニュースイッチ by 日刊工業新聞社": (
+            "NewsSwitch by Nikkan Kogyo Shimbun",
+            "general_news",
+            0.70,
+            0.38,
+        ),
+        "newswitch.jp": ("NewsSwitch by Nikkan Kogyo Shimbun", "general_news", 0.70, 0.38),
+    }
+
+    for source, (name, source_type, credibility, impact) in expected.items():
+        profile = resolve_news_source_profile(source)
+        assert profile.name == name
+        assert profile.source_type == source_type
+        assert profile.credibility_score == credibility
+        assert profile.market_impact_weight == impact
+
+
 def test_load_news_source_profiles_from_yaml(tmp_path):
     path = tmp_path / "news_sources.yaml"
     path.write_text(

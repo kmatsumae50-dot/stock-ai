@@ -7,6 +7,7 @@ param(
     [string]$DependencyTaskName = "stock-ai daily predict",
     [double]$DependencyWaitMinutes = 30,
     [int]$DependencyPollSeconds = 60,
+    [double]$StaleLockMinutes = 30,
     [switch]$Force
 )
 
@@ -30,16 +31,24 @@ if ($DependencyWaitMinutes -lt 0) {
 if ($DependencyPollSeconds -le 0) {
     throw "DependencyPollSeconds must be positive."
 }
+if ($StaleLockMinutes -le $MaxRuntimeMinutes) {
+    throw "StaleLockMinutes must be greater than MaxRuntimeMinutes."
+}
 
 $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $Python)) {
     throw "Project virtual environment Python was not found: $Python"
 }
 $HelperScript = Join-Path $ScriptDir "autonomous_operations_wrapper_helpers.ps1"
+$LockHelperScript = Join-Path $ScriptDir "autonomous_lock_helpers.ps1"
 if (-not (Test-Path -LiteralPath $HelperScript)) {
     throw "Autonomous Operations wrapper helper was not found: $HelperScript"
 }
 . $HelperScript
+if (-not (Test-Path -LiteralPath $LockHelperScript)) {
+    throw "Autonomous lock helper was not found: $LockHelperScript"
+}
+. $LockHelperScript
 
 function Resolve-ProjectPath {
     param([string]$Value)
@@ -54,26 +63,22 @@ $ResolvedTaskQueuePath = Resolve-ProjectPath $TaskQueuePath
 $ResolvedReportDir = Resolve-ProjectPath $ReportDir
 $LogDir = Join-Path $ProjectRoot "logs\autonomous"
 $LockPath = Join-Path $ResolvedReportDir ".operations.lock"
+$LockRecoveryLogLines = @()
 New-Item -ItemType Directory -Path $ResolvedReportDir -Force | Out-Null
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 
 if (Test-Path -LiteralPath $LockPath) {
-    if (-not $Force) {
-        throw "Autonomous Operations is already locked: $LockPath"
+    $LockState = Get-AutonomousLockState -LockPath $LockPath -StaleAfterMinutes $StaleLockMinutes
+    if (-not [bool]$LockState.CanRecover) {
+        throw "Autonomous Operations lock stop: classification=$($LockState.Classification), reason=$($LockState.Reason), path=$LockPath"
     }
-    $OwnerIsActive = $false
-    try {
-        $LockData = Get-Content -LiteralPath $LockPath -Raw | ConvertFrom-Json
-        if ($null -ne $LockData.pid) {
-            $OwnerIsActive = $null -ne (Get-Process -Id ([int]$LockData.pid) -ErrorAction SilentlyContinue)
-        }
-    } catch {
-        $OwnerIsActive = $false
-    }
-    if ($OwnerIsActive) {
-        throw "The existing lock belongs to an active process: $LockPath"
-    }
-    Remove-Item -LiteralPath $LockPath -Force
+    $Recovery = Move-AutonomousStaleLock `
+        -LockPath $LockPath `
+        -QuarantineDirectory (Join-Path $LogDir "stale_locks") `
+        -LockState $LockState
+    $LockRecoveryLogLines += "lock_recovery_status: $($Recovery.Status)"
+    $LockRecoveryLogLines += "lock_recovery_age_minutes: $([Math]::Round($Recovery.AgeMinutes, 2))"
+    $LockRecoveryLogLines += "lock_recovery_quarantine_path: $($Recovery.QuarantinePath)"
 }
 
 $LockStream = $null
@@ -99,6 +104,7 @@ try {
         "dependency_wait_minutes: $DependencyWaitMinutes",
         "dependency_poll_seconds: $DependencyPollSeconds"
     )
+    $DependencyLogLines += $LockRecoveryLogLines
     $DependencyResult = Wait-AutonomousDependencyTask `
         -TaskName $DependencyTaskName `
         -WaitMinutes $DependencyWaitMinutes `

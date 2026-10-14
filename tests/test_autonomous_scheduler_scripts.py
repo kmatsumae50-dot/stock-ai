@@ -34,6 +34,8 @@ def test_autonomous_wrapper_keeps_safety_controls_and_dependency_wait() -> None:
     assert "$ExitCode = 125" in text
     assert "$ExitCode = [int]$Process.ExitCode" in text
     assert "exit $ExitCode" in text
+    assert "StaleLockMinutes" in text
+    assert "Move-AutonomousStaleLock" in text
 
 
 def _run_dependency_helper(body: str) -> dict[str, object]:
@@ -130,7 +132,7 @@ def test_active_lock_prevents_concurrent_wrapper_run(tmp_path: Path) -> None:
     )
 
     assert result.returncode != 0
-    assert "Autonomous Operations is already locked" in (result.stdout + result.stderr)
+    assert "Autonomous Operations lock stop" in (result.stdout + result.stderr)
     assert lock_path.exists()
 
 

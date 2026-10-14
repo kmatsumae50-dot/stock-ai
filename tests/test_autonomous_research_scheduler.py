@@ -131,6 +131,9 @@ def test_research_wrapper_keeps_lock_timeout_and_dependency_gate() -> None:
     assert "OperationsFreshnessMinutes" in text
     assert "exit ([int]$dependency.ExitCode)" in text
     assert "Research exceeded the wrapper runtime limit" in text
+    assert "safe_operations_unhealthy_skip" in text
+    assert "StaleLockMinutes" in text
+    assert "Move-AutonomousStaleLock" in text
     assert "exit $exitCode" in text
     assert "finally {" in text
 
@@ -198,6 +201,7 @@ def test_research_registration_whatif_does_not_create_task() -> None:
         check=False,
         capture_output=True,
         text=True,
+        errors="replace",
     )
     result = subprocess.run(
         [
@@ -217,6 +221,7 @@ def test_research_registration_whatif_does_not_create_task() -> None:
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
+        errors="replace",
     )
 
     assert result.returncode == 0
@@ -232,5 +237,6 @@ def test_research_registration_whatif_does_not_create_task() -> None:
         check=False,
         capture_output=True,
         text=True,
+        errors="replace",
     )
     assert check.returncode == 0

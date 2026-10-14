@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import json
@@ -104,6 +104,12 @@ def main() -> None:
 
     train_binary = subparsers.add_parser("train-binary", help="Train LightGBM up/down model")
     train_binary.add_argument("--ticker", required=True)
+
+    train_overnight = subparsers.add_parser(
+        "train-overnight",
+        help="Train LightGBM overnight (Close-to-Open gap) model",
+    )
+    train_overnight.add_argument("--ticker", required=True)
 
     train_multiclass = subparsers.add_parser(
         "train-multiclass",
@@ -245,6 +251,19 @@ def main() -> None:
     predict_binary.add_argument("--ticker", required=True)
     predict_binary.add_argument("--model-path", default=None)
 
+    predict_overnight = subparsers.add_parser(
+        "predict-overnight",
+        help="Predict latest overnight (Close-to-Open gap) result with quantile bands and store in SQLite",
+    )
+    predict_overnight.add_argument("--ticker", required=True)
+    predict_overnight.add_argument("--model-path", default=None)
+
+    overnight_status = subparsers.add_parser(
+        "overnight-status",
+        help="Inspect overnight model artifact, metrics, and latest prediction status",
+    )
+    overnight_status.add_argument("--ticker", required=True)
+
     shadow_predict = subparsers.add_parser(
         "binary-shadow-predict",
         help="Create binary shadow predictions in report files without writing SQLite",
@@ -252,6 +271,7 @@ def main() -> None:
     shadow_predict.add_argument("--ticker", required=True)
     shadow_predict.add_argument("--model-path", default=None)
     shadow_predict.add_argument("--output-dir", default=str(Path("reports") / "evaluation"))
+    shadow_predict.add_argument("--dry-run", action="store_true")
 
     shadow_evaluate = subparsers.add_parser(
         "binary-shadow-evaluate",
@@ -260,6 +280,17 @@ def main() -> None:
     shadow_evaluate.add_argument("--ticker", required=True)
     shadow_evaluate.add_argument("--shadow-path", default=str(Path("reports") / "evaluation" / "binary_shadow_predictions.csv"))
     shadow_evaluate.add_argument("--output-dir", default=str(Path("reports") / "evaluation"))
+    shadow_evaluate.add_argument("--dry-run", action="store_true")
+
+    shadow_status = subparsers.add_parser(
+        "binary-shadow-status",
+        help="Inspect binary shadow lifecycle without generating predictions or writing files",
+    )
+    shadow_status.add_argument("--ticker", required=True)
+    shadow_status.add_argument(
+        "--shadow-path",
+        default=str(Path("reports") / "evaluation" / "binary_shadow_predictions.csv"),
+    )
 
     predict_multiclass = subparsers.add_parser(
         "predict-multiclass",
@@ -1524,6 +1555,63 @@ def main() -> None:
         print(json.dumps(metrics, indent=2))
         return
 
+    if args.command == "train-overnight":
+        from stock_ai.labels.targets import TARGET_NEXT_OPEN_BINARY, add_next_open_binary_target
+        from stock_ai.models.baseline import (
+            evaluate_binary_classifier,
+            get_feature_importance,
+            save_model,
+        )
+        from stock_ai.models.overnight import (
+            OVERNIGHT_ARTIFACT_FILENAME,
+            OVERNIGHT_METRICS_FILENAME,
+            train_lightgbm_overnight_classifier,
+        )
+
+        feature_path = settings.paths.feature_data_dir / f"{args.ticker}.parquet"
+        dataset = read_parquet(feature_path)
+        if TARGET_NEXT_OPEN_BINARY not in dataset.columns:
+            dataset = add_next_open_binary_target(dataset)
+        train_data, valid_data, test_data = chronological_train_valid_test_split(dataset)
+        model, feature_columns = train_lightgbm_overnight_classifier(train_data, valid_data)
+        metrics = evaluate_binary_classifier(
+            model,
+            test_data,
+            feature_columns,
+            target_column=TARGET_NEXT_OPEN_BINARY,
+        )
+        top_features = get_feature_importance(model, feature_columns, top_n=10)
+        model_filename = OVERNIGHT_ARTIFACT_FILENAME.format(ticker=args.ticker)
+        model_path = settings.paths.model_dir / model_filename
+        save_model(
+            model,
+            feature_columns,
+            model_path,
+            metadata={
+                "target": TARGET_NEXT_OPEN_BINARY,
+                "metrics": metrics,
+                "top_features": top_features,
+            },
+        )
+        metrics_filename = OVERNIGHT_METRICS_FILENAME.format(ticker=args.ticker)
+        metrics_path = Path("reports") / "metrics" / metrics_filename
+        metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        metrics_path.write_text(
+            json.dumps(
+                {
+                    "metrics": metrics,
+                    "feature_columns": feature_columns,
+                    "top_features": top_features,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        print(f"overnight model: {model_path}")
+        print(f"overnight metrics: {metrics_path}")
+        print(json.dumps(metrics, indent=2))
+        return
+
     if args.command == "train-multiclass":
         from stock_ai.models.baseline import (
             evaluate_classifier,
@@ -2013,6 +2101,108 @@ def main() -> None:
             )
         return
 
+    if args.command == "predict-overnight":
+        from stock_ai.models.overnight import (
+            OVERNIGHT_ARTIFACT_FILENAME,
+            OVERNIGHT_MODEL_NAME,
+            OVERNIGHT_TARGET,
+            predict_latest_overnight_rows,
+        )
+        from stock_ai.models.predict import load_model_bundle
+
+        feature_path = settings.paths.feature_data_dir / f"{args.ticker}.parquet"
+        model_path = (
+            Path(args.model_path)
+            if args.model_path
+            else settings.paths.model_dir / OVERNIGHT_ARTIFACT_FILENAME.format(ticker=args.ticker)
+        )
+        dataset = read_parquet(feature_path)
+        bundle = load_model_bundle(model_path)
+        top_features = bundle.get("metadata", {}).get("top_features", [])
+        predictions = predict_latest_overnight_rows(
+            bundle["model"],
+            bundle["feature_columns"],
+            dataset,
+            top_features=top_features,
+            target=OVERNIGHT_TARGET,
+            model_name=OVERNIGHT_MODEL_NAME,
+        )
+        count = upsert_predictions(predictions, settings.paths.database_path)
+        if count <= 0:
+            raise SystemExit("No overnight prediction rows were saved.")
+        print(f"saved overnight predictions: {count}")
+        if not predictions.empty:
+            row = predictions.iloc[0]
+            notes = json.loads(row.get("notes") or "{}")
+            print(
+                "saved overnight prediction detail: "
+                f"date={pd_to_date_string(row.get('date'))}, "
+                f"ticker={row.get('ticker')}, "
+                f"target={row.get('target')}, "
+                f"model={row.get('model_name')}, "
+                f"p_up={row.get('probability_up'):.4f}, "
+                f"quantile={notes.get('quantile', 'N/A')} ({notes.get('label', '')}), "
+                f"hist_win_rate={notes.get('historical_win_rate', 'N/A')}"
+            )
+        return
+
+    if args.command == "overnight-status":
+        from stock_ai.models.overnight import (
+            OVERNIGHT_ARTIFACT_FILENAME,
+            OVERNIGHT_METRICS_FILENAME,
+            OVERNIGHT_MODEL_NAME,
+            OVERNIGHT_TARGET,
+        )
+        from stock_ai.storage.sqlite_store import read_prediction_history
+
+        model_filename = OVERNIGHT_ARTIFACT_FILENAME.format(ticker=args.ticker)
+        model_path = settings.paths.model_dir / model_filename
+        metrics_filename = OVERNIGHT_METRICS_FILENAME.format(ticker=args.ticker)
+        metrics_path = Path("reports") / "metrics" / metrics_filename
+
+        history = read_prediction_history(
+            settings.paths.database_path,
+            ticker=args.ticker,
+            target=OVERNIGHT_TARGET,
+            model_name=OVERNIGHT_MODEL_NAME,
+            prediction_type="live",
+        )
+
+        status_info: dict[str, object] = {
+            "ticker": args.ticker,
+            "target": OVERNIGHT_TARGET,
+            "model_name": OVERNIGHT_MODEL_NAME,
+            "artifact_exists": model_path.exists(),
+            "artifact_path": str(model_path) if model_path.exists() else None,
+            "metrics_exists": metrics_path.exists(),
+            "metrics_path": str(metrics_path) if metrics_path.exists() else None,
+            "history_rows": len(history),
+            "latest_prediction": None,
+        }
+        if metrics_path.exists():
+            try:
+                metrics_data = json.loads(metrics_path.read_text(encoding="utf-8"))
+                status_info["metrics"] = metrics_data.get("metrics")
+            except Exception:
+                pass
+        if not history.empty:
+            from stock_ai.models.overnight import classify_overnight_quantile
+
+            latest_row = history.sort_values("date").iloc[-1].to_dict()
+            p_up = latest_row.get("probability_up")
+            q_info = classify_overnight_quantile(float(p_up)) if p_up is not None else {}
+            status_info["latest_prediction"] = {
+                "date": str(latest_row.get("date")),
+                "probability_up": p_up,
+                "predicted_class": latest_row.get("predicted_class"),
+                "quantile": q_info.get("quantile"),
+                "label": q_info.get("label"),
+                "historical_win_rate": q_info.get("historical_win_rate"),
+                "notes": q_info,
+            }
+        print(json.dumps(status_info, indent=2, ensure_ascii=False))
+        return
+
     if args.command == "binary-shadow-predict":
         from stock_ai.evaluation.binary_shadow import (
             build_binary_shadow_predictions,
@@ -2031,7 +2221,7 @@ def main() -> None:
             ticker=args.ticker,
             production_model_path=model_path,
         )
-        paths = save_shadow_predictions(predictions, args.output_dir)
+        paths = {} if args.dry_run else save_shadow_predictions(predictions, args.output_dir)
         print(
             json.dumps(
                 {
@@ -2043,6 +2233,7 @@ def main() -> None:
                     if not predictions.empty
                     else [],
                     "sqlite_saved": False,
+                    "dry_run": bool(args.dry_run),
                 },
                 indent=2,
                 ensure_ascii=False,
@@ -2050,6 +2241,19 @@ def main() -> None:
         )
         for artifact, path in paths.items():
             print(f"{artifact}: {path}")
+        return
+
+    if args.command == "binary-shadow-status":
+        from stock_ai.evaluation.binary_shadow import (
+            read_shadow_predictions,
+            summarize_shadow_lifecycle,
+        )
+
+        feature_path = settings.paths.feature_data_dir / f"{args.ticker}.parquet"
+        dataset = read_parquet(feature_path)
+        predictions = read_shadow_predictions(args.shadow_path)
+        summary = summarize_shadow_lifecycle(predictions, dataset, ticker=args.ticker)
+        print(json.dumps(summary, indent=2, ensure_ascii=False))
         return
 
     if args.command == "binary-shadow-evaluate":
@@ -2071,6 +2275,7 @@ def main() -> None:
             ticker=args.ticker,
             output_dir=args.output_dir,
             live_predictions=live_predictions,
+            persist=not args.dry_run,
         )
         print(
             json.dumps(
@@ -2079,6 +2284,7 @@ def main() -> None:
                     "summary_rows": len(result.summary),
                     "prediction_rows": len(result.predictions),
                     "sqlite_saved": False,
+                    "dry_run": bool(args.dry_run),
                 },
                 indent=2,
                 ensure_ascii=False,

@@ -1,60 +1,54 @@
 # PROJECT_STATE.md
 
-最終更新: 2026-06-05
+Last updated: 2026-09-04
 
-## 現在の状態
+## Current Scope
 
-このリポジトリは、日経225中心の日本株シグナル生成システムとして、Phase 1の基盤がかなり進んでいる。現状は、単なる設計メモではなく、Toyota `7203.T` を中心に価格取得、外部市場データ、特徴量、LightGBM予測、予測履歴、Streamlit UI、評価、ニュース補助、類似検索、日次実行まで動かすための構成になっている。
+This repository is an operational stock-analysis and daily-prediction system centered on Toyota Motor (`7203.T`). It includes price and external-market ingestion, feature generation, LightGBM predictions, SQLite history, Streamlit views, news quality controls, offline evaluation, and Windows scheduled operation.
 
-ただし、日経225全体を安定運用する完成形ではまだない。現在の運用対象は主に `7203.T` で、設定上の小規模ユニバースとして `7203.T`, `6758.T`, `9984.T`, `8306.T`, `6861.T` が登録されている。
+The system is not an automated trading system and is not ready for broad Nikkei 225 production use. Production behavior remains intentionally conservative.
 
-## 完了済み・実装済みの主な要素
+## Operational Posture
 
-- `main.py` と `src/stock_ai/cli.py` によるCLI実行口。
-- yfinance系の株価取得と外部市場データ取得。
-- Parquet保存とSQLite保存。
-- 日足OHLCVからのテクニカル特徴量生成。
-- 翌営業日向けのbinary予測とmulticlass予測。
-- 予測履歴をSQLiteに保存し、live/backfillを分けて扱う仕組み。
-- 時系列分割、バックテスト、予測履歴評価。
-- Streamlit UI。Daily Brief、Chart、Technical、Prediction、Prediction History、Backtest、Evaluation、Similar Patterns、Cross-Ticker Similarity、Lead-Lag、Anomaly、Dataなどのタブがある。
-- 手動ニュースCSV、ニュース品質チェック、ニューススコア更新、ニュース影響評価。
-- 決算イベントCSVの取り込み。
-- ルールベースのニューステーマ、レジーム、異常検知、リスクスコア。
-- 類似パターン、クロスティッカー類似、リードラグ分析。
-- SHAP/理由生成/統合理由の仕組み。
-- Windowsの日次予測用PowerShellスクリプトとタスクスケジューラ登録スクリプト。
-- 多数のpytestテスト。
-- `docs/current_user_manual.md` と詳細マニュアル資料。
+- Daily prediction is scheduled for 10:30 with `FetchNews`, `DailyNewsProfiles`, and `NewsLimit 3`.
+- Autonomous Operations and Autonomous Research are separately scheduled behind health and freshness gates.
+- Health is acceptable only when `Action required` is zero. The current known WARN classes are documented missing live dates and the TOPIX proxy / fallback.
+- Eight known missed live dates are recorded in `configs/settings.yml`. They must not be recreated as live predictions.
+- The binary model is the primary production direction reference, but current reviewed evidence materially underperforms simple baselines. Production change is not ready.
+- The multiclass model is strongly flat-biased and remains reference/experimental only.
+- Binary shadow generation is manual/opt-in. Two rows are confirmed and no automatic generation task is registered.
+- Append-only tables are audit support only. The `predictions` snapshot remains the health and evaluation source.
 
-## 未完了・注意すべきこと
+## Data And History Semantics
 
-- 日経225全体の本格運用は未完成。まずは小規模ユニバースから拡張する。
-- ニュース分析は既にあるが、明示指示なしに新しいニュース分析軸を増やさない。
-- 新しいモデルや高度なAI化は、既存評価で必要性が明確になってから行う。
-- 自動売買、半自動売買はまだ検証前提が不足している。明示指示なしに実装しない。
-- UIは機能が多いが、目的は見栄えではなく、翌営業日の判断、急騰候補、急落リスク、検証結果を確認すること。
-- READMEの一部に文字化けした日本語が残っている可能性がある。必要なら別タスクで整理する。
-- データリーク対策は常に確認する。特にニュース日時、決算発表日、同日終値、調整後データ、学習/検証分割に注意する。
+- `predictions.date` is effectively the Feature date used by the model.
+- Target close date is the next trading day's close after the Feature date.
+- `created_at` is the SQLite save timestamp.
+- `live`, `backfill`, shadow, and append-only audit rows must remain distinct.
+- Scheduled time and actual task start time must be reported separately because `StartWhenAvailable` can produce catch-up runs.
 
-## 次にやるべきこと
+## Known Gaps
 
-1. 既存のdaily predictionフローを、現在の小規模ユニバースで安定して回せるか確認する。
-2. 予測履歴とバックテスト評価から、binary/multiclassのどの条件で強いか弱いかを整理する。
-3. 急騰候補と急落リスクの評価指標を明確にし、既存のmulticlass、risk score、anomaly、similarityと結びつける。
-4. `configs/universe.yml` を、日経225拡張に耐える形式へ整える。ただし一気に全銘柄運用へ飛ばない。
-5. ニュースと決算の取り込みは、既存の手動CSV/設定/品質チェックを壊さず、検証可能な形で少しずつ強化する。
-6. READMEの文字化けや運用説明を、必要に応じて現在の実装に合わせて整理する。
-7. 重要な変更では必ずpytestを実行し、CLIまたはStreamlitで最低限の動作確認を行う。
+- Earnings event CSV files are present but header-only. The pipeline therefore uses the documented empty-event fallback. An `earnings_data_pipeline` is a future phase, not part of current production.
+- Five old experimental multiclass rows are labeled `live`. Production history views filter them, but some aggregate diagnostics can include them unless they filter the production model slot. Do not delete the rows; harden aggregation in a later Level 1 maintenance task.
+- Append-only audit rows do not cover current scheduled production snapshots. The mismatch is informational until an explicit migration is reviewed.
+- Runtime state can lag actual scheduler and filesystem state. Existing reconciliation CLIs should be used instead of editing state JSON by hand.
+- Source code alone is not a complete backup. Database, models, data, and selected runtime lifecycle records require a separate backup.
 
-## Codexに投げるときの使い方
+## Next Safe Work
 
-作業依頼の前に、Codexへこの3ファイルを読むように指示するとよい。
+1. Review and commit the current dirty main changes in small groups. Do not auto-commit runtime/generated files.
+2. Create and verify an offline backup using `docs/environment_handoff.md`.
+3. Re-run Operations after a fresh daily cycle and let Research follow its normal gate without `--force`.
+4. Run the Codex Agent preflight read-only. Only after main is clean and all gates are healthy may `recent_regime_robustness` be considered.
+5. Treat `earnings_data_pipeline` and production-model changes as separate reviewed phases.
 
-```text
-まず AGENTS.md、PROJECT_OVERVIEW.md、PROJECT_STATE.md を読んで、このプロジェクトの方針と現在地に合わせて作業してください。
-今回は <具体的な1タスク> だけを実装してください。
-既存構造を壊さず、データリークに注意し、実装後にテストまたは動作確認をしてください。
-```
+## Reference Documents
 
-複数ファイル変更、データ保存、特徴量、予測処理、評価、急騰/急落検出に関わる依頼では、推論設定は高い、または非常に高いを推奨する。
+- `README.md`
+- `docs/current_user_manual.md`
+- `docs/environment_handoff.md`
+- `reports/autonomous/production_prediction_integrity_audit_2026-09-02.md`
+- `reports/autonomous/operational_state_reconciliation_2026-09-04.md`
+
+For any future task, preserve data-leakage controls, production history integrity, and the distinction between analysis evidence and production decisions.
