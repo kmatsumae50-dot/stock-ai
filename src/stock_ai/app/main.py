@@ -1641,7 +1641,7 @@ def _render_multi_ticker_overnight_scanner(
     selected_ticker: str,
 ) -> None:
     st.markdown("---")
-    st.subheader("🌐 Multi-Ticker Overnight Scanner（5銘柄横断ランキング一覧表）")
+    st.subheader("🌐 Multi-Ticker Overnight Scanner（監視ユニバース横断ランキング一覧表）")
     st.caption("全監視銘柄の前日終値→翌朝始値ギャップ予測（Overnight p_up）を比較し、最有望銘柄と警戒銘柄を即座に一覧化します。")
 
     all_preds = read_latest_predictions(database_path)
@@ -1655,7 +1655,7 @@ def _render_multi_ticker_overnight_scanner(
     for t_info in universe:
         t_code = t_info.code
         t_name = t_info.name
-        t_sector = getattr(t_info, "sector", "") or ""
+        t_sector = getattr(t_info, "sector_ja", "") or getattr(t_info, "sector", "") or ""
 
         t_pred = None
         if not overnight_preds.empty:
@@ -1697,6 +1697,7 @@ def _render_multi_ticker_overnight_scanner(
                     "date": p_date,
                     "p_up": p_up if p_up is not None else -1.0,
                     "direction": direction,
+                    "q_band": q_band,
                     "quantile": f"{q_band} ({q_label})" if q_label else q_band,
                     "win_rate": q_win,
                     "auc": auc_val,
@@ -1712,6 +1713,7 @@ def _render_multi_ticker_overnight_scanner(
                     "date": "-",
                     "p_up": -1.0,
                     "direction": "未実行",
+                    "q_band": "-",
                     "quantile": "-",
                     "win_rate": None,
                     "auc": auc_val,
@@ -1723,33 +1725,96 @@ def _render_multi_ticker_overnight_scanner(
         st.info("No overnight predictions found.")
         return
 
-    rows.sort(key=lambda r: r["p_up"], reverse=True)
-
     valid_rows = [r for r in rows if r["p_up"] >= 0]
     if valid_rows:
-        top_pick = valid_rows[0]
-        bottom_pick = valid_rows[-1]
-        c1, c2, c3 = st.columns(3)
+        sorted_by_pup = sorted(valid_rows, key=lambda r: r["p_up"], reverse=True)
+        top_pick = sorted_by_pup[0]
+        q5_count = sum(1 for r in valid_rows if r["q_band"] == "Q5")
+        q1_count = sum(1 for r in valid_rows if r["q_band"] == "Q1")
+        avg_pup = sum(r["p_up"] for r in valid_rows) / len(valid_rows)
+
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric(
-            "🌟 最有望 Overnight (Top Bullish)",
-            f"{top_pick['ticker']} ({top_pick['name']})",
-            f"p_up {_format_percent(top_pick['p_up'])} | {top_pick['quantile']}",
+            "🔥 本日の Q5 点灯銘柄数",
+            f"{q5_count} 銘柄",
+            "強気ギャップアップ候補",
         )
         c2.metric(
-            "⚠️ 最大警戒 Overnight (Bottom Down)",
-            f"{bottom_pick['ticker']} ({bottom_pick['name']})",
-            f"p_up {_format_percent(bottom_pick['p_up'])} | {bottom_pick['quantile']}",
+            "⚠️ 本日の Q1 点灯銘柄数",
+            f"{q1_count} 銘柄",
+            "ギャップダウン警戒",
             delta_color="inverse",
         )
-        avg_pup = sum(r["p_up"] for r in valid_rows) / len(valid_rows)
         c3.metric(
-            "📊 ユニバース平均 Overnight p_up",
+            "🏆 トップ確信度銘柄",
+            f"{top_pick['ticker']} {top_pick['name']}",
+            f"p_up {_format_percent(top_pick['p_up'])} | {top_pick['q_band']}",
+        )
+        c4.metric(
+            "📊 ユニバース平均 p_up",
             _format_percent(avg_pup),
-            "強気優勢" if avg_pup >= 0.5 else "弱気警戒",
+            "全体強気優勢" if avg_pup >= 0.5 else "全体弱気警戒",
         )
 
+    # Filter & Sort controls
+    fc1, fc2, fc3 = st.columns([2, 2, 2])
+    with fc1:
+        q_filter = st.selectbox(
+            "Quantile帯フィルター",
+            options=[
+                "すべて表示",
+                "🔥 Q5（強気ギャップアップ帯）のみ",
+                "🔥 Q4〜Q5（買い候補帯）",
+                "⚠️ Q1（ギャップダウン警戒帯）のみ",
+            ],
+            index=0,
+            key="scanner_q_filter",
+        )
+    with fc2:
+        sectors = sorted({r["sector"] for r in rows if r["sector"]})
+        sec_filter = st.selectbox(
+            "セクター別フィルター",
+            options=["すべてのセクター"] + sectors,
+            index=0,
+            key="scanner_sec_filter",
+        )
+    with fc3:
+        sort_mode = st.selectbox(
+            "ソート順",
+            options=[
+                "Overnight p_up（降順）",
+                "Overnight p_up（昇順）",
+                "過去実績勝率（降順）",
+                "C2O AUC（降順）",
+            ],
+            index=0,
+            key="scanner_sort_mode",
+        )
+
+    # Apply filters
+    filtered_rows = rows.copy()
+    if q_filter == "🔥 Q5（強気ギャップアップ帯）のみ":
+        filtered_rows = [r for r in filtered_rows if r["q_band"] == "Q5"]
+    elif q_filter == "🔥 Q4〜Q5（買い候補帯）":
+        filtered_rows = [r for r in filtered_rows if r["q_band"] in ("Q4", "Q5")]
+    elif q_filter == "⚠️ Q1（ギャップダウン警戒帯）のみ":
+        filtered_rows = [r for r in filtered_rows if r["q_band"] == "Q1"]
+
+    if sec_filter != "すべてのセクター":
+        filtered_rows = [r for r in filtered_rows if r["sector"] == sec_filter]
+
+    # Apply sorting
+    if sort_mode == "Overnight p_up（降順）":
+        filtered_rows.sort(key=lambda r: r["p_up"], reverse=True)
+    elif sort_mode == "Overnight p_up（昇順）":
+        filtered_rows.sort(key=lambda r: (r["p_up"] if r["p_up"] >= 0 else 999.0))
+    elif sort_mode == "過去実績勝率（降順）":
+        filtered_rows.sort(key=lambda r: (r["win_rate"] if r["win_rate"] is not None else -1.0), reverse=True)
+    elif sort_mode == "C2O AUC（降順）":
+        filtered_rows.sort(key=lambda r: (r["auc"] if r["auc"] is not None else -1.0), reverse=True)
+
     display_data = []
-    for rank, r in enumerate(rows, 1):
+    for rank, r in enumerate(filtered_rows, 1):
         display_data.append(
             {
                 "順位": f"#{rank}",

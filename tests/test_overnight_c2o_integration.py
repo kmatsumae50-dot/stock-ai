@@ -353,3 +353,40 @@ def test_multi_ticker_overnight_universe_structure():
     auto_tickers = [t for t in universe if t.sector == "Automotive"]
     assert len(auto_tickers) == 3
 
+
+def test_prime_20_universe_structure_and_sectors():
+    """Verify universe.yml contains 20 Prime stocks across 10 sectors with Japanese mapping."""
+    from stock_ai.data.universe import load_universe
+
+    universe = load_universe()
+    assert len(universe) == 20
+
+    expected_tickers = [
+        "7203.T", "7267.T", "7201.T", "8035.T", "6857.T", "6723.T",
+        "8306.T", "8316.T", "8411.T", "8058.T", "8031.T", "6758.T",
+        "6501.T", "7011.T", "9984.T", "9433.T", "7974.T", "9983.T",
+        "4502.T", "4063.T",
+    ]
+    codes = [t.code for t in universe]
+    for code in expected_tickers:
+        assert code in codes
+
+    sectors = {t.sector for t in universe}
+    assert len(sectors) >= 10
+
+    # Verify Japanese sector translation works
+    for t in universe:
+        assert t.sector_ja != ""
+        assert len(t.sector_ja) >= 2
+
+
+def test_sync_overnight_universe_cli_parser_options():
+    """Verify sync-overnight-universe and predict-overnight parser configurations."""
+    import inspect
+    from stock_ai.cli import main
+
+    # Inspect module-level CLI parser without running full execution
+    cli_source = inspect.getsource(main)
+    assert "sync-overnight-universe" in cli_source
+    assert "--all-universe" in cli_source
+

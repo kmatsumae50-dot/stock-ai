@@ -4,6 +4,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from stock_ai.config import PROJECT_ROOT, ensure_project_dirs, load_settings
 from stock_ai.data.universe import load_universe
@@ -256,8 +257,22 @@ def main() -> None:
         "predict-overnight",
         help="Predict latest overnight (Close-to-Open gap) result with quantile bands and store in SQLite",
     )
-    predict_overnight.add_argument("--ticker", required=True)
+    predict_overnight.add_argument("--ticker", default=None, help="Target ticker code (omit if using --all-universe)")
+    predict_overnight.add_argument("--all-universe", action="store_true", help="Predict overnight for all tickers in universe")
     predict_overnight.add_argument("--model-path", default=None)
+
+    sync_overnight = subparsers.add_parser(
+        "sync-overnight-universe",
+        help="Bulk sync (download, build features, train overnight model, calibrate quantiles, predict) for universe tickers",
+    )
+    sync_overnight.add_argument("--tickers", default=None, help="Comma-separated tickers (defaults to universe)")
+    sync_overnight.add_argument("--start", default=None, help="Start date for downloads")
+    sync_overnight.add_argument("--end", default=None, help="End date for downloads")
+    sync_overnight.add_argument("--force-download", action="store_true", help="Force re-download raw data")
+    sync_overnight.add_argument("--force-features", action="store_true", help="Force re-build 163 features")
+    sync_overnight.add_argument("--force-train", action="store_true", help="Force re-train overnight model")
+    sync_overnight.add_argument("--skip-train", action="store_true", help="Skip model training")
+    sync_overnight.add_argument("--skip-predict", action="store_true", help="Skip prediction step")
 
     overnight_status = subparsers.add_parser(
         "overnight-status",
@@ -1557,73 +1572,7 @@ def main() -> None:
         return
 
     if args.command == "train-overnight":
-        from stock_ai.labels.targets import TARGET_NEXT_OPEN_BINARY, add_next_open_binary_target
-        from stock_ai.models.baseline import (
-            evaluate_binary_classifier,
-            get_feature_importance,
-            save_model,
-        )
-        from stock_ai.models.overnight import (
-            OVERNIGHT_ARTIFACT_FILENAME,
-            OVERNIGHT_METRICS_FILENAME,
-            OVERNIGHT_QUANTILE_CUTOFFS,
-            compute_empirical_quantile_cutoffs,
-            train_lightgbm_overnight_classifier,
-        )
-
-        feature_path = settings.paths.feature_data_dir / f"{args.ticker}.parquet"
-        dataset = read_parquet(feature_path)
-        if TARGET_NEXT_OPEN_BINARY not in dataset.columns:
-            dataset = add_next_open_binary_target(dataset)
-        train_data, valid_data, test_data = chronological_train_valid_test_split(dataset)
-        model, feature_columns = train_lightgbm_overnight_classifier(train_data, valid_data)
-        metrics = evaluate_binary_classifier(
-            model,
-            test_data,
-            feature_columns,
-            target_column=TARGET_NEXT_OPEN_BINARY,
-        )
-        test_sub = test_data.dropna(subset=feature_columns + [TARGET_NEXT_OPEN_BINARY])
-        test_sub = test_sub[test_sub[TARGET_NEXT_OPEN_BINARY].isin([0, 1])]
-        if not test_sub.empty:
-            test_probs = model.predict_proba(test_sub[feature_columns])[:, 1]
-            quantile_cutoffs = compute_empirical_quantile_cutoffs(
-                test_sub[TARGET_NEXT_OPEN_BINARY].to_numpy(),
-                test_probs,
-            )
-        else:
-            quantile_cutoffs = OVERNIGHT_QUANTILE_CUTOFFS
-
-        top_features = get_feature_importance(model, feature_columns, top_n=10)
-        model_filename = OVERNIGHT_ARTIFACT_FILENAME.format(ticker=args.ticker)
-        model_path = settings.paths.model_dir / model_filename
-        save_model(
-            model,
-            feature_columns,
-            model_path,
-            metadata={
-                "target": TARGET_NEXT_OPEN_BINARY,
-                "metrics": metrics,
-                "quantile_cutoffs": quantile_cutoffs,
-                "top_features": top_features,
-            },
-        )
-        metrics_filename = OVERNIGHT_METRICS_FILENAME.format(ticker=args.ticker)
-        metrics_path = Path("reports") / "metrics" / metrics_filename
-        metrics_path.parent.mkdir(parents=True, exist_ok=True)
-        metrics_path.write_text(
-            json.dumps(
-                {
-                    "metrics": metrics,
-                    "quantile_cutoffs": quantile_cutoffs,
-                    "feature_columns": feature_columns,
-                    "top_features": top_features,
-                },
-                indent=2,
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
+        model_path, metrics_path, metrics = train_overnight_model_for_ticker(args.ticker, settings)
         print(f"overnight model: {model_path}")
         print(f"overnight metrics: {metrics_path}")
         print(json.dumps(metrics, indent=2))
@@ -2119,48 +2068,86 @@ def main() -> None:
         return
 
     if args.command == "predict-overnight":
-        from stock_ai.models.overnight import (
-            OVERNIGHT_ARTIFACT_FILENAME,
-            OVERNIGHT_MODEL_NAME,
-            OVERNIGHT_TARGET,
-            predict_latest_overnight_rows,
-        )
-        from stock_ai.models.predict import load_model_bundle
+        from stock_ai.data.universe import load_universe
 
-        feature_path = settings.paths.feature_data_dir / f"{args.ticker}.parquet"
-        model_path = (
-            Path(args.model_path)
-            if args.model_path
-            else settings.paths.model_dir / OVERNIGHT_ARTIFACT_FILENAME.format(ticker=args.ticker)
-        )
-        dataset = read_parquet(feature_path)
-        bundle = load_model_bundle(model_path)
-        top_features = bundle.get("metadata", {}).get("top_features", [])
-        predictions = predict_latest_overnight_rows(
-            bundle["model"],
-            bundle["feature_columns"],
-            dataset,
-            top_features=top_features,
-            target=OVERNIGHT_TARGET,
-            model_name=OVERNIGHT_MODEL_NAME,
-        )
-        count = upsert_predictions(predictions, settings.paths.database_path)
-        if count <= 0:
+        target_tickers: list[str] = []
+        if getattr(args, "all_universe", False) or not args.ticker:
+            target_tickers = [t.code for t in load_universe()]
+        else:
+            target_tickers = [args.ticker]
+
+        total_saved = 0
+        for t in target_tickers:
+            m_path = Path(args.model_path) if args.model_path else None
+            count, predictions = predict_overnight_for_ticker(t, settings, model_path=m_path)
+            total_saved += count
+            if not predictions.empty:
+                row = predictions.iloc[0]
+                notes = json.loads(row.get("notes") or "{}")
+                print(
+                    "saved overnight prediction detail: "
+                    f"date={pd_to_date_string(row.get('date'))}, "
+                    f"ticker={row.get('ticker')}, "
+                    f"target={row.get('target')}, "
+                    f"model={row.get('model_name')}, "
+                    f"p_up={row.get('probability_up'):.4f}, "
+                    f"quantile={notes.get('quantile', 'N/A')} ({notes.get('label', '')}), "
+                    f"hist_win_rate={notes.get('historical_win_rate', 'N/A')}"
+                )
+        if total_saved <= 0:
             raise SystemExit("No overnight prediction rows were saved.")
-        print(f"saved overnight predictions: {count}")
-        if not predictions.empty:
-            row = predictions.iloc[0]
-            notes = json.loads(row.get("notes") or "{}")
-            print(
-                "saved overnight prediction detail: "
-                f"date={pd_to_date_string(row.get('date'))}, "
-                f"ticker={row.get('ticker')}, "
-                f"target={row.get('target')}, "
-                f"model={row.get('model_name')}, "
-                f"p_up={row.get('probability_up'):.4f}, "
-                f"quantile={notes.get('quantile', 'N/A')} ({notes.get('label', '')}), "
-                f"hist_win_rate={notes.get('historical_win_rate', 'N/A')}"
+        print(f"saved overnight predictions: {total_saved} (tickers: {len(target_tickers)})")
+        return
+
+    if args.command == "sync-overnight-universe":
+        from stock_ai.data.universe import load_universe
+
+        if args.tickers:
+            ticker_list = [t.strip() for t in args.tickers.split(",") if t.strip()]
+        else:
+            ticker_list = [t.code for t in load_universe()]
+
+        start = args.start or settings.data.get("default_start", "2010-01-01")
+        print(f"=== Sync Overnight Universe ({len(ticker_list)} tickers) ===")
+
+        for idx, ticker in enumerate(ticker_list, 1):
+            print(f"[{idx}/{len(ticker_list)}] Processing {ticker}...")
+            raw_path = settings.paths.raw_data_dir / f"{ticker}.parquet"
+            if not raw_path.exists() or args.force_download:
+                print(f"  Downloading {ticker}...")
+                raw_data = fetch_daily_ohlcv(ticker, start=start, end=args.end)
+                write_parquet(raw_data, raw_path)
+
+            feat_path = settings.paths.feature_data_dir / f"{ticker}.parquet"
+            needs_feat = (
+                not feat_path.exists()
+                or args.force_features
+                or "target_next_open_binary" not in read_parquet(feat_path).columns
             )
+            if needs_feat:
+                print(f"  Building 163 features for {ticker}...")
+                _build_features_for_ticker(ticker, settings)
+
+            if not args.skip_train:
+                from stock_ai.models.overnight import OVERNIGHT_ARTIFACT_FILENAME
+
+                m_file = settings.paths.model_dir / OVERNIGHT_ARTIFACT_FILENAME.format(ticker=ticker)
+                if not m_file.exists() or args.force_train:
+                    print(f"  Training overnight model for {ticker}...")
+                    _, _, metrics = train_overnight_model_for_ticker(ticker, settings)
+                    print(f"  AUC: {metrics.get('auc', 0.0):.4f}")
+
+            if not args.skip_predict:
+                count, preds = predict_overnight_for_ticker(ticker, settings)
+                if not preds.empty:
+                    r = preds.iloc[0]
+                    n = json.loads(r.get("notes") or "{}")
+                    print(
+                        f"  Predicted {ticker}: p_up={r.get('probability_up'):.4f} | "
+                        f"{n.get('quantile', 'N/A')} ({n.get('label', '')})"
+                    )
+
+        print("=== Overnight Universe Sync Complete ===")
         return
 
     if args.command == "overnight-status":
@@ -2495,6 +2482,112 @@ def _build_features_for_ticker(ticker: str, settings) -> Path:
     output_path = settings.paths.feature_data_dir / f"{ticker}.parquet"
     write_parquet(features, output_path)
     return output_path
+
+
+def train_overnight_model_for_ticker(
+    ticker: str, settings
+) -> tuple[Path, Path, dict]:
+    from stock_ai.labels.targets import TARGET_NEXT_OPEN_BINARY, add_next_open_binary_target
+    from stock_ai.models.baseline import (
+        evaluate_binary_classifier,
+        get_feature_importance,
+        save_model,
+    )
+    from stock_ai.models.overnight import (
+        OVERNIGHT_ARTIFACT_FILENAME,
+        OVERNIGHT_METRICS_FILENAME,
+        OVERNIGHT_QUANTILE_CUTOFFS,
+        compute_empirical_quantile_cutoffs,
+        train_lightgbm_overnight_classifier,
+    )
+
+    feature_path = settings.paths.feature_data_dir / f"{ticker}.parquet"
+    dataset = read_parquet(feature_path)
+    if TARGET_NEXT_OPEN_BINARY not in dataset.columns:
+        dataset = add_next_open_binary_target(dataset)
+    train_data, valid_data, test_data = chronological_train_valid_test_split(dataset)
+    model, feature_columns = train_lightgbm_overnight_classifier(train_data, valid_data)
+    metrics = evaluate_binary_classifier(
+        model,
+        test_data,
+        feature_columns,
+        target_column=TARGET_NEXT_OPEN_BINARY,
+    )
+    test_sub = test_data.dropna(subset=feature_columns + [TARGET_NEXT_OPEN_BINARY])
+    test_sub = test_sub[test_sub[TARGET_NEXT_OPEN_BINARY].isin([0, 1])]
+    if not test_sub.empty:
+        test_probs = model.predict_proba(test_sub[feature_columns])[:, 1]
+        quantile_cutoffs = compute_empirical_quantile_cutoffs(
+            test_sub[TARGET_NEXT_OPEN_BINARY].to_numpy(),
+            test_probs,
+        )
+    else:
+        quantile_cutoffs = OVERNIGHT_QUANTILE_CUTOFFS
+
+    top_features = get_feature_importance(model, feature_columns, top_n=10)
+    model_filename = OVERNIGHT_ARTIFACT_FILENAME.format(ticker=ticker)
+    model_path = settings.paths.model_dir / model_filename
+    save_model(
+        model,
+        feature_columns,
+        model_path,
+        metadata={
+            "target": TARGET_NEXT_OPEN_BINARY,
+            "metrics": metrics,
+            "quantile_cutoffs": quantile_cutoffs,
+            "top_features": top_features,
+        },
+    )
+    metrics_filename = OVERNIGHT_METRICS_FILENAME.format(ticker=ticker)
+    metrics_path = Path("reports") / "metrics" / metrics_filename
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    metrics_path.write_text(
+        json.dumps(
+            {
+                "metrics": metrics,
+                "quantile_cutoffs": quantile_cutoffs,
+                "feature_columns": feature_columns,
+                "top_features": top_features,
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return model_path, metrics_path, metrics
+
+
+def predict_overnight_for_ticker(
+    ticker: str, settings, model_path: Path | None = None
+) -> tuple[int, Any]:
+    from stock_ai.models.overnight import (
+        OVERNIGHT_ARTIFACT_FILENAME,
+        OVERNIGHT_MODEL_NAME,
+        OVERNIGHT_TARGET,
+        predict_latest_overnight_rows,
+    )
+    from stock_ai.models.predict import load_model_bundle
+
+    feature_path = settings.paths.feature_data_dir / f"{ticker}.parquet"
+    target_model_path = (
+        model_path
+        if model_path
+        else settings.paths.model_dir / OVERNIGHT_ARTIFACT_FILENAME.format(ticker=ticker)
+    )
+    dataset = read_parquet(feature_path)
+    bundle = load_model_bundle(target_model_path)
+    top_features = bundle.get("metadata", {}).get("top_features", [])
+    predictions = predict_latest_overnight_rows(
+        bundle["model"],
+        bundle["feature_columns"],
+        dataset,
+        top_features=top_features,
+        target=OVERNIGHT_TARGET,
+        model_name=OVERNIGHT_MODEL_NAME,
+        ticker=ticker,
+    )
+    count = upsert_predictions(predictions, settings.paths.database_path)
+    return count, predictions
 
 
 def pd_to_date_string(value) -> str:

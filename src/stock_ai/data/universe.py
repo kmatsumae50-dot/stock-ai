@@ -11,11 +11,31 @@ except ModuleNotFoundError:  # pragma: no cover
 from stock_ai.config import PROJECT_ROOT
 
 
+SECTOR_JA_MAP: dict[str, str] = {
+    "Automotive": "自動車",
+    "Semiconductors": "半導体",
+    "Banking & Finance": "銀行・金融",
+    "Wholesale & Trading": "総合商社",
+    "Electronics": "電機・精密",
+    "Machinery & Defense": "防衛・重工",
+    "Telecommunications & Tech": "通信・AI投資",
+    "Telecommunications": "通信・ディフェンシブ",
+    "Entertainment & Gaming": "ゲーム・エンタメ",
+    "Retail": "小売・内需",
+    "Pharmaceuticals": "医薬品",
+    "Chemicals & Materials": "化学・素材",
+}
+
+
 @dataclass(frozen=True)
 class TickerInfo:
     code: str
     name: str = ""
     sector: str = ""
+
+    @property
+    def sector_ja(self) -> str:
+        return SECTOR_JA_MAP.get(self.sector, self.sector)
 
 
 def load_universe(path: str | Path | None = None) -> list[TickerInfo]:
