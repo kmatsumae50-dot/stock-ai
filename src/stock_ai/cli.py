@@ -301,6 +301,26 @@ def main() -> None:
         help="Initial capital in JPY",
     )
 
+    turnaround_scanner = subparsers.add_parser(
+        "scan-turnaround-universe",
+        help="Scan 20-ticker universe for deep-value turnaround candidates and update reports",
+    )
+    turnaround_scanner.add_argument(
+        "--output-json",
+        default="reports/autonomous/value_turnaround_scanner_results.json",
+        help="Output path for turnaround scanner JSON results",
+    )
+    turnaround_scanner.add_argument(
+        "--output-md",
+        default="reports/autonomous/value_turnaround_scanner_report.md",
+        help="Output path for turnaround scanner Markdown report",
+    )
+    turnaround_scanner.add_argument(
+        "--force-train",
+        action="store_true",
+        help="Force re-training of the turnaround LightGBM model",
+    )
+
     shadow_predict = subparsers.add_parser(
         "binary-shadow-predict",
         help="Create binary shadow predictions in report files without writing SQLite",
@@ -2250,6 +2270,39 @@ def main() -> None:
             print(
                 f"[{s}] Return: {m['cumulative_return']:+.1%} | Final: {m['final_equity']:,.0f} JPY | "
                 f"Sharpe: {m['sharpe_ratio']:.2f} | MaxDD: {m['max_drawdown']:.1%} | WinRate: {m['win_rate']:.1%}"
+            )
+        print(f"Saved JSON: {args.output_json}")
+        print(f"Saved Report: {args.output_md}")
+        return
+
+    if args.command == "scan-turnaround-universe":
+        from stock_ai.models.turnaround import (
+            export_turnaround_reports,
+            scan_turnaround_universe,
+            train_turnaround_model,
+        )
+
+        if getattr(args, "force_train", False):
+            print("Force re-training turnaround LightGBM model...")
+            train_turnaround_model()
+
+        scan_data = scan_turnaround_universe()
+        export_turnaround_reports(
+            scan_data,
+            output_json_path=args.output_json,
+            output_md_path=args.output_md,
+        )
+        print("=== Value & Turnaround Scanner Complete ===")
+        print(f"Date: {scan_data.get('date', '-')}")
+        rankings = scan_data.get("rankings", [])
+        print(f"Scanned {len(rankings)} tickers.")
+        for r in rankings[:5]:
+            pbr_s = f"{r['pbr']:.2f}x" if r.get("pbr") is not None else "-"
+            # ASCII/safe status for console logging to prevent cp932 encode issues
+            stat_clean = r["status"].replace("💎", "[Value]").replace("👀", "[Watch]").replace("📈", "[Trend]").replace("⭐", "[Golden]")
+            print(
+                f"[{r['ticker']}] Score: {r['bargain_score']:.1f} | 52wDD: {r['drawdown_252d']:+.1%} | "
+                f"PBR: {pbr_s} | p_turn: {r['p_turnaround']:.1%} | {stat_clean}"
             )
         print(f"Saved JSON: {args.output_json}")
         print(f"Saved Report: {args.output_md}")

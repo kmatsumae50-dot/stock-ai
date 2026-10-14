@@ -284,6 +284,15 @@ try {
         Write-Log "PAPER TRADER WARN: run-overnight-paper-trader failed: $($_.Exception.Message); continuing"
     }
 
+    # Value & Turnaround Scanner daily update
+    try {
+        Write-Log "START: scan-turnaround-universe"
+        Invoke-PythonStep "scan-turnaround-universe" @("main.py", "scan-turnaround-universe")
+        Write-Log "DONE: scan-turnaround-universe"
+    } catch {
+        Write-Log "TURNAROUND SCANNER WARN: scan-turnaround-universe failed: $($_.Exception.Message); continuing"
+    }
+
     Write-Log "daily_predict finished successfully"
     exit 0
 } catch {

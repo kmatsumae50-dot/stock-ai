@@ -1976,6 +1976,133 @@ def _render_overnight_paper_trader_section(universe: list[TickerInfo]) -> None:
         st.dataframe(pd.DataFrame(log_display), use_container_width=True, hide_index=True)
 
 
+def _render_turnaround_scanner_section(universe: list[TickerInfo]) -> None:
+    st.markdown("---")
+    st.subheader("💎 Value & Turnaround Scanner (激安・将来回復株発掘エンジン)")
+    st.caption("東証プライム主力20銘柄の売られすぎ・底打ち反転（20〜60営業日）を検出し、割安度とAI回復確率を統合した「Bargain Score」順にランキング")
+
+    results_path = Path("reports") / "autonomous" / "value_turnaround_scanner_results.json"
+    scan_data = None
+    if results_path.exists():
+        try:
+            scan_data = json.loads(results_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    if scan_data is None:
+        from stock_ai.models.turnaround import (
+            export_turnaround_reports,
+            scan_turnaround_universe,
+        )
+
+        with st.spinner("Value & Turnaround スキャナーを実行中..."):
+            scan_data = scan_turnaround_universe(universe=universe)
+            export_turnaround_reports(scan_data)
+
+    rankings = scan_data.get("rankings", [])
+    if not rankings:
+        st.info("Turnaround スキャナー結果がありません。")
+        return
+
+    metrics = scan_data.get("metrics", {})
+    test_auc = metrics.get("test_auc", 0.5)
+    q5_perf = metrics.get("q5_band_performance", {})
+    q5_20d = q5_perf.get("ret_20d_avg", 0.0)
+    q5_60d = q5_perf.get("ret_60d_avg", 0.0)
+
+    top_pick = rankings[0]
+    golden_count = sum(1 for r in rankings if r.get("is_golden_signal"))
+
+    # Top summary metrics
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("💎 最上位激安銘柄", f"{top_pick['ticker']} {top_pick['name']}", f"{top_pick['bargain_score']:.1f}点")
+    k2.metric("⭐ 始動ゴールデン銘柄", f"{golden_count} 銘柄", "激安 + 短期強気")
+    k3.metric("回復予測モデル AUC", f"{test_auc:.4f}", "20d +5%到達予測")
+    k4.metric("Q5帯 平均回復リターン", f"20d: {q5_20d:+.2%}", f"60d: {q5_60d:+.2%}")
+
+    # Filters and controls
+    c_sort, c_filter = st.columns([2, 2])
+    with c_sort:
+        sort_mode = st.selectbox(
+            "並び替え順",
+            options=[
+                "💎 激安回復スコア (高い順)",
+                "📉 52週高値からの下落率 (安い順)",
+                "📈 200日線乖離率 (売られすぎ順)",
+                "⭐ 始動シグナル優先",
+            ],
+            index=0,
+            key="turnaround_sort_mode",
+        )
+    with c_filter:
+        status_filter = st.selectbox(
+            "ステータス絞り込み",
+            options=["すべて", "⭐ 始動シグナルのみ", "💎 超割安・底打ち反転圏", "👀 調整監視圏"],
+            index=0,
+            key="turnaround_status_filter",
+        )
+
+    # Filter
+    display_rows = list(rankings)
+    if status_filter == "⭐ 始動シグナルのみ":
+        display_rows = [r for r in display_rows if r.get("is_golden_signal")]
+    elif status_filter == "💎 超割安・底打ち反転圏":
+        display_rows = [r for r in display_rows if "超割安" in r.get("status", "")]
+    elif status_filter == "👀 調整監視圏":
+        display_rows = [r for r in display_rows if "調整監視" in r.get("status", "")]
+
+    # Sort
+    if sort_mode == "💎 激安回復スコア (高い順)":
+        display_rows.sort(key=lambda r: r["bargain_score"], reverse=True)
+    elif sort_mode == "📉 52週高値からの下落率 (安い順)":
+        display_rows.sort(key=lambda r: r["drawdown_252d"])
+    elif sort_mode == "📈 200日線乖離率 (売られすぎ順)":
+        display_rows.sort(key=lambda r: r["ma_gap_200d"])
+    elif sort_mode == "⭐ 始動シグナル優先":
+        display_rows.sort(key=lambda r: (1 if r.get("is_golden_signal") else 0, r["bargain_score"]), reverse=True)
+
+    # Table format
+    table_data = []
+    for idx, r in enumerate(display_rows, 1):
+        pbr_val = f"{r['pbr']:.2f}倍" if r.get("pbr") is not None else "-"
+        dy_val = f"{r['dividend_yield']:.2f}%" if r.get("dividend_yield") is not None else "-"
+        o_val = f"{r['overnight_p_up']:.4f} ({r['overnight_quantile']})" if r.get("overnight_p_up") is not None else "-"
+
+        table_data.append(
+            {
+                "順位": idx,
+                "銘柄コード": r["ticker"],
+                "銘柄名": r["name"],
+                "セクター": r["sector"],
+                "現在株価": f"{r['close']:,.1f} 円",
+                "52週高値乖離": f"{r['drawdown_252d']:+.1%}",
+                "52週安値圏": f"{r['pos_in_52w_range']:.1%}",
+                "200日線乖離": f"{r['ma_gap_200d']:+.1%}",
+                "PBR": pbr_val,
+                "配当利回り": dy_val,
+                "将来回復確率": f"{r['p_turnaround']:.1%}",
+                "💎 激安スコア": f"{r['bargain_score']:.1f}点",
+                "🌙 短期Overnight": o_val,
+                "判定ステータス": r["status"],
+            }
+        )
+
+    st.dataframe(pd.DataFrame(table_data), use_container_width=True, hide_index=True)
+
+    # Top Golden Cross Spotlight Card
+    golden_picks = [r for r in rankings if r.get("is_golden_signal")]
+    if golden_picks:
+        best_g = golden_picks[0]
+        st.success(
+            f"🌟 **底打ち初動の注目ゴールデン・シグナル銘柄: {best_g['ticker']} {best_g['name']} ({best_g['sector']})**\n\n"
+            f"- 52週高値からの下落率: **{best_g['drawdown_252d']:+.1%}** (200日線乖離: **{best_g['ma_gap_200d']:+.1%}**)\n"
+            f"- PBR: **{best_g.get('pbr', '-')}倍** / 配当利回り: **{best_g.get('dividend_yield', '-')}%**\n"
+            f"- 💎 激安回復スコア: **{best_g['bargain_score']:.1f}点** (中長期回復確率: **{best_g['p_turnaround']:.1%}**)\n"
+            f"- 🌙 短期Overnight: **{best_g['overnight_p_up']:.4f}** ({best_g['overnight_quantile']}) — "
+            f"長期ディープバリュー圏からの短期買い先行反転初動が強く示唆されています。"
+        )
+
+
 def _render_overnight_prediction_section(
     latest_overnight: pd.Series | None,
     overnight_metrics: dict[str, object],
@@ -2203,6 +2330,7 @@ def _render_prediction_tab(
 
     _render_multi_ticker_overnight_scanner(database_path, load_universe(), ticker)
     _render_overnight_paper_trader_section(load_universe())
+    _render_turnaround_scanner_section(load_universe())
 
     st.markdown("---")
     st.caption("1. Close-to-Close (翌日終値) 詳細")
