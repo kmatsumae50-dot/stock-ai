@@ -35,8 +35,17 @@ try {
     throw "Time must use HH:mm format, for example 11:15."
 }
 
+$HiddenRunner = Join-Path $ScriptDir "run_hidden.vbs"
+if (-not (Test-Path -LiteralPath $HiddenRunner)) {
+    throw "run_hidden.vbs was not found: $HiddenRunner"
+}
+
+$WscriptExe = Join-Path $env:SystemRoot "System32\wscript.exe"
 $PowerShellExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 $Arguments = @(
+    "//nologo",
+    "`"$HiddenRunner`"",
+    "`"$PowerShellExe`"",
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
     "-File", "`"$WrapperScript`"",
@@ -48,7 +57,7 @@ $Description = "Runs read-only stock-ai Autonomous Operations after daily_predic
 
 Write-Host "Desired task: $TaskName"
 Write-Host "Schedule: daily at $Time"
-Write-Host "Command: $PowerShellExe $Arguments"
+Write-Host "Command: $WscriptExe $Arguments"
 Write-Host "Working directory: $ProjectRoot"
 Write-Host "Dependency: $DependencyTaskName (wait up to $DependencyWaitMinutes minutes, poll every $DependencyPollSeconds seconds)"
 Write-Host "StartWhenAvailable: enabled"
@@ -67,7 +76,7 @@ if ($null -ne $ExistingTask) {
         $null
     }
     $ExactMatch = (
-        $ExistingAction.Execute -eq $PowerShellExe -and
+        $ExistingAction.Execute -eq $WscriptExe -and
         $ExistingAction.Arguments -eq $Arguments -and
         $ExistingAction.WorkingDirectory -eq $ProjectRoot -and
         $ExistingTime -eq $Time -and
@@ -94,7 +103,7 @@ if (-not $PSCmdlet.ShouldProcess($TaskName, "Register or update Autonomous Opera
 }
 
 $Action = New-ScheduledTaskAction `
-    -Execute $PowerShellExe `
+    -Execute $WscriptExe `
     -Argument $Arguments `
     -WorkingDirectory $ProjectRoot
 $Trigger = New-ScheduledTaskTrigger -Daily -At $ParsedTime

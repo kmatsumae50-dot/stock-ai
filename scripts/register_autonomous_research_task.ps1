@@ -29,8 +29,15 @@ try {
     throw "Time must use HH:mm format, for example 12:00."
 }
 
+$HiddenRunner = Join-Path $ScriptDir "run_hidden.vbs"
+if (-not (Test-Path -LiteralPath $HiddenRunner)) { throw "run_hidden.vbs was not found: $HiddenRunner" }
+
+$WscriptExe = Join-Path $env:SystemRoot "System32\wscript.exe"
 $PowerShellExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 $Arguments = @(
+    "//nologo",
+    "`"$HiddenRunner`"",
+    "`"$PowerShellExe`"",
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
     "-File", "`"$WrapperScript`"",
@@ -43,7 +50,7 @@ $Description = "Runs gated read-only stock-ai Autonomous Research after healthy 
 
 Write-Host "Desired task: $TaskName"
 Write-Host "Schedule: daily at $Time"
-Write-Host "Command: $PowerShellExe $Arguments"
+Write-Host "Command: $WscriptExe $Arguments"
 Write-Host "Working directory: $ProjectRoot"
 Write-Host "Dependency: $OperationsTaskName (wait up to $DependencyWaitMinutes minutes, poll every $DependencyPollSeconds seconds)"
 Write-Host "Operations report freshness: same day and at most $OperationsFreshnessMinutes minutes old"
@@ -60,7 +67,7 @@ if ($null -ne $ExistingTask) {
     $ExistingTrigger = @($ExistingTask.Triggers) | Select-Object -First 1
     $ExistingTime = if ($ExistingTrigger.StartBoundary) { ([datetime]$ExistingTrigger.StartBoundary).ToString("HH:mm") } else { $null }
     $Differences = @()
-    if ($ExistingAction.Execute -ne $PowerShellExe) { $Differences += "command" }
+    if ($ExistingAction.Execute -ne $WscriptExe) { $Differences += "command" }
     if ($ExistingAction.Arguments -ne $Arguments) { $Differences += "arguments" }
     if ($ExistingAction.WorkingDirectory -ne $ProjectRoot) { $Differences += "working_directory" }
     if ($ExistingTime -ne $Time) { $Differences += "trigger_time" }
@@ -82,7 +89,7 @@ if ($null -ne $ExistingTask) {
 
 if (-not $PSCmdlet.ShouldProcess($TaskName, "Register or update Autonomous Research scheduled task")) { exit 0 }
 
-$Action = New-ScheduledTaskAction -Execute $PowerShellExe -Argument $Arguments -WorkingDirectory $ProjectRoot
+$Action = New-ScheduledTaskAction -Execute $WscriptExe -Argument $Arguments -WorkingDirectory $ProjectRoot
 $Trigger = New-ScheduledTaskTrigger -Daily -At $ParsedTime
 $Settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable `

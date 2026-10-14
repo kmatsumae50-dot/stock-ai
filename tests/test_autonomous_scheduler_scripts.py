@@ -129,6 +129,7 @@ def test_active_lock_prevents_concurrent_wrapper_run(tmp_path: Path) -> None:
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
+        errors="replace",
     )
 
     assert result.returncode != 0

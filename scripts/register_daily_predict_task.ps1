@@ -13,8 +13,13 @@ $ScriptDir = Split-Path -Parent $PSCommandPath
 $ProjectRoot = (Resolve-Path -LiteralPath (Join-Path $ScriptDir "..")).Path
 $DailyPredictScript = Join-Path $ScriptDir "daily_predict.ps1"
 
+$HiddenRunner = Join-Path $ScriptDir "run_hidden.vbs"
+
 if (-not (Test-Path -LiteralPath $DailyPredictScript)) {
     throw "daily_predict.ps1 was not found: $DailyPredictScript"
+}
+if (-not (Test-Path -LiteralPath $HiddenRunner)) {
+    throw "run_hidden.vbs was not found: $HiddenRunner"
 }
 
 try {
@@ -35,8 +40,12 @@ if ($null -ne $ExistingTask) {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
 }
 
+$WscriptExe = Join-Path $env:SystemRoot "System32\wscript.exe"
 $PowerShellExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 $Arguments = @(
+    "//nologo",
+    "`"$HiddenRunner`"",
+    "`"$PowerShellExe`"",
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
     "-File", "`"$DailyPredictScript`"",
@@ -46,7 +55,7 @@ $Arguments = @(
 ) -join " "
 
 $Action = New-ScheduledTaskAction `
-    -Execute $PowerShellExe `
+    -Execute $WscriptExe `
     -Argument $Arguments `
     -WorkingDirectory $ProjectRoot
 
