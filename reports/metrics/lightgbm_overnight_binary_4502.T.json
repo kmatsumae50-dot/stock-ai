@@ -1,8 +1,8 @@
 {
   "metrics": {
     "accuracy": 0.5307443365695793,
-    "f1": 0.5972222222222222,
-    "auc": 0.5543056836281332,
+    "f1": 0.5983379501385041,
+    "auc": 0.5540679333871322,
     "rows": 618
   },
   "quantile_cutoffs": [
@@ -21,8 +21,8 @@
       "max_p": 0.5008,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.5041,
-      "description": "実績ギャップアップ率 50.4%（弱気）"
+      "historical_win_rate": 0.5122,
+      "description": "実績ギャップアップ率 51.2%（弱気）"
     },
     {
       "quantile": "Q3",
