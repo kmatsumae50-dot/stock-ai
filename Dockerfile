@@ -21,6 +21,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy source and project files
 COPY pyproject.toml .
 COPY main.py .
+COPY streamlit_app.py .
 COPY src/ src/
 COPY configs/ configs/
 COPY data/ data/
@@ -34,7 +35,7 @@ RUN pip install --no-cache-dir -e .
 EXPOSE 8501
 
 # Entrypoint runs Streamlit binding to 0.0.0.0 and listening on $PORT
-CMD streamlit run main.py \
+CMD streamlit run streamlit_app.py \
     --server.port=${PORT} \
     --server.address=0.0.0.0 \
     --server.headless=true \

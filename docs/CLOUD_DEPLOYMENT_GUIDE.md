@@ -53,7 +53,7 @@ PCのブラウザだけでなく、**スマホのホーム画面にアイコン�
 2. **[New app]** をクリックし、以下を設定：
    - **Repository**: `<あなたのユーザー名>/stock-ai`
    - **Branch**: `master`
-   - **Main file path**: `main.py`
+   - **Main file path**: `streamlit_app.py`
 3. **[Deploy!]** をクリック（約2分でWebアプリが起動します）。
 4. **スマホからの利用**:
    - 発行されたURL（`https://<app-name>.streamlit.app`）をスマホのブラウザで開きます。
