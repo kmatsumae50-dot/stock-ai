@@ -7,6 +7,11 @@ on:
     # 2. Before Tokyo Market Open: JST 07:30 (UTC 22:30, Sun-Thu)
     - cron: '30 22 * * 0-4'
   workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - '.github/workflows/daily_cloud_predict.yml'
 
 permissions:
   contents: write
