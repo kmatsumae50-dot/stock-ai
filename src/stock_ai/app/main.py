@@ -99,14 +99,26 @@ def main() -> None:
     _render_cloud_sync_header()
 
     ticker = _select_ticker(universe)
+
+    # -----------------------------------------------------------------
+    # 3大クラウドダッシュボード（Parquet/SQLiteの有無に一切依存せず常時最優先表示）
+    # -----------------------------------------------------------------
+    _render_multi_ticker_overnight_scanner(settings.paths.database_path, universe, ticker)
+    _render_overnight_paper_trader_section(universe)
+    _render_turnaround_scanner_section(universe)
+
+    # -----------------------------------------------------------------
+    # 個別銘柄の深掘りヒストリカル分析 (要ローカルParquetデータ)
+    # -----------------------------------------------------------------
+    st.markdown("---")
+    st.subheader(f"🔍 個別銘柄ヒストリカル深掘り分析: {ticker}")
+
     data, source = _load_dataset(ticker, settings)
 
     if data.empty:
-        st.info("No data yet. Run download and build-features first.")
-        st.code(
-            f"python main.py download --ticker {ticker} --start 2010-01-01\n"
-            f"python main.py build-features --ticker {ticker}",
-            language="powershell",
+        st.info(
+            "💡 個別銘柄の詳細ヒストリカル分析（チャート・テクニカル指標・個別特徴量など）を表示するには、"
+            "画面上部の『☁️ クラウド同期実行』ボタンを押すかローカル環境でデータを取得してください。"
         )
         return
 
@@ -1909,16 +1921,20 @@ def _render_overnight_paper_trader_section(universe: list[TickerInfo]) -> None:
             pass
 
     if sim_data is None:
-        from stock_ai.backtest.overnight_portfolio import (
-            export_portfolio_simulation_reports,
-            run_full_overnight_portfolio_backtest,
-        )
+        try:
+            from stock_ai.backtest.overnight_portfolio import (
+                export_portfolio_simulation_reports,
+                run_full_overnight_portfolio_backtest,
+            )
 
-        with st.spinner("Overnight ポートフォリオバックテストを実行中..."):
-            sim_data = run_full_overnight_portfolio_backtest(universe=universe)
-            export_portfolio_simulation_reports(sim_data)
+            with st.spinner("Overnight ポートフォリオバックテストを実行中..."):
+                sim_data = run_full_overnight_portfolio_backtest(universe=universe)
+                export_portfolio_simulation_reports(sim_data)
+        except Exception as exc:
+            st.warning(f"ペーパートレードシミュレーション結果を読み込めませんでした（{exc}）。右上の『☁️ クラウド同期実行』を押してください。")
+            return
 
-    res_by_cost = sim_data.get("results_by_cost", {})
+    res_by_cost = sim_data.get("results_by_cost", {}) if sim_data else {}
     if not res_by_cost:
         st.info("ペーパートレードデータがありません。")
         return
@@ -2052,16 +2068,20 @@ def _render_turnaround_scanner_section(universe: list[TickerInfo]) -> None:
             pass
 
     if scan_data is None:
-        from stock_ai.models.turnaround import (
-            export_turnaround_reports,
-            scan_turnaround_universe,
-        )
+        try:
+            from stock_ai.models.turnaround import (
+                export_turnaround_reports,
+                scan_turnaround_universe,
+            )
 
-        with st.spinner("Value & Turnaround スキャナーを実行中..."):
-            scan_data = scan_turnaround_universe(universe=universe)
-            export_turnaround_reports(scan_data)
+            with st.spinner("Value & Turnaround スキャナーを実行中..."):
+                scan_data = scan_turnaround_universe(universe=universe)
+                export_turnaround_reports(scan_data)
+        except Exception as exc:
+            st.warning(f"Value & Turnaround スキャナー結果を読み込めませんでした（{exc}）。右上の『☁️ クラウド同期実行』を押してください。")
+            return
 
-    rankings = scan_data.get("rankings", [])
+    rankings = scan_data.get("rankings", []) if scan_data else []
     if not rankings:
         st.info("Turnaround スキャナー結果がありません。")
         return
@@ -2390,9 +2410,7 @@ def _render_prediction_tab(
         else:
             st.caption("未実行 (predict-overnight を実行してください)")
 
-    _render_multi_ticker_overnight_scanner(database_path, load_universe(), ticker)
-    _render_overnight_paper_trader_section(load_universe())
-    _render_turnaround_scanner_section(load_universe())
+    st.caption("※ 🌐 Multi-Ticker Overnight Scanner、💰 AI Overnight Paper Trader、💎 Value & Turnaround Scanner は画面上部に常時掲載されています。")
 
     st.markdown("---")
     st.caption("1. Close-to-Close (翌日終値) 詳細")

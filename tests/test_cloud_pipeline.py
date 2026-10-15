@@ -233,3 +233,33 @@ def test_run_cloud_daily_pipeline_mocked(tmp_path: Path) -> None:
         assert res["steps"]["turnaround"] == "SUCCESS"
         assert test_snapshot.exists()
 
+
+def test_main_ui_renders_3_dashboards_when_parquet_missing() -> None:
+    """Verify that main() renders the 3 cloud dashboards even if ticker parquet data is empty."""
+    import pandas as pd
+    from stock_ai.app.main import main
+
+    with patch("stock_ai.app.main._render_cloud_sync_header") as mock_header, \
+         patch("stock_ai.app.main._render_multi_ticker_overnight_scanner") as mock_scanner, \
+         patch("stock_ai.app.main._render_overnight_paper_trader_section") as mock_paper, \
+         patch("stock_ai.app.main._render_turnaround_scanner_section") as mock_turnaround, \
+         patch("stock_ai.app.main._load_dataset", return_value=(pd.DataFrame(), "missing")), \
+         patch("streamlit.info") as mock_info, \
+         patch("streamlit.tabs") as mock_tabs:
+
+        main()
+
+        # All 3 major dashboards must be rendered prior to the empty data check
+        mock_header.assert_called_once()
+        mock_scanner.assert_called_once()
+        mock_paper.assert_called_once()
+        mock_turnaround.assert_called_once()
+
+        # User guidance info must be shown
+        mock_info.assert_called_once()
+        assert "個別銘柄の詳細ヒストリカル分析" in mock_info.call_args[0][0]
+
+        # Heavy individual analysis tabs must not be created since parquet is missing
+        mock_tabs.assert_not_called()
+
+
