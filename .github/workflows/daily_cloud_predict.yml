@@ -1,0 +1,57 @@
+name: Daily Cloud Prediction & Autonomous Pipeline
+
+on:
+  schedule:
+    # 1. Tokyo Market Close: JST 16:00 (UTC 07:00, Mon-Fri)
+    - cron: '0 7 * * 1-5'
+    # 2. Before Tokyo Market Open: JST 07:30 (UTC 22:30, Sun-Thu)
+    - cron: '30 22 * * 0-4'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Run Cloud Daily Autonomous Pipeline
+        env:
+          STOCK_AI_WEBHOOK_URL: ${{ secrets.STOCK_AI_WEBHOOK_URL }}
+        run: |
+          python -m stock_ai.cli run-cloud-daily-pipeline
+
+      - name: Commit and push updated reports & snapshots
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # Stage lightweight results, reports, and metrics
+          git add -f reports/autonomous/*.json || true
+          git add -f reports/autonomous/*.md || true
+          git add -f reports/metrics/lightgbm_overnight_binary_*.json || true
+          
+          if git diff --staged --quiet; then
+            echo "No changes in reports or snapshots to commit."
+          else
+            git commit -m "chore(auto): daily cloud prediction snapshot update [skip ci]"
+            git push
+          fi

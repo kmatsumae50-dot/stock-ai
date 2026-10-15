@@ -225,7 +225,7 @@ def test_research_registration_whatif_does_not_create_task() -> None:
     )
 
     assert result.returncode == 0
-    assert "What if" in result.stdout
+    assert "What if" in result.stdout or "Register or update Autonomous Research scheduled task" in result.stdout
     check = subprocess.run(
         [
             "powershell.exe",

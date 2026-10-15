@@ -41,6 +41,14 @@ reports/**/*.json
 reports/**/*.jsonl
 reports/**/*.patch
 
+# Allow cloud tracking of essential lightweight autonomous snapshots and reports
+!reports/autonomous/latest_overnight_scanner_snapshot.json
+!reports/autonomous/overnight_portfolio_simulation_results.json
+!reports/autonomous/overnight_portfolio_simulation_report.md
+!reports/autonomous/value_turnaround_scanner_results.json
+!reports/autonomous/value_turnaround_scanner_report.md
+!reports/metrics/lightgbm_overnight_binary_*.json
+
 # Runtime datasets. Source code and design reports remain trackable.
 data/**/*.csv
 data/**/*.json

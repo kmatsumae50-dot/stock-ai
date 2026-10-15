@@ -321,6 +321,21 @@ def main() -> None:
         help="Force re-training of the turnaround LightGBM model",
     )
 
+    cloud_pipeline = subparsers.add_parser(
+        "run-cloud-daily-pipeline",
+        help="Run end-to-end cloud daily pipeline (features, overnight predict, paper trader, turnaround, webhook)",
+    )
+    cloud_pipeline.add_argument("--start", default="2010-01-01", help="Start date for data downloads")
+    cloud_pipeline.add_argument("--force-download", action="store_true", help="Force re-download raw data")
+    cloud_pipeline.add_argument("--force-features", action="store_true", help="Force re-build features")
+    cloud_pipeline.add_argument("--force-train", action="store_true", help="Force re-train models")
+    cloud_pipeline.add_argument(
+        "--snapshot-path",
+        default="reports/autonomous/latest_overnight_scanner_snapshot.json",
+        help="Output path for overnight scanner JSON snapshot",
+    )
+    cloud_pipeline.add_argument("--webhook-url", default=None, help="Discord/Slack webhook URL (or via STOCK_AI_WEBHOOK_URL)")
+
     shadow_predict = subparsers.add_parser(
         "binary-shadow-predict",
         help="Create binary shadow predictions in report files without writing SQLite",
@@ -2306,6 +2321,19 @@ def main() -> None:
             )
         print(f"Saved JSON: {args.output_json}")
         print(f"Saved Report: {args.output_md}")
+        return
+
+    if args.command == "run-cloud-daily-pipeline":
+        from stock_ai.cloud.pipeline import run_cloud_daily_pipeline
+
+        run_cloud_daily_pipeline(
+            start=args.start,
+            force_download=args.force_download,
+            force_features=args.force_features,
+            force_train=args.force_train,
+            snapshot_path=args.snapshot_path,
+            webhook_url=args.webhook_url,
+        )
         return
 
     if args.command == "binary-shadow-predict":

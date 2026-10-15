@@ -59,12 +59,44 @@ PRODUCTION_BINARY_MODEL_NAME = "lightgbm_binary"
 PRODUCTION_MULTICLASS_MODEL_NAME = "lightgbm_multiclass"
 
 
+def _render_cloud_sync_header() -> None:
+    """Render top cloud sync status badge and manual refresh button."""
+    snapshot_path = Path("reports/autonomous/latest_overnight_scanner_snapshot.json")
+    last_updated_str = "未実行"
+    q5_count = 0
+    if snapshot_path.exists():
+        try:
+            s_data = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            dt = s_data.get("updated_at") or s_data.get("date")
+            if dt:
+                last_updated_str = str(dt)[:19].replace("T", " ")
+            q5_count = s_data.get("q5_count", 0)
+        except Exception:
+            pass
+
+    col_stat, col_btn = st.columns([3, 1])
+    with col_stat:
+        st.caption(f"☁️ **Cloud Sync**: 最終更新: `{last_updated_str}` | 本日Q5有望株: `{q5_count} 銘柄` (PCオフ自動稼働対応)")
+    with col_btn:
+        if st.button("☁️ クラウド同期実行", key="cloud_manual_sync_btn", help="最新の株価取得・Overnight予測・ファンド成績・激安株スキャナーを一括更新します"):
+            with st.spinner("クラウドパイプライン実行中 (データ取得・推論・スナップショット更新)..."):
+                try:
+                    from stock_ai.cloud.pipeline import run_cloud_daily_pipeline
+
+                    res = run_cloud_daily_pipeline()
+                    st.success(f"同期完了 ({res.get('status', 'OK')})")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"同期失敗: {exc}")
+
+
 def main() -> None:
     settings = load_settings()
     universe = load_universe()
 
     st.title("stock-ai")
     st.caption("Japanese stock analysis MVP")
+    _render_cloud_sync_header()
 
     ticker = _select_ticker(universe)
     data, source = _load_dataset(ticker, settings)
@@ -1651,6 +1683,19 @@ def _render_multi_ticker_overnight_scanner(
         else pd.DataFrame()
     )
 
+    snapshot_file = Path("reports/autonomous/latest_overnight_scanner_snapshot.json")
+    snapshot_map: dict[str, dict] = {}
+    if overnight_preds.empty and snapshot_file.exists():
+        try:
+            s_data = json.loads(snapshot_file.read_text(encoding="utf-8"))
+            s_rankings = s_data.get("rankings", [])
+            if s_rankings:
+                st.caption(f"☁️ **Cloud Snapshot**: SQLite未初期化のため、最新クラウドスナップショット ({s_data.get('date', '-')}) より表示中")
+                for r in s_rankings:
+                    snapshot_map[r.get("ticker", "")] = r
+        except Exception:
+            pass
+
     rows: list[dict] = []
     for t_info in universe:
         t_code = t_info.code
@@ -1662,6 +1707,23 @@ def _render_multi_ticker_overnight_scanner(
             match = overnight_preds[overnight_preds["ticker"] == t_code]
             if not match.empty:
                 t_pred = match.iloc[0]
+        elif t_code in snapshot_map:
+            # Reconstruct from snapshot row
+            sr = snapshot_map[t_code]
+            rows.append({
+                "ticker": t_code,
+                "name": t_name,
+                "sector": t_sector,
+                "date": sr.get("date", "-"),
+                "p_up": float(sr.get("probability_up", -1.0)),
+                "direction": sr.get("direction", "Up ⬆️" if sr.get("probability_up", 0) >= 0.5 else "Down ⬇️"),
+                "q_band": sr.get("q_band", "-"),
+                "quantile": sr.get("quantile", "-"),
+                "win_rate": sr.get("historical_win_rate"),
+                "auc": sr.get("auc"),
+                "is_active": (t_code == selected_ticker),
+            })
+            continue
 
         auc_val = None
         m_path = Path("reports") / "metrics" / f"lightgbm_overnight_binary_{t_code}.json"
