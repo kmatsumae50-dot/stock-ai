@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from stock_ai.data.universe import TickerInfo, load_universe
+from stock_ai.data.universe import TickerInfo, load_turnaround_universe
 from stock_ai.models.predict import load_model_bundle
 
 TURNAROUND_MODEL_NAME = "lightgbm_turnaround_pooled"
@@ -109,6 +109,50 @@ def compute_turnaround_features(df: pd.DataFrame) -> pd.DataFrame:
     return data
 
 
+def ensure_turnaround_features(
+    universe: list[TickerInfo],
+    features_dir: Path | str = "data/features",
+    raw_dir: Path | str = "data/raw",
+    start: str = "2010-01-01",
+) -> int:
+    """Ensure raw OHLCV and feature Parquet files exist for all universe tickers."""
+    from stock_ai.data.yfinance_provider import fetch_daily_ohlcv
+    from stock_ai.features.technical import add_technical_features
+    from stock_ai.storage.parquet_store import read_parquet, write_parquet
+
+    features_path = Path(features_dir)
+    raw_path = Path(raw_dir)
+    features_path.mkdir(parents=True, exist_ok=True)
+    raw_path.mkdir(parents=True, exist_ok=True)
+
+    ready_count = 0
+    for t in universe:
+        code = t.code
+        r_file = raw_path / f"{code}.parquet"
+        f_file = features_path / f"{code}.parquet"
+
+        if not r_file.exists():
+            try:
+                df_raw = fetch_daily_ohlcv(code, start=start)
+                write_parquet(df_raw, r_file)
+            except Exception:
+                continue
+
+        if not f_file.exists() and r_file.exists():
+            try:
+                df_raw = read_parquet(r_file)
+                if "ticker" not in df_raw.columns:
+                    df_raw["ticker"] = code
+                feats = add_technical_features(df_raw)
+                write_parquet(feats, f_file)
+            except Exception:
+                continue
+
+        if f_file.exists():
+            ready_count += 1
+    return ready_count
+
+
 def train_turnaround_model(
     universe: list[TickerInfo] | None = None,
     features_dir: Path | str = "data/features",
@@ -122,7 +166,9 @@ def train_turnaround_model(
     from stock_ai.models.baseline import save_model
 
     if universe is None:
-        universe = load_universe()
+        universe = load_turnaround_universe()
+
+    ensure_turnaround_features(universe, features_dir=features_dir)
 
     features_path = Path(features_dir)
     models_path = Path(model_dir)
@@ -271,28 +317,58 @@ def fetch_cached_fundamentals(
         except Exception:
             pass
 
-    # Benchmark fallback data for 20 Prime stocks if offline/network fails
+    # Benchmark fallback data for 50 Prime stocks if offline/network fails
     fallback_benchmarks: dict[str, dict[str, float | None]] = {
         "7203.T": {"pbr": 0.96, "per": 8.6, "dividend_yield": 3.35},
         "7267.T": {"pbr": 0.58, "per": 7.2, "dividend_yield": 4.10},
         "7201.T": {"pbr": 0.28, "per": 5.4, "dividend_yield": 4.80},
-        "8035.T": {"pbr": 6.80, "per": 23.5, "dividend_yield": 2.10},
-        "6857.T": {"pbr": 8.50, "per": 34.0, "dividend_yield": 1.40},
-        "6723.T": {"pbr": 1.85, "per": 14.2, "dividend_yield": 0.00},
+        "6902.T": {"pbr": 1.15, "per": 15.0, "dividend_yield": 2.60},
+        "7270.T": {"pbr": 0.75, "per": 7.8, "dividend_yield": 4.50},
+        "8058.T": {"pbr": 1.15, "per": 10.8, "dividend_yield": 3.30},
+        "8031.T": {"pbr": 1.18, "per": 9.9, "dividend_yield": 3.20},
+        "8001.T": {"pbr": 1.65, "per": 11.5, "dividend_yield": 2.80},
+        "8002.T": {"pbr": 1.20, "per": 8.9, "dividend_yield": 3.80},
+        "8053.T": {"pbr": 1.05, "per": 9.2, "dividend_yield": 3.90},
         "8306.T": {"pbr": 0.95, "per": 11.2, "dividend_yield": 3.50},
         "8316.T": {"pbr": 0.88, "per": 11.8, "dividend_yield": 3.40},
         "8411.T": {"pbr": 0.82, "per": 10.5, "dividend_yield": 3.60},
-        "8058.T": {"pbr": 1.15, "per": 10.8, "dividend_yield": 3.30},
-        "8031.T": {"pbr": 1.18, "per": 9.9, "dividend_yield": 3.20},
+        "7182.T": {"pbr": 0.70, "per": 14.5, "dividend_yield": 3.60},
+        "8591.T": {"pbr": 1.05, "per": 11.0, "dividend_yield": 3.20},
+        "8766.T": {"pbr": 1.85, "per": 13.5, "dividend_yield": 3.00},
+        "5401.T": {"pbr": 0.62, "per": 7.5, "dividend_yield": 4.80},
+        "5411.T": {"pbr": 0.50, "per": 7.0, "dividend_yield": 4.60},
+        "5713.T": {"pbr": 0.85, "per": 15.2, "dividend_yield": 2.50},
+        "9101.T": {"pbr": 0.80, "per": 6.2, "dividend_yield": 5.20},
+        "9104.T": {"pbr": 0.82, "per": 5.9, "dividend_yield": 5.50},
+        "9107.T": {"pbr": 0.78, "per": 5.5, "dividend_yield": 5.00},
+        "8801.T": {"pbr": 1.30, "per": 16.5, "dividend_yield": 2.10},
+        "8802.T": {"pbr": 1.35, "per": 18.0, "dividend_yield": 2.00},
+        "8830.T": {"pbr": 1.40, "per": 14.2, "dividend_yield": 1.90},
+        "8035.T": {"pbr": 6.80, "per": 23.5, "dividend_yield": 2.10},
+        "6857.T": {"pbr": 8.50, "per": 34.0, "dividend_yield": 1.40},
+        "6723.T": {"pbr": 1.85, "per": 14.2, "dividend_yield": 0.00},
+        "6146.T": {"pbr": 9.80, "per": 32.0, "dividend_yield": 1.20},
         "6758.T": {"pbr": 2.10, "per": 16.5, "dividend_yield": 0.80},
         "6501.T": {"pbr": 2.45, "per": 19.8, "dividend_yield": 1.20},
+        "6861.T": {"pbr": 4.80, "per": 35.0, "dividend_yield": 0.60},
+        "6752.T": {"pbr": 0.72, "per": 9.5, "dividend_yield": 3.00},
+        "7751.T": {"pbr": 1.30, "per": 14.0, "dividend_yield": 3.20},
         "7011.T": {"pbr": 3.10, "per": 28.5, "dividend_yield": 1.10},
+        "7012.T": {"pbr": 2.20, "per": 20.0, "dividend_yield": 1.60},
+        "7013.T": {"pbr": 2.40, "per": 22.0, "dividend_yield": 1.40},
+        "6301.T": {"pbr": 1.35, "per": 11.2, "dividend_yield": 3.80},
+        "6367.T": {"pbr": 2.50, "per": 23.0, "dividend_yield": 1.30},
         "9984.T": {"pbr": 1.25, "per": 18.0, "dividend_yield": 0.50},
+        "9432.T": {"pbr": 1.20, "per": 10.5, "dividend_yield": 3.40},
         "9433.T": {"pbr": 1.70, "per": 14.5, "dividend_yield": 3.10},
-        "7974.T": {"pbr": 3.60, "per": 22.0, "dividend_yield": 2.50},
-        "9983.T": {"pbr": 5.90, "per": 38.0, "dividend_yield": 1.00},
-        "4502.T": {"pbr": 0.92, "per": 17.5, "dividend_yield": 4.20},
+        "9434.T": {"pbr": 2.80, "per": 17.0, "dividend_yield": 4.40},
         "4063.T": {"pbr": 2.30, "per": 21.0, "dividend_yield": 1.80},
+        "4188.T": {"pbr": 0.75, "per": 12.0, "dividend_yield": 3.80},
+        "3407.T": {"pbr": 0.82, "per": 14.0, "dividend_yield": 3.40},
+        "4502.T": {"pbr": 0.92, "per": 17.5, "dividend_yield": 4.20},
+        "4503.T": {"pbr": 1.30, "per": 28.0, "dividend_yield": 4.20},
+        "4568.T": {"pbr": 4.20, "per": 38.0, "dividend_yield": 1.20},
+        "1605.T": {"pbr": 0.65, "per": 7.2, "dividend_yield": 4.00},
     }
 
     updated = False
@@ -342,7 +418,9 @@ def scan_turnaround_universe(
     import sqlite3
 
     if universe is None:
-        universe = load_universe()
+        universe = load_turnaround_universe()
+
+    ensure_turnaround_features(universe, features_dir=features_dir)
 
     features_path = Path(features_dir)
     models_path = Path(model_dir)
@@ -501,7 +579,7 @@ def export_turnaround_reports(
         "# Value & Turnaround Scanner Report (激安・底打ち回復株発掘エンジン)",
         "",
         f"- **分析基準日**: {scan_data.get('date', '-')} (大引け時点)",
-        "- **対象ユニバース**: 東証プライム主力20銘柄 (Core 20 / 10セクター)",
+        f"- **対象ユニバース**: 東証プライム主力{len(rankings)}銘柄 (Value & Turnaround 拡張ユニバース)",
         f"- **回復予測モデル AUC**: **{metrics.get('test_auc', 0.5):.4f}** (20営業日内 +5%以上の上昇到達予測)",
         "",
         "## 1. モデルバックテスト検証結果 (高スコア帯のエッジ検証)",
@@ -513,7 +591,7 @@ def export_turnaround_reports(
         f"| **60営業日後 平均リターン** | {m_base.get('ret_60d_avg', 0.0):+.2%} | **{q5_perf.get('ret_60d_avg', 0.0):+.2%}** | **+{q5_perf.get('ret_60d_avg', 0.0) - m_base.get('ret_60d_avg', 0.0):.2%}** |",
         f"| **60営業日後 勝率 (>0%)** | {m_base.get('ret_60d_win_rate', 0.0):.1%} | **{q5_perf.get('ret_60d_win_rate', 0.0):.1%}** | **+{q5_perf.get('ret_60d_win_rate', 0.0) - m_base.get('ret_60d_win_rate', 0.0):.1%}** |",
         "",
-        "## 2. 💎 将来回復しそうな激安株ランキング（全20銘柄一覧表）",
+        f"## 2. 💎 将来回復しそうな激安株ランキング（全{len(rankings)}銘柄一覧表）",
         "",
         "| 順位 | コード | 銘柄名 | セクター | 現在株価 | 52週高値乖離 | 200日線乖離 | PBR | 利回り | 回復確率 | 激安スコア | 短期Overnight | 総合判定ステータス |",
         "|:---:|:---:|:---|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---|",

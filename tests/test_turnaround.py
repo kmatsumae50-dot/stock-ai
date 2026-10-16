@@ -6,10 +6,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from stock_ai.data.universe import load_turnaround_universe
 from stock_ai.models.turnaround import (
     TURNAROUND_FEATURE_COLUMNS,
     calculate_bargain_score,
     compute_turnaround_features,
+    ensure_turnaround_features,
     export_turnaround_reports,
     fetch_cached_fundamentals,
 )
@@ -184,4 +186,38 @@ def test_ui_turnaround_scanner_section_callable() -> None:
     from stock_ai.app.main import _render_turnaround_scanner_section
 
     assert callable(_render_turnaround_scanner_section)
+
+
+def test_load_turnaround_universe_50_tickers() -> None:
+    universe = load_turnaround_universe()
+    assert len(universe) == 50
+
+    sectors = {t.sector_ja for t in universe}
+    assert "自動車" in sectors
+    assert "総合商社" in sectors
+    assert "銀行・金融" in sectors
+    assert "鉄鋼" in sectors
+    assert "海運" in sectors
+    assert "不動産" in sectors
+    assert "半導体" in sectors
+    assert "防衛・重工" in sectors
+
+
+def test_ensure_turnaround_features(tmp_path: Path) -> None:
+    from stock_ai.data.universe import TickerInfo
+
+    raw_dir = tmp_path / "raw"
+    feat_dir = tmp_path / "feat"
+    raw_dir.mkdir()
+    feat_dir.mkdir()
+
+    # Pre-create one raw file
+    synth_df = _generate_synthetic_ohlcv(50)
+    synth_df.to_parquet(raw_dir / "7203.T.parquet")
+
+    test_univ = [TickerInfo(code="7203.T", name="トヨタ", sector="Automotive")]
+
+    ready = ensure_turnaround_features(test_univ, features_dir=feat_dir, raw_dir=raw_dir)
+    assert ready == 1
+    assert (feat_dir / "7203.T.parquet").exists()
 

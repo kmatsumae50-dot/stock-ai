@@ -15,15 +15,23 @@ SECTOR_JA_MAP: dict[str, str] = {
     "Automotive": "自動車",
     "Semiconductors": "半導体",
     "Banking & Finance": "銀行・金融",
+    "Insurance & Finance": "保険・金融",
     "Wholesale & Trading": "総合商社",
     "Electronics": "電機・精密",
     "Machinery & Defense": "防衛・重工",
+    "Machinery": "機械",
     "Telecommunications & Tech": "通信・AI投資",
     "Telecommunications": "通信・ディフェンシブ",
     "Entertainment & Gaming": "ゲーム・エンタメ",
+    "Entertainment": "レジャー・エンタメ",
     "Retail": "小売・内需",
     "Pharmaceuticals": "医薬品",
     "Chemicals & Materials": "化学・素材",
+    "Iron & Steel": "鉄鋼",
+    "Non-Ferrous Metals": "非鉄金属",
+    "Marine Transportation": "海運",
+    "Real Estate": "不動産",
+    "Energy & Resources": "エネルギー・資源",
 }
 
 
@@ -40,6 +48,21 @@ class TickerInfo:
 
 def load_universe(path: str | Path | None = None) -> list[TickerInfo]:
     universe_path = Path(path) if path else PROJECT_ROOT / "configs" / "universe.yml"
+    if yaml is not None:
+        raw = yaml.safe_load(universe_path.read_text(encoding="utf-8"))
+        return [
+            TickerInfo(
+                code=item["code"],
+                name=item.get("name", ""),
+                sector=item.get("sector", ""),
+            )
+            for item in raw["tickers"]
+        ]
+    return _load_simple_universe(universe_path)
+
+
+def load_turnaround_universe(path: str | Path | None = None) -> list[TickerInfo]:
+    universe_path = Path(path) if path else PROJECT_ROOT / "configs" / "universe_turnaround.yml"
     if yaml is not None:
         raw = yaml.safe_load(universe_path.read_text(encoding="utf-8"))
         return [

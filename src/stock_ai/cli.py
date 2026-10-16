@@ -303,7 +303,7 @@ def main() -> None:
 
     turnaround_scanner = subparsers.add_parser(
         "scan-turnaround-universe",
-        help="Scan 20-ticker universe for deep-value turnaround candidates and update reports",
+        help="Scan 50-ticker Prime universe for deep-value turnaround candidates and update reports",
     )
     turnaround_scanner.add_argument(
         "--output-json",

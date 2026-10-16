@@ -13,7 +13,8 @@ import pandas as pd
 
 from stock_ai.config import load_settings
 from stock_ai.data.yfinance_provider import fetch_daily_ohlcv
-from stock_ai.data.universe import TickerInfo, load_universe
+from stock_ai.data.universe import TickerInfo, load_turnaround_universe, load_universe
+from stock_ai.events.earnings_guard import check_earnings_risk
 from stock_ai.external.market_data import download_external_market_data_report
 from stock_ai.models.overnight import (
     OVERNIGHT_ARTIFACT_FILENAME,
@@ -46,9 +47,10 @@ def build_webhook_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
         for idx, item in enumerate(top_overnight[:3], 1):
             p_up = item.get("probability_up", 0.0)
             q_info = item.get("quantile") or item.get("label") or "Q5"
+            e_flag = "⚠️決算警戒" if item.get("earnings_risk") else "✅通常"
             lines.append(
                 f"  {idx}. `{item['ticker']}` {item['name']} ({item['sector']}): "
-                f"**{p_up:.1%}** ({q_info})"
+                f"**{p_up:.1%}** ({q_info}) | {e_flag}"
             )
     else:
         lines.append("  (該当なし)")
@@ -58,14 +60,14 @@ def build_webhook_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
     win = paper_metrics.get("win_rate", 0.0)
     sh = paper_metrics.get("sharpe_ratio", 0.0)
     max_dd = paper_metrics.get("max_drawdown", 0.0)
-    pos = paper_metrics.get("next_positions", "なし")
+    pos = paper_metrics.get("next_positions") or "本日エントリーなし (キャッシュ待機判定)"
 
     lines.extend([
         "",
         "💰 **仮想100万円ファンド (Overnight Paper Trader)**:",
         f"  ・総資産: **{eq:,.0f} 円** ({ret:+.1%})",
         f"  ・勝率: **{win:.1%}** | Sharpe: **{sh:.2f}** | MaxDD: **{max_dd:.1%}**",
-        f"  ・本日エントリー予定: {pos}",
+        f"  ・本日エントリー判定: {pos}",
         "",
         "💎 **Value & Turnaround (将来回復しそうな激安株 Top 3)**:",
     ])
@@ -84,6 +86,23 @@ def build_webhook_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
 
     content_text = "\n".join(lines)
 
+    overnight_embed_items = []
+    if top_overnight:
+        for i in top_overnight[:3]:
+            e_flag = "⚠️決算警戒" if i.get("earnings_risk") else "✅通常"
+            overnight_embed_items.append(
+                f"・`{i['ticker']}` {i['name']}: **{i['probability_up']:.1%}** ({i.get('q_band', 'Q5')}) | {e_flag}"
+            )
+
+    turnaround_embed_items = []
+    if turnaround_picks:
+        for idx, i in enumerate(turnaround_picks[:3], 1):
+            pbr_s = f"{i['pbr']:.2f}倍" if i.get("pbr") is not None else "-"
+            status = i.get("status", "")
+            turnaround_embed_items.append(
+                f"{idx}. `{i['ticker']}` {i['name']}: **{i['bargain_score']:.1f}点** ({i['drawdown_252d']:+.1%}, PBR: {pbr_s})\n   └ {status}"
+            )
+
     embed = {
         "title": f"🚀 Stock-AI クラウド自動更新完了 ({date_str})",
         "description": "PC電源オフ環境での日次自動予測パイプラインが正常に完走しました。",
@@ -91,21 +110,17 @@ def build_webhook_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
         "fields": [
             {
                 "name": "🏆 Overnight Q5 注目銘柄",
-                "value": "\n".join(
-                    [f"・`{i['ticker']}` {i['name']}: **{i['probability_up']:.1%}**" for i in top_overnight[:3]]
-                ) if top_overnight else "なし",
+                "value": "\n".join(overnight_embed_items) if overnight_embed_items else "なし",
                 "inline": False,
             },
             {
                 "name": "💰 仮想100万円ファンド成績",
-                "value": f"資産: **{eq:,.0f}円** ({ret:+.1%})\n勝率: **{win:.1%}** | Sharpe: **{sh:.2f}**",
+                "value": f"資産: **{eq:,.0f}円** ({ret:+.1%})\n勝率: **{win:.1%}** | Sharpe: **{sh:.2f}** | MaxDD: **{max_dd:.1%}**\n本日判定: **{pos}**",
                 "inline": False,
             },
             {
-                "name": "💎 激安回復株 (Turnaround)",
-                "value": "\n".join(
-                    [f"・`{i['ticker']}` {i['name']}: **{i['bargain_score']:.1f}点** ({i['drawdown_252d']:+.1%})" for i in turnaround_picks[:3]]
-                ) if turnaround_picks else "なし",
+                "name": "💎 激安回復株 (Turnaround Top 3)",
+                "value": "\n".join(turnaround_embed_items) if turnaround_embed_items else "なし",
                 "inline": False,
             },
         ],
@@ -117,6 +132,61 @@ def build_webhook_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
         "content": content_text,
         "text": content_text,
         "embeds": [embed],
+    }
+
+
+def get_current_pipeline_summary(
+    snapshot_path: Path | str = "reports/autonomous/latest_overnight_scanner_snapshot.json",
+    paper_path: Path | str = "reports/autonomous/overnight_portfolio_simulation_results.json",
+    turnaround_path: Path | str = "reports/autonomous/value_turnaround_scanner_results.json",
+) -> dict[str, Any]:
+    """Load latest results from autonomous report files to create a pipeline summary."""
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    top_overnight: list[dict[str, Any]] = []
+    paper_metrics: dict[str, Any] = {}
+    top_turnaround: list[dict[str, Any]] = []
+
+    s_file = Path(snapshot_path)
+    if s_file.exists():
+        try:
+            s_data = json.loads(s_file.read_text(encoding="utf-8"))
+            date_str = s_data.get("date") or date_str
+            top_overnight = s_data.get("rankings", [])[:5]
+        except Exception:
+            pass
+
+    p_file = Path(paper_path)
+    if p_file.exists():
+        try:
+            p_data = json.loads(p_file.read_text(encoding="utf-8"))
+            best_s = p_data.get("results_by_cost", {}).get("5bps", {}).get("elite_top2_long", {})
+            m = best_s.get("metrics", {})
+            pending_b = p_data.get("latest_pending", {}).get("strategies", {}).get("elite_top2_long", {})
+            picks = pending_b.get("long_picks", [])
+            paper_metrics = {
+                "final_equity": m.get("final_equity", 1_000_000.0),
+                "cumulative_return": m.get("cumulative_return", 0.0),
+                "win_rate": m.get("win_rate", 0.0),
+                "sharpe_ratio": m.get("sharpe_ratio", 0.0),
+                "max_drawdown": m.get("max_drawdown", 0.0),
+                "next_positions": ", ".join(picks) if picks else "本日エントリーなし (キャッシュ待機判定)",
+            }
+        except Exception:
+            pass
+
+    t_file = Path(turnaround_path)
+    if t_file.exists():
+        try:
+            t_data = json.loads(t_file.read_text(encoding="utf-8"))
+            top_turnaround = t_data.get("rankings", [])[:3]
+        except Exception:
+            pass
+
+    return {
+        "date": date_str,
+        "top_overnight": top_overnight,
+        "paper_trader": paper_metrics,
+        "top_turnaround": top_turnaround,
     }
 
 
@@ -326,6 +396,7 @@ def run_cloud_daily_pipeline(
                     if not f_df.empty and "close" in f_df.columns:
                         raw_close = float(f_df["close"].iloc[-1])
 
+                e_risk, e_date = check_earnings_risk(code, ref_date=p_date)
                 scanner_rows.append({
                     "ticker": code,
                     "name": name,
@@ -339,6 +410,9 @@ def run_cloud_daily_pipeline(
                     "label": q_label,
                     "historical_win_rate": q_win,
                     "auc": auc_val,
+                    "earnings_risk": e_risk,
+                    "earnings_date": e_date,
+                    "earnings_status": "⚠️ 決算警戒" if e_risk else "✅ 通常",
                 })
         except Exception as exc:
             print(f"WARN: Overnight predict failed for {code}: {exc}")
@@ -385,7 +459,7 @@ def run_cloud_daily_pipeline(
                 "win_rate": m.get("win_rate", 0.0),
                 "sharpe_ratio": m.get("sharpe_ratio", 0.0),
                 "max_drawdown": m.get("max_drawdown", 0.0),
-                "next_positions": ", ".join(picks) if picks else "本日エントリーなし (キャッシュ保有)",
+                "next_positions": ", ".join(picks) if picks else "本日エントリーなし (キャッシュ待機判定)",
             }
         print("Paper trader portfolio simulation successfully updated.")
         step_results["paper_trader"] = "SUCCESS"
@@ -400,14 +474,15 @@ def run_cloud_daily_pipeline(
     print("\n--- [Step E] Updating Value & Turnaround Scanner ---")
     turnaround_picks: list[dict[str, Any]] = []
     try:
-        t_data = scan_turnaround_universe()
+        t_universe = load_turnaround_universe()
+        t_data = scan_turnaround_universe(universe=t_universe)
         export_turnaround_reports(
             t_data,
             output_json_path="reports/autonomous/value_turnaround_scanner_results.json",
             output_md_path="reports/autonomous/value_turnaround_scanner_report.md",
         )
         turnaround_picks = t_data.get("rankings", [])
-        print("Value & Turnaround scanner report successfully updated.")
+        print(f"Value & Turnaround scanner report successfully updated ({len(turnaround_picks)} tickers).")
         step_results["turnaround"] = "SUCCESS"
     except Exception as exc:
         print(f"WARN: Value & Turnaround scanner update failed: {exc}")

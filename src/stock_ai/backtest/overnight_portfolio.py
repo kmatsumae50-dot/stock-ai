@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from stock_ai.data.universe import TickerInfo, load_universe
+from stock_ai.events.earnings_guard import check_earnings_risk
 from stock_ai.models.overnight import (
     OVERNIGHT_ARTIFACT_FILENAME,
     classify_overnight_quantile,
@@ -100,6 +101,12 @@ def collect_overnight_universe_predictions(
         sub["win_rate"] = win_rates
         sub["direction"] = directions
 
+        # Attach earnings risk flag (especially for live pending date)
+        sub["earnings_risk"] = False
+        latest_dt = sub["date"].max()
+        e_risk, _ = check_earnings_risk(code, ref_date=latest_dt)
+        sub.loc[sub["date"] == latest_dt, "earnings_risk"] = e_risk
+
         cols_to_keep = [
             "date",
             "ticker",
@@ -112,6 +119,7 @@ def collect_overnight_universe_predictions(
             "win_rate",
             "direction",
             "auc",
+            "earnings_risk",
         ]
         records.append(sub[cols_to_keep])
 
@@ -151,25 +159,32 @@ def simulate_overnight_strategy(
 
         elif strategy_name == "elite_top2_long":
             # AUC >= 0.58 and (Q5 or (Q4 and win_rate >= 0.60)), up to 2, p_up desc
-            elites = day_slice[
+            # Earnings Guard: Filter out earnings risk tickers
+            eligible = day_slice[
                 (day_slice["auc"] >= 0.58)
                 & (
                     (day_slice["quantile"] == "Q5")
                     | ((day_slice["quantile"] == "Q4") & (day_slice["win_rate"] >= 0.60))
                 )
-            ].sort_values("p_up", ascending=False)
+            ]
+            if "earnings_risk" in eligible.columns:
+                eligible = eligible[~eligible["earnings_risk"].fillna(False).astype(bool)]
+            elites = eligible.sort_values("p_up", ascending=False)
             if not elites.empty:
                 long_picks = elites.head(2)["ticker"].tolist()
 
         elif strategy_name == "long_short_spread":
-            # Long: Strategy B
-            elites = day_slice[
+            # Long: Strategy B with Earnings Guard
+            eligible = day_slice[
                 (day_slice["auc"] >= 0.58)
                 & (
                     (day_slice["quantile"] == "Q5")
                     | ((day_slice["quantile"] == "Q4") & (day_slice["win_rate"] >= 0.60))
                 )
-            ].sort_values("p_up", ascending=False)
+            ]
+            if "earnings_risk" in eligible.columns:
+                eligible = eligible[~eligible["earnings_risk"].fillna(False).astype(bool)]
+            elites = eligible.sort_values("p_up", ascending=False)
             if not elites.empty:
                 long_picks = elites.head(2)["ticker"].tolist()
 

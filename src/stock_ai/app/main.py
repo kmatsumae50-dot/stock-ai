@@ -211,6 +211,35 @@ def main() -> None:
         _render_operations_tab(ticker, data, settings)
 
 
+def _render_discord_webhook_panel() -> None:
+    """Render Discord Webhook settings and test sending panel in Streamlit sidebar."""
+    import os
+    from stock_ai.cloud.pipeline import get_current_pipeline_summary, send_daily_summary_webhook
+
+    with st.sidebar.expander("🔔 Discord 通知設定 & テスト送信", expanded=False):
+        env_wh = os.environ.get("STOCK_AI_WEBHOOK_URL", "")
+        wh_input = st.text_input(
+            "Discord Webhook URL",
+            value=env_wh,
+            type="password",
+            help="DiscordチャンネルのWebhook URLを入力してください。環境変数 STOCK_AI_WEBHOOK_URL が存在する場合は初期値として設定されます。",
+            key="sidebar_discord_webhook_url",
+        )
+        if st.button("🔔 今すぐテスト通知を送信", key="sidebar_send_discord_test_btn", use_container_width=True):
+            target_url = wh_input.strip()
+            if not target_url:
+                st.error("Webhook URL を入力してください。")
+            else:
+                with st.spinner("Discord へテスト通知を送信中..."):
+                    summary = get_current_pipeline_summary()
+                    result = send_daily_summary_webhook(summary, webhook_url=target_url)
+                    if result.get("status") == "SUCCESS":
+                        st.success("✅ Discord へリッチ通知を送信しました！")
+                    else:
+                        err_msg = result.get("error") or result.get("reason") or "送信エラー"
+                        st.error(f"❌ 送信失敗: {err_msg}")
+
+
 def _select_ticker(universe: list[TickerInfo]) -> str:
     options = [ticker.code for ticker in universe]
     names = {ticker.code: ticker.name for ticker in universe}
@@ -223,6 +252,7 @@ def _select_ticker(universe: list[TickerInfo]) -> str:
     )
     manual = st.sidebar.text_input("Manual ticker", value="", key="sidebar_manual_ticker_input")
     st.sidebar.caption("Example: 7203.T")
+    _render_discord_webhook_panel()
     return manual.strip() or selected
 
 
@@ -1722,6 +1752,7 @@ def _render_multi_ticker_overnight_scanner(
         elif t_code in snapshot_map:
             # Reconstruct from snapshot row
             sr = snapshot_map[t_code]
+            e_risk = sr.get("earnings_risk", False)
             rows.append({
                 "ticker": t_code,
                 "name": t_name,
@@ -1733,6 +1764,8 @@ def _render_multi_ticker_overnight_scanner(
                 "quantile": sr.get("quantile", "-"),
                 "win_rate": sr.get("historical_win_rate"),
                 "auc": sr.get("auc"),
+                "earnings_risk": e_risk,
+                "earnings_status": sr.get("earnings_status", "⚠️ 決算警戒" if e_risk else "✅ 通常"),
                 "is_active": (t_code == selected_ticker),
             })
             continue
@@ -1763,6 +1796,9 @@ def _render_multi_ticker_overnight_scanner(
             q_label = notes.get("label", "")
             q_win = notes.get("historical_win_rate")
 
+            from stock_ai.events.earnings_guard import check_earnings_risk
+            e_risk, _ = check_earnings_risk(t_code, ref_date=p_date)
+
             rows.append(
                 {
                     "ticker": t_code,
@@ -1775,10 +1811,15 @@ def _render_multi_ticker_overnight_scanner(
                     "quantile": f"{q_band} ({q_label})" if q_label else q_band,
                     "win_rate": q_win,
                     "auc": auc_val,
+                    "earnings_risk": e_risk,
+                    "earnings_status": "⚠️ 決算警戒" if e_risk else "✅ 通常",
                     "is_active": (t_code == selected_ticker),
                 }
             )
         else:
+            from stock_ai.events.earnings_guard import check_earnings_risk
+            e_risk, _ = check_earnings_risk(t_code)
+
             rows.append(
                 {
                     "ticker": t_code,
@@ -1791,6 +1832,8 @@ def _render_multi_ticker_overnight_scanner(
                     "quantile": "-",
                     "win_rate": None,
                     "auc": auc_val,
+                    "earnings_risk": e_risk,
+                    "earnings_status": "⚠️ 決算警戒" if e_risk else "✅ 通常",
                     "is_active": (t_code == selected_ticker),
                 }
             )
@@ -1834,11 +1877,13 @@ def _render_multi_ticker_overnight_scanner(
     fc1, fc2, fc3 = st.columns([2, 2, 2])
     with fc1:
         q_filter = st.selectbox(
-            "Quantile帯フィルター",
+            "Quantile帯・決算ガードフィルター",
             options=[
                 "すべて表示",
                 "🔥 Q5（強気ギャップアップ帯）のみ",
                 "🔥 Q4〜Q5（買い候補帯）",
+                "🛡️ 決算警戒なし（安全銘柄のみ）",
+                "⚠️ 決算警戒フラグ点灯銘柄のみ",
                 "⚠️ Q1（ギャップダウン警戒帯）のみ",
             ],
             index=0,
@@ -1871,6 +1916,10 @@ def _render_multi_ticker_overnight_scanner(
         filtered_rows = [r for r in filtered_rows if r["q_band"] == "Q5"]
     elif q_filter == "🔥 Q4〜Q5（買い候補帯）":
         filtered_rows = [r for r in filtered_rows if r["q_band"] in ("Q4", "Q5")]
+    elif q_filter == "🛡️ 決算警戒なし（安全銘柄のみ）":
+        filtered_rows = [r for r in filtered_rows if not r.get("earnings_risk")]
+    elif q_filter == "⚠️ 決算警戒フラグ点灯銘柄のみ":
+        filtered_rows = [r for r in filtered_rows if r.get("earnings_risk")]
     elif q_filter == "⚠️ Q1（ギャップダウン警戒帯）のみ":
         filtered_rows = [r for r in filtered_rows if r["q_band"] == "Q1"]
 
@@ -1899,6 +1948,7 @@ def _render_multi_ticker_overnight_scanner(
                 "Overnight Up確率": _format_percent(r["p_up"]) if r["p_up"] >= 0 else "-",
                 "予測方向": r["direction"],
                 "Quantile帯": r["quantile"],
+                "決算警戒": r.get("earnings_status", "⚠️ 決算警戒" if r.get("earnings_risk") else "✅ 通常"),
                 "過去実績勝率": _format_percent(r["win_rate"]) if r["win_rate"] is not None else "-",
                 "C2O AUC": _format_percent(r["auc"]) if r["auc"] is not None else "-",
             }
@@ -2057,7 +2107,6 @@ def _render_overnight_paper_trader_section(universe: list[TickerInfo]) -> None:
 def _render_turnaround_scanner_section(universe: list[TickerInfo]) -> None:
     st.markdown("---")
     st.subheader("💎 Value & Turnaround Scanner (激安・将来回復株発掘エンジン)")
-    st.caption("東証プライム主力20銘柄の売られすぎ・底打ち反転（20〜60営業日）を検出し、割安度とAI回復確率を統合した「Bargain Score」順にランキング")
 
     results_path = Path("reports") / "autonomous" / "value_turnaround_scanner_results.json"
     scan_data = None
@@ -2069,13 +2118,15 @@ def _render_turnaround_scanner_section(universe: list[TickerInfo]) -> None:
 
     if scan_data is None:
         try:
+            from stock_ai.data.universe import load_turnaround_universe
             from stock_ai.models.turnaround import (
                 export_turnaround_reports,
                 scan_turnaround_universe,
             )
 
-            with st.spinner("Value & Turnaround スキャナーを実行中..."):
-                scan_data = scan_turnaround_universe(universe=universe)
+            with st.spinner("Value & Turnaround 50銘柄スキャナーを実行中..."):
+                t_universe = load_turnaround_universe()
+                scan_data = scan_turnaround_universe(universe=t_universe)
                 export_turnaround_reports(scan_data)
         except Exception as exc:
             st.warning(f"Value & Turnaround スキャナー結果を読み込めませんでした（{exc}）。右上の『☁️ クラウド同期実行』を押してください。")
@@ -2085,6 +2136,8 @@ def _render_turnaround_scanner_section(universe: list[TickerInfo]) -> None:
     if not rankings:
         st.info("Turnaround スキャナー結果がありません。")
         return
+
+    st.caption(f"東証プライム主要50銘柄の売られすぎ・底打ち反転（20〜60営業日）を検出し、割安度とAI回復確率を統合した「Bargain Score」順にランキング (全{len(rankings)}銘柄スキャン)")
 
     metrics = scan_data.get("metrics", {})
     test_auc = metrics.get("test_auc", 0.5)
@@ -2103,45 +2156,79 @@ def _render_turnaround_scanner_section(universe: list[TickerInfo]) -> None:
     k4.metric("Q5帯 平均回復リターン", f"20d: {q5_20d:+.2%}", f"60d: {q5_60d:+.2%}")
 
     # Filters and controls
-    c_sort, c_filter = st.columns([2, 2])
-    with c_sort:
+    f_c1, f_c2, f_c3, f_c4 = st.columns([2, 2, 2, 2])
+    with f_c1:
+        search_kw = st.text_input("🔍 銘柄検索（コード・名称）", value="", key="turnaround_search_kw")
+    with f_c2:
+        status_filter = st.selectbox(
+            "表示絞り込み",
+            options=[
+                "すべて表示",
+                "💎 激安スコア上位 (Top 10)",
+                "⭐ 底打ち始動サイン点灯銘柄のみ",
+                "💎 超割安・底打ち反転圏 (スコア70点以上)",
+                "👀 調整監視圏 (スコア50点以上)",
+            ],
+            index=0,
+            key="turnaround_status_filter",
+        )
+    with f_c3:
+        all_secs = sorted({r.get("sector", "") for r in rankings if r.get("sector")})
+        sec_filter = st.selectbox(
+            "セクター絞り込み",
+            options=["すべてのセクター"] + all_secs,
+            index=0,
+            key="turnaround_sec_filter",
+        )
+    with f_c4:
         sort_mode = st.selectbox(
             "並び替え順",
             options=[
                 "💎 激安回復スコア (高い順)",
+                "⭐ 始動シグナル優先",
                 "📉 52週高値からの下落率 (安い順)",
                 "📈 200日線乖離率 (売られすぎ順)",
-                "⭐ 始動シグナル優先",
+                "低PBR順 (バリュー順)",
+                "高配当利回り順",
             ],
             index=0,
             key="turnaround_sort_mode",
         )
-    with c_filter:
-        status_filter = st.selectbox(
-            "ステータス絞り込み",
-            options=["すべて", "⭐ 始動シグナルのみ", "💎 超割安・底打ち反転圏", "👀 調整監視圏"],
-            index=0,
-            key="turnaround_status_filter",
-        )
 
     # Filter
     display_rows = list(rankings)
-    if status_filter == "⭐ 始動シグナルのみ":
+    if search_kw.strip():
+        kw = search_kw.strip().lower()
+        display_rows = [
+            r for r in display_rows
+            if kw in r.get("ticker", "").lower() or kw in r.get("name", "").lower()
+        ]
+
+    if status_filter == "💎 激安スコア上位 (Top 10)":
+        display_rows = sorted(display_rows, key=lambda r: r["bargain_score"], reverse=True)[:10]
+    elif status_filter == "⭐ 底打ち始動サイン点灯銘柄のみ":
         display_rows = [r for r in display_rows if r.get("is_golden_signal")]
-    elif status_filter == "💎 超割安・底打ち反転圏":
-        display_rows = [r for r in display_rows if "超割安" in r.get("status", "")]
-    elif status_filter == "👀 調整監視圏":
-        display_rows = [r for r in display_rows if "調整監視" in r.get("status", "")]
+    elif status_filter == "💎 超割安・底打ち反転圏 (スコア70点以上)":
+        display_rows = [r for r in display_rows if r.get("bargain_score", 0.0) >= 70.0]
+    elif status_filter == "👀 調整監視圏 (スコア50点以上)":
+        display_rows = [r for r in display_rows if r.get("bargain_score", 0.0) >= 50.0]
+
+    if sec_filter != "すべてのセクター":
+        display_rows = [r for r in display_rows if r.get("sector") == sec_filter]
 
     # Sort
     if sort_mode == "💎 激安回復スコア (高い順)":
         display_rows.sort(key=lambda r: r["bargain_score"], reverse=True)
+    elif sort_mode == "⭐ 始動シグナル優先":
+        display_rows.sort(key=lambda r: (1 if r.get("is_golden_signal") else 0, r["bargain_score"]), reverse=True)
     elif sort_mode == "📉 52週高値からの下落率 (安い順)":
         display_rows.sort(key=lambda r: r["drawdown_252d"])
     elif sort_mode == "📈 200日線乖離率 (売られすぎ順)":
         display_rows.sort(key=lambda r: r["ma_gap_200d"])
-    elif sort_mode == "⭐ 始動シグナル優先":
-        display_rows.sort(key=lambda r: (1 if r.get("is_golden_signal") else 0, r["bargain_score"]), reverse=True)
+    elif sort_mode == "低PBR順 (バリュー順)":
+        display_rows.sort(key=lambda r: (r["pbr"] if r.get("pbr") is not None else 999.0))
+    elif sort_mode == "高配当利回り順":
+        display_rows.sort(key=lambda r: (r["dividend_yield"] if r.get("dividend_yield") is not None else -1.0), reverse=True)
 
     # Table format
     table_data = []

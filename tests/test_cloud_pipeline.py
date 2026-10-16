@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from stock_ai.cloud.pipeline import (
     build_webhook_payload,
+    get_current_pipeline_summary,
     save_overnight_scanner_snapshot,
     send_daily_summary_webhook,
 )
@@ -22,6 +23,7 @@ def test_build_webhook_payload_structure() -> None:
                 "probability_up": 0.6099,
                 "quantile": "Q5 (強気ギャップアップ帯)",
                 "label": "強気ギャップアップ帯",
+                "earnings_risk": True,
             },
             {
                 "ticker": "9983.T",
@@ -30,6 +32,7 @@ def test_build_webhook_payload_structure() -> None:
                 "probability_up": 0.5918,
                 "quantile": "Q5 (強気ギャップアップ帯)",
                 "label": "強気ギャップアップ帯",
+                "earnings_risk": False,
             },
         ],
         "paper_trader": {
@@ -64,6 +67,7 @@ def test_build_webhook_payload_structure() -> None:
     assert "任天堂" in content
     assert "7974.T" in content
     assert "61.0%" in content
+    assert "⚠️決算警戒" in content
     assert "1,328,500" in content
     assert "+32.9%" in content
     assert "日産自動車" in content
@@ -72,6 +76,13 @@ def test_build_webhook_payload_structure() -> None:
     embed = payload["embeds"][0]
     assert "Stock-AI" in embed["title"]
     assert len(embed["fields"]) == 3
+    # Check that earnings alert is shown in Overnight embed field
+    assert "⚠️決算警戒" in embed["fields"][0]["value"]
+    # Check paper trader position in field
+    assert "本日判定" in embed["fields"][1]["value"]
+    assert "7974.T" in embed["fields"][1]["value"]
+    # Check turnaround top pick in field
+    assert "日産自動車" in embed["fields"][2]["value"]
 
 
 def test_save_overnight_scanner_snapshot(tmp_path: Path) -> None:
@@ -261,5 +272,57 @@ def test_main_ui_renders_3_dashboards_when_parquet_missing() -> None:
 
         # Heavy individual analysis tabs must not be created since parquet is missing
         mock_tabs.assert_not_called()
+
+
+def test_get_current_pipeline_summary(tmp_path: Path) -> None:
+    snap_p = tmp_path / "snap.json"
+    paper_p = tmp_path / "paper.json"
+    turn_p = tmp_path / "turn.json"
+
+    snap_p.write_text(json.dumps({
+        "date": "2026-10-15",
+        "rankings": [{"ticker": "7203.T", "name": "トヨタ", "probability_up": 0.65, "earnings_risk": True}],
+    }), encoding="utf-8")
+
+    paper_p.write_text(json.dumps({
+        "results_by_cost": {
+            "5bps": {
+                "elite_top2_long": {
+                    "metrics": {"final_equity": 1_050_000.0, "cumulative_return": 0.05, "win_rate": 0.60, "sharpe_ratio": 2.0, "max_drawdown": -0.02}
+                }
+            }
+        },
+        "latest_pending": {"strategies": {"elite_top2_long": {"long_picks": ["8306.T"]}}},
+    }), encoding="utf-8")
+
+    turn_p.write_text(json.dumps({
+        "rankings": [{"ticker": "7201.T", "name": "日産", "bargain_score": 75.0, "drawdown_252d": -0.35, "pbr": 0.28, "status": "超割安"}],
+    }), encoding="utf-8")
+
+    summary = get_current_pipeline_summary(snapshot_path=snap_p, paper_path=paper_p, turnaround_path=turn_p)
+
+    assert summary["date"] == "2026-10-15"
+    assert len(summary["top_overnight"]) == 1
+    assert summary["top_overnight"][0]["ticker"] == "7203.T"
+    assert summary["paper_trader"]["final_equity"] == 1_050_000.0
+    assert summary["paper_trader"]["next_positions"] == "8306.T"
+    assert len(summary["top_turnaround"]) == 1
+    assert summary["top_turnaround"][0]["ticker"] == "7201.T"
+
+
+def test_render_discord_webhook_panel_success() -> None:
+    from stock_ai.app.main import _render_discord_webhook_panel
+
+    with patch("streamlit.sidebar.expander"), \
+         patch("streamlit.text_input", return_value="https://discord.com/api/webhooks/dummy/123"), \
+         patch("streamlit.button", return_value=True), \
+         patch("stock_ai.cloud.pipeline.send_daily_summary_webhook", return_value={"status": "SUCCESS"}) as mock_send, \
+         patch("streamlit.success") as mock_success:
+
+        _render_discord_webhook_panel()
+
+        mock_send.assert_called_once()
+        mock_success.assert_called_once()
+        assert "Discord へリッチ通知を送信しました" in mock_success.call_args[0][0]
 
 
