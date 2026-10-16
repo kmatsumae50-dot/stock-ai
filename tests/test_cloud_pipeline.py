@@ -326,3 +326,21 @@ def test_render_discord_webhook_panel_success() -> None:
         assert "Discord へリッチ通知を送信しました" in mock_success.call_args[0][0]
 
 
+def test_render_discord_webhook_panel_main_container() -> None:
+    import streamlit as st
+    from stock_ai.app.main import _render_discord_webhook_panel
+
+    with patch.object(st, "expander") as mock_expander, \
+         patch("streamlit.text_input", return_value="https://discord.com/api/webhooks/main/456"), \
+         patch("streamlit.button", return_value=True), \
+         patch("stock_ai.cloud.pipeline.send_daily_summary_webhook", return_value={"status": "SUCCESS"}) as mock_send, \
+         patch("streamlit.success") as mock_success:
+
+        _render_discord_webhook_panel(container=st, key_prefix="main")
+
+        mock_expander.assert_called_once_with("🔔 Discord 通知設定 & テスト送信", expanded=False)
+        mock_send.assert_called_once()
+        mock_success.assert_called_once()
+
+
+

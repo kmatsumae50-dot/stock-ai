@@ -5,6 +5,7 @@ import importlib
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -97,6 +98,7 @@ def main() -> None:
     st.title("stock-ai")
     st.caption("Japanese stock analysis MVP")
     _render_cloud_sync_header()
+    _render_discord_webhook_panel(container=st, key_prefix="main")
 
     ticker = _select_ticker(universe)
 
@@ -211,22 +213,27 @@ def main() -> None:
         _render_operations_tab(ticker, data, settings)
 
 
-def _render_discord_webhook_panel() -> None:
-    """Render Discord Webhook settings and test sending panel in Streamlit sidebar."""
+def _render_discord_webhook_panel(container: Any = None, key_prefix: str = "sidebar") -> None:
+    """Render Discord Webhook settings and test sending panel in Streamlit sidebar or main page."""
     import os
     from stock_ai.cloud.pipeline import get_current_pipeline_summary, send_daily_summary_webhook
 
-    with st.sidebar.expander("🔔 Discord 通知設定 & テスト送信", expanded=False):
+    target_container = container if container is not None else st.sidebar
+    with target_container.expander("🔔 Discord 通知設定 & テスト送信", expanded=False):
         env_wh = os.environ.get("STOCK_AI_WEBHOOK_URL", "")
+        current_sync_url = st.session_state.get("shared_discord_webhook_url", env_wh)
         wh_input = st.text_input(
             "Discord Webhook URL",
-            value=env_wh,
+            value=current_sync_url,
             type="password",
             help="DiscordチャンネルのWebhook URLを入力してください。環境変数 STOCK_AI_WEBHOOK_URL が存在する場合は初期値として設定されます。",
-            key="sidebar_discord_webhook_url",
+            key=f"{key_prefix}_discord_webhook_url",
         )
-        if st.button("🔔 今すぐテスト通知を送信", key="sidebar_send_discord_test_btn", use_container_width=True):
-            target_url = wh_input.strip()
+        if wh_input:
+            st.session_state["shared_discord_webhook_url"] = wh_input
+
+        if st.button("🔔 今すぐテスト通知を送信", key=f"{key_prefix}_send_discord_test_btn", use_container_width=True):
+            target_url = wh_input.strip() or st.session_state.get("shared_discord_webhook_url", "").strip()
             if not target_url:
                 st.error("Webhook URL を入力してください。")
             else:
@@ -241,6 +248,7 @@ def _render_discord_webhook_panel() -> None:
 
 
 def _select_ticker(universe: list[TickerInfo]) -> str:
+    _render_discord_webhook_panel(container=st.sidebar, key_prefix="sidebar")
     options = [ticker.code for ticker in universe]
     names = {ticker.code: ticker.name for ticker in universe}
 
@@ -252,7 +260,6 @@ def _select_ticker(universe: list[TickerInfo]) -> str:
     )
     manual = st.sidebar.text_input("Manual ticker", value="", key="sidebar_manual_ticker_input")
     st.sidebar.caption("Example: 7203.T")
-    _render_discord_webhook_panel()
     return manual.strip() or selected
 
 
@@ -2295,7 +2302,7 @@ def _render_overnight_prediction_section(
 
             o_notes = classify_overnight_quantile(float(o_up), ticker=ticker)
 
-        prediction_label = "Up" if safe_float(o_up, 0.0) >= 0.5 else "Down"
+        prediction_label = "Up" if (safe_float(o_up) or 0.0) >= 0.5 else "Down"
         q_band = o_notes.get("quantile", "N/A")
         q_label = o_notes.get("label", "")
         q_hist_win = o_notes.get("historical_win_rate")
@@ -14897,7 +14904,7 @@ def _render_daily_profile_before_after(
         "This is an operational data-quality evaluation, not proof of market predictive power. "
         "The split is detected from the last batch containing toyota_earnings."
     )
-    cols = st.columns(4)
+    cols = st.columns(5)
     cols[0].metric(
         "Overall recommendation",
         str(evaluation.get("overall_recommendation") or "-"),
