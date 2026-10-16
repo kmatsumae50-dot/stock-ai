@@ -1,50 +1,50 @@
 {
   "metrics": {
-    "accuracy": 0.5275080906148867,
-    "f1": 0.6167979002624672,
-    "auc": 0.540514740783714,
+    "accuracy": 0.5242718446601942,
+    "f1": 0.5811965811965812,
+    "auc": 0.5509857311719013,
     "rows": 618
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4961,
+      "max_p": 0.4952,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.4758,
-      "description": "実績ギャップアップ率 47.6%（陰線・下落警戒）"
+      "historical_win_rate": 0.4839,
+      "description": "実績ギャップアップ率 48.4%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4961,
-      "max_p": 0.5012,
+      "min_p": 0.4952,
+      "max_p": 0.4993,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.4878,
-      "description": "実績ギャップアップ率 48.8%（弱気）"
+      "historical_win_rate": 0.5691,
+      "description": "実績ギャップアップ率 56.9%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.5014,
-      "max_p": 0.5073,
+      "min_p": 0.4993,
+      "max_p": 0.5039,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5887,
-      "description": "実績ギャップアップ率 58.9%（中立・推移注視）"
+      "historical_win_rate": 0.4597,
+      "description": "実績ギャップアップ率 46.0%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5075,
-      "max_p": 0.5131,
+      "min_p": 0.5039,
+      "max_p": 0.512,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5528,
-      "description": "実績ギャップアップ率 55.3%（堅調）"
+      "historical_win_rate": 0.6016,
+      "description": "実績ギャップアップ率 60.2%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5131,
+      "min_p": 0.512,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
@@ -231,15 +231,7 @@
       "importance": 4.0
     },
     {
-      "feature": "byd_macd_hist",
-      "importance": 4.0
-    },
-    {
       "feature": "n225_volatility_20",
-      "importance": 3.0
-    },
-    {
-      "feature": "topix_rsi_14",
       "importance": 3.0
     },
     {
@@ -247,15 +239,23 @@
       "importance": 2.0
     },
     {
+      "feature": "high_low_range",
+      "importance": 2.0
+    },
+    {
       "feature": "close_position",
       "importance": 2.0
     },
     {
-      "feature": "volatility_20",
+      "feature": "bb_middle",
       "importance": 2.0
     },
     {
-      "feature": "bb_middle",
+      "feature": "bb_percent_b",
+      "importance": 2.0
+    },
+    {
+      "feature": "rsi_14",
       "importance": 2.0
     }
   ]
