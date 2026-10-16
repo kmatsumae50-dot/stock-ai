@@ -91,6 +91,53 @@ def _render_cloud_sync_header() -> None:
                     st.error(f"同期失敗: {exc}")
 
 
+def _render_discord_webhook_panel(container: Any = None, key_prefix: str = "sidebar") -> None:
+    """Render Discord Webhook settings and test sending panel in Streamlit sidebar or main page."""
+    import os
+
+    try:
+        from stock_ai.cloud.pipeline import get_current_pipeline_summary, send_daily_summary_webhook
+    except Exception:
+        try:
+            from stock_ai.cloud.notifications import get_current_pipeline_summary, send_daily_summary_webhook
+        except Exception:
+            get_current_pipeline_summary = None
+            send_daily_summary_webhook = None
+
+    target_container = container if container is not None else st.sidebar
+    with target_container.expander("🔔 Discord 通知設定 & テスト送信", expanded=False):
+        env_wh = os.environ.get("STOCK_AI_WEBHOOK_URL", "")
+        current_sync_url = st.session_state.get("shared_discord_webhook_url", env_wh)
+        wh_input = st.text_input(
+            "Discord Webhook URL",
+            value=current_sync_url,
+            type="password",
+            help="DiscordチャンネルのWebhook URLを入力してください。環境変数 STOCK_AI_WEBHOOK_URL が存在する場合は初期値として設定されます。",
+            key=f"{key_prefix}_discord_webhook_url",
+        )
+        if wh_input:
+            st.session_state["shared_discord_webhook_url"] = wh_input
+
+        if st.button("🔔 今すぐテスト通知を送信", key=f"{key_prefix}_send_discord_test_btn", use_container_width=True):
+            target_url = wh_input.strip() or st.session_state.get("shared_discord_webhook_url", "").strip()
+            if not target_url:
+                st.error("Webhook URL を入力してください。")
+            elif send_daily_summary_webhook is None or get_current_pipeline_summary is None:
+                st.error("通知モジュールが利用できません。")
+            else:
+                with st.spinner("Discord へテスト通知を送信中..."):
+                    try:
+                        summary = get_current_pipeline_summary()
+                        result = send_daily_summary_webhook(summary, webhook_url=target_url)
+                        if result.get("status") == "SUCCESS":
+                            st.success("✅ Discord へリッチ通知を送信しました！")
+                        else:
+                            err_msg = result.get("error") or result.get("reason") or "送信エラー"
+                            st.error(f"❌ 送信失敗: {err_msg}")
+                    except Exception as exc:
+                        st.error(f"❌ 送信エラー: {exc}")
+
+
 def main() -> None:
     settings = load_settings()
     universe = load_universe()
@@ -211,40 +258,6 @@ def main() -> None:
 
     with operations_tab:
         _render_operations_tab(ticker, data, settings)
-
-
-def _render_discord_webhook_panel(container: Any = None, key_prefix: str = "sidebar") -> None:
-    """Render Discord Webhook settings and test sending panel in Streamlit sidebar or main page."""
-    import os
-    from stock_ai.cloud.pipeline import get_current_pipeline_summary, send_daily_summary_webhook
-
-    target_container = container if container is not None else st.sidebar
-    with target_container.expander("🔔 Discord 通知設定 & テスト送信", expanded=False):
-        env_wh = os.environ.get("STOCK_AI_WEBHOOK_URL", "")
-        current_sync_url = st.session_state.get("shared_discord_webhook_url", env_wh)
-        wh_input = st.text_input(
-            "Discord Webhook URL",
-            value=current_sync_url,
-            type="password",
-            help="DiscordチャンネルのWebhook URLを入力してください。環境変数 STOCK_AI_WEBHOOK_URL が存在する場合は初期値として設定されます。",
-            key=f"{key_prefix}_discord_webhook_url",
-        )
-        if wh_input:
-            st.session_state["shared_discord_webhook_url"] = wh_input
-
-        if st.button("🔔 今すぐテスト通知を送信", key=f"{key_prefix}_send_discord_test_btn", use_container_width=True):
-            target_url = wh_input.strip() or st.session_state.get("shared_discord_webhook_url", "").strip()
-            if not target_url:
-                st.error("Webhook URL を入力してください。")
-            else:
-                with st.spinner("Discord へテスト通知を送信中..."):
-                    summary = get_current_pipeline_summary()
-                    result = send_daily_summary_webhook(summary, webhook_url=target_url)
-                    if result.get("status") == "SUCCESS":
-                        st.success("✅ Discord へリッチ通知を送信しました！")
-                    else:
-                        err_msg = result.get("error") or result.get("reason") or "送信エラー"
-                        st.error(f"❌ 送信失敗: {err_msg}")
 
 
 def _select_ticker(universe: list[TickerInfo]) -> str:
