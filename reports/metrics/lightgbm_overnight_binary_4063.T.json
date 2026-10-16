@@ -2,7 +2,7 @@
   "metrics": {
     "accuracy": 0.5728155339805825,
     "f1": 0.611764705882353,
-    "auc": 0.6135908065277851,
+    "auc": 0.6137902083224012,
     "rows": 618
   },
   "quantile_cutoffs": [
@@ -27,7 +27,7 @@
     {
       "quantile": "Q3",
       "min_p": 0.495,
-      "max_p": 0.5468,
+      "max_p": 0.547,
       "label": "中立帯",
       "direction": "neutral",
       "historical_win_rate": 0.5565,
@@ -35,7 +35,7 @@
     },
     {
       "quantile": "Q4",
-      "min_p": 0.547,
+      "min_p": 0.5481,
       "max_p": 0.6025,
       "label": "強気先行帯",
       "direction": "up",
