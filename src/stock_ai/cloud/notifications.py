@@ -29,8 +29,11 @@ def build_webhook_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
             p_up = item.get("probability_up", 0.0)
             q_info = item.get("quantile") or item.get("label") or "Q5"
             e_flag = "⚠️決算警戒" if item.get("earnings_risk") else "✅通常"
+            ticker = item.get("ticker", "")
+            name = item.get("name") or ticker
+            sector = item.get("sector", "-")
             lines.append(
-                f"  {idx}. `{item['ticker']}` {item['name']} ({item['sector']}): "
+                f"  {idx}. `{ticker}` {name} ({sector}): "
                 f"**{p_up:.1%}** ({q_info}) | {e_flag}"
             )
     else:
@@ -58,8 +61,11 @@ def build_webhook_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
             score = item.get("bargain_score", 0.0)
             dd = item.get("drawdown_252d", 0.0)
             status = item.get("status", "")
+            ticker = item.get("ticker", "")
+            name = item.get("name") or ticker
+            sector = item.get("sector", "-")
             lines.append(
-                f"  {idx}. `{item['ticker']}` {item['name']} ({item['sector']}): "
+                f"  {idx}. `{ticker}` {name} ({sector}): "
                 f"スコア **{score:.1f}点** (52週高値比: {dd:+.1%}, PBR: {pbr_s}) — {status}"
             )
     else:
@@ -71,8 +77,12 @@ def build_webhook_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
     if top_overnight:
         for i in top_overnight[:3]:
             e_flag = "⚠️決算警戒" if i.get("earnings_risk") else "✅通常"
+            ticker = i.get("ticker", "")
+            name = i.get("name") or ticker
+            p_up = i.get("probability_up", 0.0)
+            q_band = i.get("q_band") or i.get("quantile") or "Q5"
             overnight_embed_items.append(
-                f"・`{i['ticker']}` {i['name']}: **{i['probability_up']:.1%}** ({i.get('q_band', 'Q5')}) | {e_flag}"
+                f"・`{ticker}` {name}: **{p_up:.1%}** ({q_band}) | {e_flag}"
             )
 
     turnaround_embed_items = []
@@ -80,8 +90,12 @@ def build_webhook_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
         for idx, i in enumerate(turnaround_picks[:3], 1):
             pbr_s = f"{i['pbr']:.2f}倍" if i.get("pbr") is not None else "-"
             status = i.get("status", "")
+            ticker = i.get("ticker", "")
+            name = i.get("name") or ticker
+            score = i.get("bargain_score", 0.0)
+            dd = i.get("drawdown_252d", 0.0)
             turnaround_embed_items.append(
-                f"{idx}. `{i['ticker']}` {i['name']}: **{i['bargain_score']:.1f}点** ({i['drawdown_252d']:+.1%}, PBR: {pbr_s})\n   └ {status}"
+                f"{idx}. `{ticker}` {name}: **{score:.1f}点** ({dd:+.1%}, PBR: {pbr_s})\n   └ {status}"
             )
 
     embed = {
