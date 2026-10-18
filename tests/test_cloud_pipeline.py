@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from stock_ai.cloud.pipeline import (
+    build_multi_agent_webhook_payloads,
     build_webhook_payload,
     get_current_pipeline_summary,
     save_overnight_scanner_snapshot,
@@ -131,17 +132,79 @@ def test_send_daily_summary_webhook_skipped_when_no_url() -> None:
     assert "not set" in res["reason"]
 
 
+def test_build_multi_agent_webhook_payloads() -> None:
+    sample_summary = {
+        "date": "2026-10-19",
+        "top_overnight": [
+            {
+                "ticker": "7974.T",
+                "name": "任天堂",
+                "sector": "ゲーム・エンタメ",
+                "probability_up": 0.62,
+                "quantile": "Q5 (強気ギャップアップ帯)",
+                "earnings_risk": False,
+            }
+        ],
+        "paper_trader": {
+            "final_equity": 1050000.0,
+            "cumulative_return": 0.05,
+            "win_rate": 0.60,
+            "sharpe_ratio": 1.85,
+            "max_drawdown": -0.03,
+            "next_positions": "7974.T (任天堂)",
+        },
+        "top_turnaround": [
+            {
+                "ticker": "7201.T",
+                "name": "日産自動車",
+                "sector": "自動車",
+                "bargain_score": 75.0,
+                "drawdown_252d": -0.45,
+                "pbr": 0.38,
+                "status": "💎 超割安・底打ち反転圏",
+            }
+        ],
+    }
+
+    payloads = build_multi_agent_webhook_payloads(sample_summary)
+    assert len(payloads) == 3
+
+    # 1. Chief Fund Manager
+    p_chief = payloads[0]
+    assert "チーフ・ファンドマネージャー" in p_chief["username"]
+    assert "任天堂" in p_chief["content"]
+    assert p_chief["embeds"][0]["color"] == 3066993
+    assert "仮想100万円ファンド" in p_chief["embeds"][0]["title"]
+
+    # 2. Overnight Sniper
+    p_sniper = payloads[1]
+    assert "短期スナイパー" in p_sniper["username"]
+    assert "Overnight" in p_sniper["content"]
+    assert p_sniper["embeds"][0]["color"] == 15844367
+    assert "Overnight Q5" in p_sniper["embeds"][0]["title"]
+
+    # 3. Value Hunter
+    p_hunter = payloads[2]
+    assert "バリューハンター" in p_hunter["username"]
+    assert "お宝" in p_hunter["content"]
+    assert p_hunter["embeds"][0]["color"] == 10181046
+    assert "Value & Turnaround" in p_hunter["embeds"][0]["title"]
+
+
 def test_send_daily_summary_webhook_mock() -> None:
     mock_response = MagicMock()
     mock_response.__enter__.return_value.getcode.return_value = 204
 
-    with patch("urllib.request.urlopen", return_value=mock_response):
+    with patch("urllib.request.urlopen", return_value=mock_response) as mock_urlopen:
         res = send_daily_summary_webhook(
             {"date": "2026-10-14"},
             webhook_url="https://discord.com/api/webhooks/dummy/test",
+            sleep_interval=0.0,
         )
         assert res["status"] == "SUCCESS"
         assert res["status_code"] == 204
+        assert res.get("messages_sent") == 3
+        assert mock_urlopen.call_count == 3
 
 
 def test_send_daily_summary_webhook_discordapp_normalized() -> None:
@@ -154,10 +217,15 @@ def test_send_daily_summary_webhook_discordapp_normalized() -> None:
     mock_response = MagicMock()
     mock_response.__enter__.return_value.getcode.return_value = 204
     with patch("urllib.request.urlopen", return_value=mock_response) as mock_urlopen:
-        res = send_daily_summary_webhook({"date": "2026-10-14"}, webhook_url=raw)
+        res = send_daily_summary_webhook(
+            {"date": "2026-10-14"},
+            webhook_url=raw,
+            sleep_interval=0.0,
+        )
         assert res["status"] == "SUCCESS"
         called_req = mock_urlopen.call_args[0][0]
         assert called_req.full_url == "https://discord.com/api/webhooks/123/xyz"
+
 
 
 

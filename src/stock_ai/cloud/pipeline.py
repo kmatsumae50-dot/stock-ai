@@ -9,6 +9,7 @@ from typing import Any
 import pandas as pd
 
 from stock_ai.cloud.notifications import (
+    build_multi_agent_webhook_payloads,
     build_webhook_payload,
     get_current_pipeline_summary,
     normalize_webhook_url,
@@ -32,6 +33,7 @@ from stock_ai.models.turnaround import (
 from stock_ai.storage.parquet_store import read_parquet, write_parquet
 
 __all__ = [
+    "build_multi_agent_webhook_payloads",
     "build_webhook_payload",
     "get_current_pipeline_summary",
     "normalize_webhook_url",
