@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from stock_ai.cloud.pipeline import (
+    build_alert_report_payload,
+    build_fund_report_payload,
     build_multi_agent_webhook_payloads,
+    build_turnaround_report_payload,
     build_webhook_payload,
+    get_configured_channel_webhooks,
     get_current_pipeline_summary,
     save_overnight_scanner_snapshot,
     send_daily_summary_webhook,
@@ -227,6 +232,101 @@ def test_send_daily_summary_webhook_discordapp_normalized() -> None:
         assert called_req.full_url == "https://discord.com/api/webhooks/123/xyz"
 
 
+def test_specialized_channel_report_payloads() -> None:
+    sample_summary = {
+        "date": "2026-10-19",
+        "top_overnight": [
+            {
+                "ticker": "7974.T",
+                "name": "任天堂",
+                "sector": "ゲーム・エンタメ",
+                "probability_up": 0.62,
+                "quantile": "Q5 (強気ギャップアップ帯)",
+                "earnings_risk": True,
+            }
+        ],
+        "paper_trader": {
+            "final_equity": 1050000.0,
+            "cumulative_return": 0.05,
+            "win_rate": 0.60,
+            "sharpe_ratio": 1.85,
+            "max_drawdown": -0.03,
+            "next_positions": "7974.T (任天堂)",
+        },
+        "top_turnaround": [
+            {
+                "ticker": "7201.T",
+                "name": "日産自動車",
+                "sector": "自動車",
+                "bargain_score": 75.0,
+                "drawdown_252d": -0.45,
+                "pbr": 0.38,
+                "status": "💎 超割安・底打ち反転圏",
+            }
+        ],
+    }
+
+    # Fund payload test
+    p_fund = build_fund_report_payload(sample_summary)
+    assert "仮想100万円ファンド" in p_fund["username"]
+    assert "1,050,000" in p_fund["content"]
+    assert p_fund["embeds"][0]["color"] == 3066993
+
+    # Turnaround payload test
+    p_turn = build_turnaround_report_payload(sample_summary)
+    assert "激安回復株レーダー" in p_turn["username"]
+    assert "7201.T" in p_turn["content"]
+    assert p_turn["embeds"][0]["color"] == 10181046
+
+    # Alert payload test (with risk)
+    p_alert = build_alert_report_payload(sample_summary)
+    assert "決算・急変アラート" in p_alert["username"]
+    assert "7974.T" in p_alert["content"]
+    assert p_alert["embeds"][0]["color"] == 15158332
+
+    # Alert payload test (safe / no risk)
+    safe_summary = dict(sample_summary)
+    safe_summary["top_overnight"] = [
+        dict(sample_summary["top_overnight"][0], earnings_risk=False)
+    ]
+    p_safe = build_alert_report_payload(safe_summary)
+    assert "セーフティクリア" in p_safe["embeds"][0]["title"]
+    assert p_safe["embeds"][0]["color"] == 3066993
+
+
+def test_send_daily_summary_webhook_multi_channel_dispatch() -> None:
+    mock_response = MagicMock()
+    mock_response.__enter__.return_value.getcode.return_value = 204
+
+    channel_webhooks = {
+        "main": "https://discord.com/api/webhooks/main/test",
+        "fund": "https://discord.com/api/webhooks/fund/test",
+        "turnaround": "https://discord.com/api/webhooks/turnaround/test",
+        "alert": "https://discord.com/api/webhooks/alert/test",
+    }
+
+    with patch("urllib.request.urlopen", return_value=mock_response) as mock_urlopen:
+        res = send_daily_summary_webhook(
+            {"date": "2026-10-19"},
+            channel_webhooks=channel_webhooks,
+            sleep_interval=0.0,
+        )
+        assert res["status"] == "SUCCESS"
+        assert res["status_code"] == 204
+        assert res.get("messages_sent") == 6  # 3 (main) + 1 (fund) + 1 (turnaround) + 1 (alert)
+        assert set(res.get("channels_delivered", [])) == {"main", "fund", "turnaround", "alert"}
+        assert mock_urlopen.call_count == 6
+
+
+def test_get_configured_channel_webhooks() -> None:
+    fake_env = {
+        "STOCK_AI_WEBHOOK_URL": "https://discord.com/api/webhooks/main/fake",
+        "STOCK_AI_WEBHOOK_FUND": "https://discord.com/api/webhooks/fund/fake",
+    }
+    with patch.dict("os.environ", fake_env, clear=True):
+        whs = get_configured_channel_webhooks()
+        assert whs.get("main") == "https://discord.com/api/webhooks/main/fake"
+        assert whs.get("fund") == "https://discord.com/api/webhooks/fund/fake"
 
 
 def test_cli_cloud_pipeline_parser_registered() -> None:
@@ -426,6 +526,42 @@ def test_render_discord_webhook_panel_main_container() -> None:
         mock_expander.assert_called_once_with("🔔 Discord 通知設定 & テスト送信", expanded=False)
         mock_send.assert_called_once()
         mock_success.assert_called_once()
+
+
+def test_discord_provisioner_mock() -> None:
+    from stock_ai.cloud.discord_provisioner import DiscordProvisioner
+
+    p = DiscordProvisioner(bot_token="fake_bot_token")
+    mock_guilds = [{"id": "123456", "name": "AI株"}]
+    mock_channels = [
+        {"id": "cat1", "name": "📡 AI自動配信ルーム", "type": 4},
+        {"id": "ch1", "name": "☕｜aiアナリスト作戦会議", "type": 0, "parent_id": "cat1"},
+        {"id": "ch2", "name": "💰｜100万円ファンド運用記", "type": 0, "parent_id": "cat1"},
+        {"id": "ch3", "name": "💎｜激安回復株レーダー", "type": 0, "parent_id": "cat1"},
+        {"id": "ch4", "name": "🚨｜決算・急変アラート", "type": 0, "parent_id": "cat1"},
+        {"id": "cat2", "name": "🧠 戦略・ラボ", "type": 4},
+        {"id": "ch5", "name": "📝｜相場メモ・独り言", "type": 0, "parent_id": "cat2"},
+    ]
+    mock_webhooks = [{"id": "wh1", "url": "https://discord.com/api/webhooks/123/token"}]
+
+    with patch.object(p, "_api_request") as mock_api:
+        def side_effect(endpoint: str, method: str = "GET", payload: Any = None, retries: int = 3) -> Any:
+            if endpoint == "/users/@me/guilds":
+                return mock_guilds
+            if "/channels" in endpoint and method == "GET":
+                return mock_channels
+            if "/webhooks" in endpoint and method == "GET":
+                return mock_webhooks
+            return {"id": "new_id", "url": "https://discord.com/api/webhooks/mock/url"}
+
+        mock_api.side_effect = side_effect
+        res = p.provision_all()
+        assert res["guild_id"] == "123456"
+        assert "main" in res["webhooks"]
+        assert "fund" in res["webhooks"]
+        assert "turnaround" in res["webhooks"]
+        assert "alert" in res["webhooks"]
+
 
 
 

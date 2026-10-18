@@ -42,6 +42,10 @@ jobs:
       - name: Run Cloud Daily Autonomous Pipeline
         env:
           STOCK_AI_WEBHOOK_URL: ${{ secrets.STOCK_AI_WEBHOOK_URL }}
+          STOCK_AI_WEBHOOK_FUND: ${{ secrets.STOCK_AI_WEBHOOK_FUND }}
+          STOCK_AI_WEBHOOK_TURNAROUND: ${{ secrets.STOCK_AI_WEBHOOK_TURNAROUND }}
+          STOCK_AI_WEBHOOK_ALERT: ${{ secrets.STOCK_AI_WEBHOOK_ALERT }}
+          STOCK_AI_CHANNEL_WEBHOOKS: ${{ secrets.STOCK_AI_CHANNEL_WEBHOOKS }}
         run: |
           python -m stock_ai.cli run-cloud-daily-pipeline
 

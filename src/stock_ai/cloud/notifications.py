@@ -194,8 +194,9 @@ def normalize_webhook_url(raw_url: str) -> str:
     return url
 
 
-def _load_webhook_url_from_env_file() -> str | None:
-    """Search for STOCK_AI_WEBHOOK_URL in local .env files if available."""
+def _load_env_map() -> dict[str, str]:
+    """Parse all key-values from local .env files if present."""
+    env_map: dict[str, str] = {}
     candidates = [
         Path.cwd() / ".env",
         Path(__file__).resolve().parents[3] / ".env",
@@ -208,13 +209,60 @@ def _load_webhook_url_from_env_file() -> str | None:
                     if line.startswith("#") or not line or "=" not in line:
                         continue
                     k, v = line.split("=", 1)
-                    if k.strip() == "STOCK_AI_WEBHOOK_URL":
-                        val = v.strip().strip('"').strip("'")
-                        if val:
-                            return val
+                    val = v.strip().strip('"').strip("'")
+                    if val:
+                        env_map[k.strip()] = val
             except Exception:
                 pass
-    return None
+    return env_map
+
+
+def _load_webhook_url_from_env_file() -> str | None:
+    """Search for STOCK_AI_WEBHOOK_URL in local .env files if available."""
+    env_map = _load_env_map()
+    return env_map.get("STOCK_AI_WEBHOOK_URL")
+
+
+def get_configured_channel_webhooks() -> dict[str, str]:
+    """Resolve configured webhooks for all dedicated channels.
+
+    Channels:
+    - main: ☕｜aiアナリスト作戦会議
+    - fund: 💰｜100万円ファンド運用記
+    - turnaround: 💎｜激安回復株レーダー
+    - alert: 🚨｜決算・急変アラート
+    """
+    env_data = _load_env_map()
+    webhooks: dict[str, str] = {}
+
+    # 1. JSON map
+    raw_json = os.environ.get("STOCK_AI_CHANNEL_WEBHOOKS") or env_data.get("STOCK_AI_CHANNEL_WEBHOOKS")
+    if raw_json:
+        try:
+            parsed = json.loads(raw_json)
+            if isinstance(parsed, dict):
+                for k, v in parsed.items():
+                    if isinstance(v, str) and v.strip():
+                        webhooks[k] = normalize_webhook_url(v)
+        except Exception:
+            pass
+
+    # 2. Individual environment variable overrides
+    key_mappings = {
+        "main": ["STOCK_AI_WEBHOOK_URL", "STOCK_AI_WEBHOOK_MAIN"],
+        "fund": ["STOCK_AI_WEBHOOK_FUND"],
+        "turnaround": ["STOCK_AI_WEBHOOK_TURNAROUND"],
+        "alert": ["STOCK_AI_WEBHOOK_ALERT"],
+    }
+    for ch_key, env_keys in key_mappings.items():
+        for env_k in env_keys:
+            val = os.environ.get(env_k) or env_data.get(env_k)
+            if val and val.strip():
+                webhooks[ch_key] = normalize_webhook_url(val)
+                break
+
+    return webhooks
+
 
 
 def build_multi_agent_webhook_payloads(summary_data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -438,50 +486,271 @@ def build_multi_agent_webhook_payloads(summary_data: dict[str, Any]) -> list[dic
     return [payload_chief, payload_sniper, payload_hunter]
 
 
+def build_fund_report_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
+    """Build detailed portfolio management payload for 💰｜100万円ファンド運用記."""
+    date_str = summary_data.get("date") or datetime.now().strftime("%Y-%m-%d")
+    paper_metrics = summary_data.get("paper_trader", {})
+    eq = paper_metrics.get("final_equity", 1_000_000.0)
+    ret = paper_metrics.get("cumulative_return", 0.0)
+    win = paper_metrics.get("win_rate", 0.0)
+    sh = paper_metrics.get("sharpe_ratio", 0.0)
+    max_dd = paper_metrics.get("max_drawdown", 0.0)
+    pos = paper_metrics.get("next_positions") or "本日エントリーなし (キャッシュ待機判定)"
+
+    is_cash_wait = "本日エントリーなし" in pos or "キャッシュ待機" in pos or not pos
+    pos_desc = "🛡️ **キャッシュ待機（ノーポジ）**" if is_cash_wait else f"🎯 **{pos}**"
+
+    content = (
+        f"💰 **【仮想100万円ファンド 日次運用レポート ({date_str})】**\n"
+        f"・総資産: **{eq:,.0f} 円** ({ret:+.1%})\n"
+        f"・勝率: **{win:.1%}** | Sharpe: **{sh:.2f}** | MaxDD: **{max_dd:.1%}**\n"
+        f"・本日エントリー判定: {pos_desc}"
+    )
+
+    embed = {
+        "title": f"💰 仮想100万円ファンド ポートフォリオ運用詳細 ({date_str})",
+        "description": "5bps摩擦コスト反映済 Overnight エリートTop2ロング戦略シミュレーション",
+        "color": 3066993,  # Emerald Green
+        "fields": [
+            {"name": "💵 総資産", "value": f"**{eq:,.0f} 円**", "inline": True},
+            {"name": "📈 通算損益", "value": f"**{ret:+.1%}** ({eq - 1_000_000:+,.0f} 円)", "inline": True},
+            {"name": "🎯 勝率", "value": f"**{win:.1%}**", "inline": True},
+            {"name": "📊 Sharpe Ratio", "value": f"**{sh:.2f}**", "inline": True},
+            {"name": "🛡️ 最大ドローダウン", "value": f"**{max_dd:.1%}**", "inline": True},
+            {"name": "⚖️ 本日ポジション判定", "value": pos_desc, "inline": False},
+        ],
+        "footer": {"text": "Stock AI Overnight Paper Trader | 仮想資金100万円実証"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    return {
+        "username": "💰 仮想100万円ファンド運用記 AI",
+        "content": content,
+        "text": content,
+        "embeds": [embed],
+    }
+
+
+def build_turnaround_report_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
+    """Build detailed value ranking payload for 💎｜激安回復株レーダー."""
+    date_str = summary_data.get("date") or datetime.now().strftime("%Y-%m-%d")
+    turnaround_picks = summary_data.get("top_turnaround", [])
+
+    fields = []
+    text_lines = []
+    if turnaround_picks:
+        for idx, item in enumerate(turnaround_picks[:5], 1):
+            ticker = item.get("ticker", "")
+            name = item.get("name") or ticker
+            sector = item.get("sector", "-")
+            pbr_s = f"{item['pbr']:.2f}倍" if item.get("pbr") is not None else "-"
+            score = item.get("bargain_score", 0.0)
+            dd = item.get("drawdown_252d", 0.0)
+            status = item.get("status", "")
+            text_lines.append(f"{idx}. `{ticker}` {name} ({sector}): **{score:.1f}点** (高値比 {dd:+.1%}, PBR {pbr_s}) — {status}")
+            fields.append({
+                "name": f"{idx}. `{ticker}` {name} ({sector}) — {score:.1f}点",
+                "value": f"52週高値比: **{dd:+.1%}** | PBR: **{pbr_s}**\n判定: **{status}**",
+                "inline": False,
+            })
+    else:
+        text_lines.append("本日該当銘柄なし")
+        fields.append({
+            "name": "該当銘柄なし",
+            "value": "基準を満たす極端な割安反転シグナルはありません。",
+            "inline": False,
+        })
+
+    content = (
+        f"💎 **【Value & Turnaround 激安回復お宝株スキャン速報 ({date_str})】**\n"
+        + "\n".join(text_lines)
+    )
+    embed = {
+        "title": f"💎 Value & Turnaround 割安底打ち反転ランキング ({date_str})",
+        "description": "東証プライム主要50銘柄から下落率・PBR・テクニカル反転スコアで厳選",
+        "color": 10181046,  # Amethyst Purple
+        "fields": fields,
+        "footer": {"text": "Stock AI Value Hunter | 逆張り・リバウンドスクリーナー"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    return {
+        "username": "💎 激安回復株レーダー AI",
+        "content": content,
+        "text": content,
+        "embeds": [embed],
+    }
+
+
+def build_alert_report_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
+    """Build risk assessment payload for 🚨｜決算・急変アラート."""
+    date_str = summary_data.get("date") or datetime.now().strftime("%Y-%m-%d")
+    top_overnight = summary_data.get("top_overnight", [])
+    risky_picks = [p for p in top_overnight if p.get("earnings_risk")]
+
+    if risky_picks:
+        items_desc = []
+        for p in risky_picks:
+            ticker = p.get("ticker", "")
+            name = p.get("name") or ticker
+            sector = p.get("sector", "-")
+            items_desc.append(f"・`{ticker}` {name} ({sector}): 直近7日以内に決算発表予定（⚠️決算跨ぎ警戒）")
+
+        content = (
+            f"🚨 **【決算・急変アラート：警戒フラグ検知 ({date_str})】**\n"
+            "以下の注目銘柄に決算発表前の警戒シグナルが出ています。急変動・地雷リスク回避のためロット抑制または見送りを推奨します！\n\n"
+            + "\n".join(items_desc)
+        )
+        embed = {
+            "title": f"⚠️ 直近決算警戒銘柄リスト ({date_str})",
+            "description": "決算発表直前のボラティリティ急変リスクを回避するための事前警告",
+            "color": 15158332,  # Crimson Red
+            "fields": [
+                {"name": "⚠️ 警戒銘柄", "value": "\n".join(items_desc), "inline": False},
+                {
+                    "name": "🛡️ リスク管理指針",
+                    "value": "決算跨ぎギャンブルは避け、発表後のアク抜け・コンセンサス確認を待つことを推奨します。",
+                    "inline": False,
+                },
+            ],
+            "footer": {"text": "Stock AI Risk Guardian | 防御最優先アラート"},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    else:
+        content = (
+            f"🛡️ **【決算リスク・セーフティチェック完了 ({date_str})】**\n"
+            "本日スクリーニングされた注目銘柄に直近の決算発表地雷フラグはありません。健全な取引環境が確認されています。"
+        )
+        embed = {
+            "title": f"✅ 決算リスク・セーフティクリア ({date_str})",
+            "description": "注目銘柄群における直近決算発表予定の有無を検証完了",
+            "color": 3066993,  # Emerald Green
+            "fields": [
+                {"name": "🛡️ 判定結果", "value": "主要Overnight候補銘柄に直近決算地雷なし（全銘柄クリア）", "inline": False},
+                {"name": "📌 運用アドバイス", "value": "クオンツ確率・テクニカルシグナルに基づき、規律通りにエントリー可能です。", "inline": False},
+            ],
+            "footer": {"text": "Stock AI Risk Guardian | 安全確認完了"},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    return {
+        "username": "🚨 決算・急変アラート AI",
+        "content": content,
+        "text": content,
+        "embeds": [embed],
+    }
+
+
+def _post_single_webhook_payload(webhook_url: str, payload: dict[str, Any]) -> int | None:
+    """Helper to post a single payload to a webhook URL, returning HTTP status code."""
+    url = normalize_webhook_url(webhook_url)
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json", "User-Agent": "StockAI-CloudRunner/1.0"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return resp.getcode()
+    except Exception as exc:
+        logger.warning(f"Webhook delivery failed for persona '{payload.get('username')}' at {url}: {exc}")
+        return None
+
+
 def send_daily_summary_webhook(
     summary_data: dict[str, Any],
     webhook_url: str | None = None,
     *,
+    channel_webhooks: dict[str, str] | None = None,
     sleep_interval: float = 0.6,
 ) -> dict[str, Any]:
-    """Send formatted multi-agent briefing to Discord or Slack webhook if URL is provided."""
-    raw_url = (
-        webhook_url
-        if webhook_url is not None
-        else (os.environ.get("STOCK_AI_WEBHOOK_URL") or _load_webhook_url_from_env_file())
-    )
-    if not raw_url:
+    """Send formatted multi-agent briefing and dedicated channel reports.
+
+    Delivers:
+    1. Main Room: 3-agent briefing dialogue (Chief FM, Sniper, Value Hunter)
+    2. Fund Room: Paper Trader detailed metrics (if webhook configured)
+    3. Turnaround Room: Value & Turnaround radar picks (if webhook configured)
+    4. Alert Room: Earnings risk alerts (if webhook configured)
+    """
+    if webhook_url is not None:
+        if not webhook_url.strip():
+            return {"status": "SKIPPED", "reason": "STOCK_AI_WEBHOOK_URL is not set"}
+        if channel_webhooks is None:
+            configured = {"main": normalize_webhook_url(webhook_url)}
+        else:
+            configured = dict(channel_webhooks)
+            configured["main"] = normalize_webhook_url(webhook_url)
+    else:
+        configured = get_configured_channel_webhooks()
+        if channel_webhooks:
+            configured.update(channel_webhooks)
+
+    main_url = configured.get("main")
+    if not main_url and not any(configured.values()):
         return {"status": "SKIPPED", "reason": "STOCK_AI_WEBHOOK_URL is not set"}
 
-    url = normalize_webhook_url(raw_url)
-    if not url:
-        return {"status": "SKIPPED", "reason": "STOCK_AI_WEBHOOK_URL is not set"}
-
-    payloads = build_multi_agent_webhook_payloads(summary_data)
     last_code = 204
-    sent_count = 0
+    total_sent = 0
+    channels_delivered: list[str] = []
 
-    for idx, payload in enumerate(payloads):
-        if idx > 0 and sleep_interval > 0:
+    # 1. Main Room: 3-agent persona briefing
+    if main_url:
+        payloads = build_multi_agent_webhook_payloads(summary_data)
+        for idx, payload in enumerate(payloads):
+            if (total_sent > 0 or idx > 0) and sleep_interval > 0:
+                time.sleep(sleep_interval)
+            code = _post_single_webhook_payload(main_url, payload)
+            if code is None:
+                return {
+                    "status": "FAILED",
+                    "error": "Failed delivery to main webhook",
+                    "sent_count": total_sent,
+                }
+            last_code = code
+            total_sent += 1
+        channels_delivered.append("main")
+
+    # 2. Dedicated Room: Fund Reporter
+    fund_url = configured.get("fund")
+    if fund_url and fund_url != main_url:
+        if total_sent > 0 and sleep_interval > 0:
             time.sleep(sleep_interval)
+        p_fund = build_fund_report_payload(summary_data)
+        code = _post_single_webhook_payload(fund_url, p_fund)
+        if code is not None:
+            last_code = code
+            total_sent += 1
+            channels_delivered.append("fund")
 
-        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=data,
-            headers={"Content-Type": "application/json", "User-Agent": "StockAI-CloudRunner/1.0"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                code = resp.getcode()
-                last_code = code
-                sent_count += 1
-        except Exception as exc:
-            logger.warning(
-                f"Webhook delivery failed for persona '{payload.get('username')}': {exc}"
-            )
-            return {"status": "FAILED", "error": str(exc), "sent_count": sent_count}
+    # 3. Dedicated Room: Turnaround Radar
+    turn_url = configured.get("turnaround")
+    if turn_url and turn_url != main_url:
+        if total_sent > 0 and sleep_interval > 0:
+            time.sleep(sleep_interval)
+        p_turn = build_turnaround_report_payload(summary_data)
+        code = _post_single_webhook_payload(turn_url, p_turn)
+        if code is not None:
+            last_code = code
+            total_sent += 1
+            channels_delivered.append("turnaround")
 
-    return {"status": "SUCCESS", "status_code": last_code, "messages_sent": sent_count}
+    # 4. Dedicated Room: Alert Room
+    alert_url = configured.get("alert")
+    if alert_url and alert_url != main_url:
+        if total_sent > 0 and sleep_interval > 0:
+            time.sleep(sleep_interval)
+        p_alert = build_alert_report_payload(summary_data)
+        code = _post_single_webhook_payload(alert_url, p_alert)
+        if code is not None:
+            last_code = code
+            total_sent += 1
+            channels_delivered.append("alert")
+
+    return {
+        "status": "SUCCESS",
+        "status_code": last_code,
+        "messages_sent": total_sent,
+        "channels_delivered": channels_delivered,
+    }
+
 
 
