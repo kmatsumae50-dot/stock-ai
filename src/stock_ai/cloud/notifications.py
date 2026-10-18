@@ -171,12 +171,51 @@ def get_current_pipeline_summary(
     }
 
 
+def normalize_webhook_url(raw_url: str) -> str:
+    """Normalize Discord and other webhook URLs (e.g. discordapp.com -> discord.com)."""
+    url = raw_url.strip().strip('"').strip("'")
+    if "discordapp.com" in url:
+        url = url.replace("discordapp.com", "discord.com")
+    return url
+
+
+def _load_webhook_url_from_env_file() -> str | None:
+    """Search for STOCK_AI_WEBHOOK_URL in local .env files if available."""
+    candidates = [
+        Path.cwd() / ".env",
+        Path(__file__).resolve().parents[3] / ".env",
+    ]
+    for env_path in candidates:
+        if env_path.exists():
+            try:
+                for line in env_path.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if line.startswith("#") or not line or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    if k.strip() == "STOCK_AI_WEBHOOK_URL":
+                        val = v.strip().strip('"').strip("'")
+                        if val:
+                            return val
+            except Exception:
+                pass
+    return None
+
+
 def send_daily_summary_webhook(
     summary_data: dict[str, Any],
     webhook_url: str | None = None,
 ) -> dict[str, Any]:
     """Send formatted notification to Discord or Slack webhook if URL is provided."""
-    url = webhook_url or os.environ.get("STOCK_AI_WEBHOOK_URL")
+    raw_url = (
+        webhook_url
+        if webhook_url is not None
+        else (os.environ.get("STOCK_AI_WEBHOOK_URL") or _load_webhook_url_from_env_file())
+    )
+    if not raw_url:
+        return {"status": "SKIPPED", "reason": "STOCK_AI_WEBHOOK_URL is not set"}
+
+    url = normalize_webhook_url(raw_url)
     if not url:
         return {"status": "SKIPPED", "reason": "STOCK_AI_WEBHOOK_URL is not set"}
 
@@ -194,3 +233,4 @@ def send_daily_summary_webhook(
     except Exception as exc:
         logger.warning(f"Webhook delivery failed: {exc}")
         return {"status": "FAILED", "error": str(exc)}
+

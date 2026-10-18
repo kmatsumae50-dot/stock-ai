@@ -11,6 +11,7 @@ import pandas as pd
 from stock_ai.cloud.notifications import (
     build_webhook_payload,
     get_current_pipeline_summary,
+    normalize_webhook_url,
     send_daily_summary_webhook,
 )
 from stock_ai.config import load_settings
@@ -33,6 +34,7 @@ from stock_ai.storage.parquet_store import read_parquet, write_parquet
 __all__ = [
     "build_webhook_payload",
     "get_current_pipeline_summary",
+    "normalize_webhook_url",
     "run_cloud_daily_pipeline",
     "save_overnight_scanner_snapshot",
     "send_daily_summary_webhook",

@@ -144,6 +144,23 @@ def test_send_daily_summary_webhook_mock() -> None:
         assert res["status_code"] == 204
 
 
+def test_send_daily_summary_webhook_discordapp_normalized() -> None:
+    from stock_ai.cloud.pipeline import normalize_webhook_url
+
+    raw = "  \"https://discordapp.com/api/webhooks/123/xyz\"  "
+    normalized = normalize_webhook_url(raw)
+    assert normalized == "https://discord.com/api/webhooks/123/xyz"
+
+    mock_response = MagicMock()
+    mock_response.__enter__.return_value.getcode.return_value = 204
+    with patch("urllib.request.urlopen", return_value=mock_response) as mock_urlopen:
+        res = send_daily_summary_webhook({"date": "2026-10-14"}, webhook_url=raw)
+        assert res["status"] == "SUCCESS"
+        called_req = mock_urlopen.call_args[0][0]
+        assert called_req.full_url == "https://discord.com/api/webhooks/123/xyz"
+
+
+
 def test_cli_cloud_pipeline_parser_registered() -> None:
     import inspect
     from stock_ai.cli import main
