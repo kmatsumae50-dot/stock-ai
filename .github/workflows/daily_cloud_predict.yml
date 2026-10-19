@@ -2,10 +2,10 @@ name: Daily Cloud Prediction & Autonomous Pipeline
 
 on:
   schedule:
-    # 1. Before Tokyo Market Open: JST 07:30 (UTC 22:30, Sun-Thu)
-    - cron: '30 22 * * 0-4'
-    # 2. Tokyo Market Close: JST 16:00 (UTC 07:00, Mon-Fri)
-    - cron: '0 7 * * 1-5'
+    # 1. Before Tokyo Market Open: JST 07:25 (UTC 22:25, Sun-Thu) - avoids top-of-hour GitHub queue delays
+    - cron: '25 22 * * 0-4'
+    # 2. Tokyo Market Close: JST 15:55 (UTC 06:55, Mon-Fri) - avoids top-of-hour GitHub queue delays
+    - cron: '55 6 * * 1-5'
   workflow_dispatch:
   push:
     branches:

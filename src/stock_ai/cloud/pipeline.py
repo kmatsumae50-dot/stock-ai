@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -93,6 +93,39 @@ def save_overnight_scanner_snapshot(
     return out_file
 
 
+def _should_skip_webhook_delivery(pred_date: str, min_interval_minutes: float = 15.0) -> bool:
+    """Check if an identical or recent webhook delivery occurred within min_interval_minutes."""
+    state_file = Path("reports/autonomous/webhook_delivery_state.json")
+    if not state_file.exists():
+        return False
+    try:
+        data = json.loads(state_file.read_text(encoding="utf-8"))
+        last_time_str = data.get("last_delivery_time")
+        last_date = data.get("date")
+        if last_time_str and last_date == pred_date:
+            last_dt = datetime.fromisoformat(last_time_str)
+            elapsed_minutes = (datetime.now(timezone.utc) - last_dt).total_seconds() / 60.0
+            if 0 <= elapsed_minutes < min_interval_minutes:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _record_webhook_delivery(pred_date: str) -> None:
+    """Record delivery timestamp to avoid duplicate alerts between cloud and local."""
+    state_file = Path("reports/autonomous/webhook_delivery_state.json")
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        data = {
+            "date": pred_date,
+            "last_delivery_time": datetime.now(timezone.utc).isoformat(),
+        }
+        state_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def run_cloud_daily_pipeline(
     universe: list[TickerInfo] | None = None,
     start: str = "2010-01-01",
@@ -101,6 +134,7 @@ def run_cloud_daily_pipeline(
     force_train: bool = False,
     snapshot_path: Path | str = "reports/autonomous/latest_overnight_scanner_snapshot.json",
     webhook_url: str | None = None,
+    force_webhook: bool = False,
 ) -> dict[str, Any]:
     """Execute complete end-to-end cloud daily pipeline in an OS-independent, fault-tolerant manner.
 
@@ -342,7 +376,7 @@ def run_cloud_daily_pipeline(
         step_results["turnaround"] = f"FAILED: {exc}"
 
     # -------------------------------------------------------------
-    # Step F: Webhook Notification
+    # Step F: Webhook Notification (with deduplication protection)
     # -------------------------------------------------------------
     print("\n--- [Step F] Webhook Notification ---")
     summary_for_webhook = {
@@ -351,8 +385,14 @@ def run_cloud_daily_pipeline(
         "paper_trader": paper_metrics,
         "top_turnaround": turnaround_picks[:3],
     }
-    wh_result = send_daily_summary_webhook(summary_for_webhook, webhook_url=webhook_url)
-    print(f"Webhook status: {wh_result.get('status')} ({wh_result.get('reason') or wh_result.get('error') or 'OK'})")
+    if not force_webhook and _should_skip_webhook_delivery(latest_pred_date, min_interval_minutes=15.0):
+        print(f"INFO: Webhook notification skipped (already delivered within 15 minutes for {latest_pred_date}).")
+        wh_result = {"status": "SKIPPED", "reason": f"Already delivered recently for {latest_pred_date}"}
+    else:
+        wh_result = send_daily_summary_webhook(summary_for_webhook, webhook_url=webhook_url)
+        if wh_result.get("status") in ("SUCCESS", "OK", "PARTIAL") or wh_result.get("sent_count", 0) > 0:
+            _record_webhook_delivery(latest_pred_date)
+        print(f"Webhook status: {wh_result.get('status')} ({wh_result.get('reason') or wh_result.get('error') or 'OK'})")
     step_results["webhook"] = wh_result
 
     status_str = "SUCCESS" if not failed_steps else "PARTIAL"
@@ -415,6 +455,13 @@ if __name__ == "__main__":
         default=None,
         help="Override webhook URL (default: uses configured webhooks in .env)",
     )
+    parser.add_argument(
+        "--force-webhook",
+        dest="force_webhook",
+        action="store_true",
+        default=False,
+        help="Force sending webhook even if delivered recently (default: False)",
+    )
     args = parser.parse_args()
 
     pipeline_result = run_cloud_daily_pipeline(
@@ -423,6 +470,7 @@ if __name__ == "__main__":
         force_features=args.force_features,
         force_train=args.force_train,
         webhook_url=args.webhook_url,
+        force_webhook=args.force_webhook,
     )
     if pipeline_result.get("status") not in ("SUCCESS", "PARTIAL"):
         sys.exit(1)

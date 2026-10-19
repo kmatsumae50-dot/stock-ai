@@ -563,5 +563,21 @@ def test_discord_provisioner_mock() -> None:
         assert "alert" in res["webhooks"]
 
 
+def test_webhook_deduplication_logic(tmp_path: Path) -> None:
+    from stock_ai.cloud.pipeline import _record_webhook_delivery, _should_skip_webhook_delivery
 
+    test_state_file = tmp_path / "webhook_delivery_state.json"
+    with patch("stock_ai.cloud.pipeline.Path") as mock_path:
+        # Point to tmp state file
+        mock_path.return_value = test_state_file
+        # Initial check (file does not exist)
+        assert _should_skip_webhook_delivery("2026-10-19") is False
 
+        # Record delivery
+        _record_webhook_delivery("2026-10-19")
+        assert test_state_file.exists()
+
+        # Should skip right after recording
+        assert _should_skip_webhook_delivery("2026-10-19", min_interval_minutes=15.0) is True
+        # Different date should not skip
+        assert _should_skip_webhook_delivery("2026-10-20", min_interval_minutes=15.0) is False
