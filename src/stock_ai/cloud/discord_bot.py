@@ -1907,7 +1907,11 @@ class DiscordPollingBot:
 
 def main() -> None:
     """CLI entrypoint to run the polling bot."""
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        stream=sys.stdout,
+    )
     print("=================================================================")
     print("🤖 [Stock-AI] Interactive Discord Analyst Polling Bot Starting...")
     print("=================================================================")
