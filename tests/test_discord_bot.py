@@ -124,6 +124,18 @@ def test_polling_bot_message_routing() -> None:
         assert len(res_stock) == 3
         assert "トヨタ自動車" in res_stock[0]["content"]
 
+        # Mention stripped query (e.g. <@1561416539687751771> トヨタ)
+        res_mention = bot._handle_user_message("<@1561416539687751771> トヨタ")
+        assert res_mention is not None
+        assert len(res_mention) == 3
+        assert "トヨタ自動車" in res_mention[0]["content"]
+
+        # Empty content (Message Content Intent is OFF) -> returns intent guide & ranking fallback
+        res_empty = bot._handle_user_message("")
+        assert res_empty is not None
+        assert "Message Content Intent" in res_empty[0]["content"]
+        assert len(res_empty) >= 2  # notice + ranking payloads
+
         # Unmatched query with mention keyword
         res_unknown = bot._handle_user_message("この銘柄の株価分析はどう？")
         assert res_unknown is not None

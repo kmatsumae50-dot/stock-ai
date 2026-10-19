@@ -719,8 +719,35 @@ class DiscordPollingBot:
                 return {}
         return {}
 
+    def _get_or_create_channel_webhook(self, channel_id: str) -> str | None:
+        """Retrieve existing webhook or auto-create one for this channel."""
+        if channel_id in self.channel_to_webhook:
+            return self.channel_to_webhook[channel_id]
+
+        # 1. Query existing webhooks for this channel
+        whs = self._api_request(f"/channels/{channel_id}/webhooks")
+        if isinstance(whs, list) and whs:
+            for w in whs:
+                if w.get("url"):
+                    url = normalize_webhook_url(w["url"])
+                    self.channel_to_webhook[channel_id] = url
+                    return url
+
+        # 2. Create a new dedicated webhook
+        created = self._api_request(
+            f"/channels/{channel_id}/webhooks",
+            method="POST",
+            payload={"name": "Stock-AI Reporter"},
+        )
+        if isinstance(created, dict) and created.get("url"):
+            url = normalize_webhook_url(created["url"])
+            self.channel_to_webhook[channel_id] = url
+            return url
+
+        return None
+
     def init_channels(self) -> None:
-        """Discover server channels, match webhooks, and record current latest message IDs."""
+        """Discover all server text channels, bind webhooks, and record current latest message IDs."""
         guilds = self._api_request("/users/@me/guilds")
         if not guilds:
             logger.warning("Bot is not joined to any guild.")
@@ -732,19 +759,16 @@ class DiscordPollingBot:
             logger.warning("Could not list channels for guild %s", guild_id)
             return
 
-        # Target channels: text channels (type 0)
-        self.monitored_channels = [
-            ch for ch in channels if ch.get("type") == 0 and "ai" in ch.get("name", "").lower() or "相場" in ch.get("name", "") or "ファンド" in ch.get("name", "") or "激安" in ch.get("name", "") or "作戦" in ch.get("name", "")
-        ]
-
-        logger.info("Discovered %d monitored text channels.", len(self.monitored_channels))
+        # Target channels: ALL text channels (type 0) in the server
+        self.monitored_channels = [ch for ch in channels if ch.get("type") == 0]
+        logger.info("Discovered %d monitored text channels across server.", len(self.monitored_channels))
 
         # Map channel_id to Webhook URL
         for ch in self.monitored_channels:
             ch_id = str(ch["id"])
             ch_name = ch.get("name", "")
 
-            # 1. Match from configured webhooks by key
+            # 1. Match from predefined environment webhooks by channel keyword
             if "作戦" in ch_name or "main" in ch_name:
                 wh = self.webhooks.get("main")
             elif "ファンド" in ch_name or "fund" in ch_name:
@@ -756,14 +780,11 @@ class DiscordPollingBot:
             else:
                 wh = None
 
-            # 2. Or query channel webhooks via API
-            if not wh:
-                ch_whs = self._api_request(f"/channels/{ch_id}/webhooks")
-                if isinstance(ch_whs, list) and ch_whs:
-                    wh = ch_whs[0].get("url")
-
             if wh:
                 self.channel_to_webhook[ch_id] = normalize_webhook_url(wh)
+            else:
+                # 2. Or dynamically resolve/create webhook for this channel
+                self._get_or_create_channel_webhook(ch_id)
 
             # 3. Snapshot current latest message ID so bot ignores historical messages
             msgs = self._api_request(f"/channels/{ch_id}/messages?limit=1")
@@ -774,7 +795,7 @@ class DiscordPollingBot:
 
     def send_reply(self, channel_id: str, payloads: list[dict[str, Any]]) -> None:
         """Send reply payloads using Webhook (preferred for persona avatars) or direct Bot API."""
-        wh_url = self.channel_to_webhook.get(channel_id)
+        wh_url = self._get_or_create_channel_webhook(channel_id)
         for idx, payload in enumerate(payloads):
             if idx > 0:
                 time.sleep(0.5)
@@ -854,44 +875,68 @@ class DiscordPollingBot:
                 if int(msg_id) > int(self.last_seen_message_id.get(ch_id, "0")):
                     self.last_seen_message_id[ch_id] = msg_id
 
-                # Ignore bot messages (including own messages)
+                # Ignore bot messages (including own messages and webhooks)
                 author = msg.get("author", {})
-                if author.get("bot"):
+                if author.get("bot") or msg.get("webhook_id"):
                     continue
 
-                content = (msg.get("content") or "").strip()
-                if not content:
-                    continue
-
-                logger.info("Processing message in channel %s: '%s'", ch.get("name"), content)
-                reply_payloads = self._handle_user_message(content)
+                raw_content = msg.get("content") or ""
+                logger.info("Processing message in channel %s: '%s' from %s", ch.get("name"), raw_content, author.get("username"))
+                reply_payloads = self._handle_user_message(raw_content, msg=msg)
                 if reply_payloads:
                     self.send_reply(ch_id, reply_payloads)
                     processed_count += 1
 
         return processed_count
 
-    def _handle_user_message(self, content: str) -> list[dict[str, Any]] | None:
-        """Route user input to help, ranking, or stock analysis."""
-        clean = content.lower().strip()
+    def _handle_user_message(
+        self,
+        content: str,
+        msg: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]] | None:
+        """Route user input to help, ranking, stock analysis, or intent guidance."""
+        # Strip mention tags (e.g., <@123456789>)
+        cleaned = re.sub(r"<@!?[0-9]+>", "", content).strip()
+        clean_lower = cleaned.lower()
 
-        # 1. Help inquiry
-        if clean in ("ヘルプ", "help", "使い方", "?", "コマンド", "help me"):
+        # 1. If content is empty (Message Content Intent is OFF on Discord Developer Portal)
+        if not cleaned:
+            # Provide helpful guidance and default to top rankings
+            notice_text = (
+                "🔔 **【Stock-AI アナリストBot 受信通知】**\n\n"
+                "メッセージを受信しましたが、Discord の **`Message Content Intent`** が未有効化のため、テキスト本文が空文字 `\"\"` として届いております。\n\n"
+                "💡 **解決方法**:\n"
+                "1. **Botをメンションして発言** (設定変更なしで即動作):\n"
+                "   `@Stock-AI トヨタ` や `@Stock-AI 7203` のようにメンション付きで書き込むと、即座に精密分析が返信されます！\n"
+                "2. **Discord Developer Portal で有効化** (メンションなしで発言したい場合):\n"
+                "   [Discord Developer Portal](https://discord.com/developers/applications) → Bot設定 → `Privileged Gateway Intents` の **`Message Content Intent` を ON** に設定してください。\n\n"
+                "--- \n"
+                "🏆 **本日の最新Overnight＆激安株ランキング速報をお届けします！** 👇"
+            )
+            notice_payload = {
+                "username": "🤖 Stock-AI コンシェルジュ",
+                "content": notice_text,
+                "text": notice_text,
+            }
+            return [notice_payload, *build_ranking_payloads()]
+
+        # 2. Help inquiry
+        if clean_lower in ("ヘルプ", "help", "使い方", "?", "コマンド", "help me"):
             return [build_help_payload()]
 
-        # 2. Daily Rankings inquiry
-        if clean in ("ランキング", "top", "順位", "注目", "おすすめ", "ranking"):
+        # 3. Daily Rankings inquiry
+        if clean_lower in ("ランキング", "top", "順位", "注目", "おすすめ", "ranking"):
             return build_ranking_payloads()
 
-        # 3. Single Ticker Analysis inquiry
-        analysis = analyze_single_ticker(content)
+        # 4. Single Ticker Analysis inquiry
+        analysis = analyze_single_ticker(cleaned)
         if analysis:
             return build_single_ticker_dialogue_payloads(analysis)
 
-        # 4. Mentions or explicit request without resolved ticker
-        if "分析" in content or "株価" in content or "どう" in content or "予想" in content:
+        # 5. Mentions or explicit request without resolved ticker
+        if "分析" in cleaned or "株価" in cleaned or "どう" in cleaned or "予想" in cleaned:
             guidance = (
-                f"申し訳ありません、「**{content[:30]}**」から日本株の銘柄コードまたは企業名を特定できませんでした。\n\n"
+                f"申し訳ありません、「**{cleaned[:30]}**」から日本株の銘柄コードまたは企業名を特定できませんでした。\n\n"
                 "例: `7203`, `トヨタ`, `6758`, `ソニー`, `任天堂`, `8058` のように銘柄コード（4桁）または企業名を入力してください。"
             )
             return [{
