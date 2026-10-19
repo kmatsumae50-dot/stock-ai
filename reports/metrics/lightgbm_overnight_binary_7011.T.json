@@ -1,55 +1,55 @@
 {
   "metrics": {
     "accuracy": 0.5242718446601942,
-    "f1": 0.5288461538461539,
-    "auc": 0.5271655913070108,
+    "f1": 0.5572289156626506,
+    "auc": 0.538701030057413,
     "rows": 618
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4888,
+      "max_p": 0.489,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.5242,
-      "description": "実績ギャップアップ率 52.4%（陰線・下落警戒）"
+      "historical_win_rate": 0.5,
+      "description": "実績ギャップアップ率 50.0%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4888,
-      "max_p": 0.4974,
+      "min_p": 0.489,
+      "max_p": 0.4958,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.5122,
-      "description": "実績ギャップアップ率 51.2%（弱気）"
+      "historical_win_rate": 0.5366,
+      "description": "実績ギャップアップ率 53.7%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4978,
-      "max_p": 0.5064,
+      "min_p": 0.4958,
+      "max_p": 0.5018,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5484,
-      "description": "実績ギャップアップ率 54.8%（中立・推移注視）"
+      "historical_win_rate": 0.5161,
+      "description": "実績ギャップアップ率 51.6%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5064,
-      "max_p": 0.5107,
+      "min_p": 0.5018,
+      "max_p": 0.5129,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5854,
-      "description": "実績ギャップアップ率 58.5%（堅調）"
+      "historical_win_rate": 0.5772,
+      "description": "実績ギャップアップ率 57.7%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5117,
+      "min_p": 0.5131,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.5565,
-      "description": "実績ギャップアップ率 55.6%（最高勝率群）"
+      "historical_win_rate": 0.5887,
+      "description": "実績ギャップアップ率 58.9%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -220,18 +220,22 @@
   "top_features": [
     {
       "feature": "tesla_return_1d",
-      "importance": 6.0
+      "importance": 8.0
     },
     {
       "feature": "n225_volatility_20",
       "importance": 4.0
     },
     {
+      "feature": "volume",
+      "importance": 3.0
+    },
+    {
       "feature": "volume_change_1d",
       "importance": 3.0
     },
     {
-      "feature": "ma_5",
+      "feature": "close_position",
       "importance": 3.0
     },
     {
@@ -239,23 +243,19 @@
       "importance": 3.0
     },
     {
+      "feature": "ma_5",
+      "importance": 2.0
+    },
+    {
+      "feature": "rsi_14",
+      "importance": 2.0
+    },
+    {
+      "feature": "topix_macd_hist",
+      "importance": 2.0
+    },
+    {
       "feature": "honda_close",
-      "importance": 3.0
-    },
-    {
-      "feature": "byd_volatility_20",
-      "importance": 3.0
-    },
-    {
-      "feature": "volume",
-      "importance": 2.0
-    },
-    {
-      "feature": "intraday_return",
-      "importance": 2.0
-    },
-    {
-      "feature": "close_position",
       "importance": 2.0
     }
   ]
