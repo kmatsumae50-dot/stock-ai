@@ -43,6 +43,26 @@ logger = logging.getLogger(__name__)
 DISCORD_API_BASE = "https://discord.com/api/v10"
 
 
+def _load_env_file_to_environ() -> None:
+    """Ensure .env variables including GEMINI_API_KEY are loaded into os.environ."""
+    env_path = PROJECT_ROOT / ".env"
+    if env_path.exists():
+        try:
+            for line in env_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip().strip("'\"")
+                    if k and k not in os.environ:
+                        os.environ[k] = v
+        except Exception:
+            pass
+
+
+_load_env_file_to_environ()
+
+
 # ---------------------------------------------------------------------------
 # 1. Ticker & Japanese Company Name Resolver
 # ---------------------------------------------------------------------------
@@ -132,6 +152,57 @@ PRIMARY_ALIASES: dict[str, tuple[str, str]] = {
     "OLC": ("4661.T", "オリエンタルランド"),
     "ディズニー": ("4661.T", "オリエンタルランド"),
     "イオン": ("8267.T", "イオン"),
+    "AEON": ("8267.T", "イオン"),
+    # Consumer, Games, Media, Retail
+    "マツダ": ("7261.T", "マツダ"),
+    "MAZDA": ("7261.T", "マツダ"),
+    "楽天": ("4755.T", "楽天グループ"),
+    "楽天グループ": ("4755.T", "楽天グループ"),
+    "カプコン": ("9697.T", "カプコン"),
+    "CAPCOM": ("9697.T", "カプコン"),
+    "サンリオ": ("8136.T", "サンリオ"),
+    "SANRIO": ("8136.T", "サンリオ"),
+    "スクエニ": ("9684.T", "スクウェア・エニックス・HD"),
+    "スクウェアエニックス": ("9684.T", "スクウェア・エニックス・HD"),
+    "バンナム": ("7832.T", "バンダイナムコHD"),
+    "バンダイナムコ": ("7832.T", "バンダイナムコHD"),
+    "コナミ": ("9766.T", "コナミグループ"),
+    "コーエーテクモ": ("3635.T", "コーエーテクモHD"),
+    "ネクソン": ("3659.T", "ネクソン"),
+    "KADOKAWA": ("9468.T", "KADOKAWA"),
+    "カドカワ": ("9468.T", "KADOKAWA"),
+    "ニトリ": ("9843.T", "ニトリHD"),
+    "良品計画": ("7453.T", "良品計画"),
+    "無印良品": ("7453.T", "良品計画"),
+    "メルカリ": ("4385.T", "メルカリ"),
+    "サイバーエージェント": ("4751.T", "サイバーエージェント"),
+    "LINEヤフー": ("4689.T", "LINEヤフー"),
+    "ヤフー": ("4689.T", "LINEヤフー"),
+    "DeNA": ("2432.T", "ディー・エヌ・エー"),
+    "JT": ("2914.T", "日本たばこ産業"),
+    "日本たばこ": ("2914.T", "日本たばこ産業"),
+    "ゼンショー": ("7550.T", "ゼンショーHD"),
+    "JR東海": ("9022.T", "東海旅客鉄道"),
+    "JR東日本": ("9020.T", "東日本旅客鉄道"),
+    "ANA": ("9202.T", "ANAホールディングス"),
+    "全日空": ("9202.T", "ANAホールディングス"),
+    "JAL": ("9201.T", "日本航空"),
+    "野村": ("8604.T", "野村ホールディングス"),
+    "野村HD": ("8604.T", "野村ホールディングス"),
+    "野村證券": ("8604.T", "野村ホールディングス"),
+    "大和証券": ("8601.T", "大和証券グループ本社"),
+    "ENEOS": ("5020.T", "ENEOSホールディングス"),
+    "エネオス": ("5020.T", "ENEOSホールディングス"),
+    "出光": ("5019.T", "出光興産"),
+    "出光興産": ("5019.T", "出光興産"),
+    "住友電工": ("5802.T", "住友電気工業"),
+    "富士通": ("6702.T", "富士通"),
+    "NEC": ("6701.T", "日本電気"),
+    "日本電気": ("6701.T", "日本電気"),
+    "野村総研": ("4307.T", "野村総合研究所"),
+    "NRI": ("4307.T", "野村総合研究所"),
+    "TDK": ("6762.T", "TDK"),
+    "SCREEN": ("7735.T", "SCREENホールディングス"),
     # Chemicals & Pharma
     "信越化": ("4063.T", "信越化学工業"),
     "信越化学": ("4063.T", "信越化学工業"),
@@ -172,15 +243,53 @@ def _get_universe_name_map() -> dict[str, str]:
     return name_map
 
 
-def resolve_ticker(query: str) -> tuple[str, str] | None:
-    """Resolve user query string into a canonical ticker (e.g. '7203.T') and company name.
+def search_ticker_dynamically(query: str) -> tuple[str, str] | None:
+    """Dynamically search and resolve Tokyo Prime stock code via local dictionary or Yahoo Finance Search."""
+    clean = query.strip()
+    if not clean:
+        return None
 
-    Examples:
-        '7203' -> ('7203.T', 'トヨタ自動車')
-        'トヨタ' -> ('7203.T', 'トヨタ自動車')
-        '任天堂を分析して' -> ('7974.T', '任天堂')
-        '6758.Tの予想' -> ('6758.T', 'ソニーグループ')
-    """
+    # 1. Local resolution first
+    res = resolve_ticker(clean)
+    if res:
+        return res
+
+    # 2. Yahoo Finance Search with English/Romaji fallback
+    search_terms = [clean]
+    romaji_map = {
+        "マツダ": "Mazda", "ホンダ": "Honda", "楽天": "Rakuten", "カプコン": "Capcom",
+        "サンリオ": "Sanrio", "イオン": "Aeon", "レーザーテック": "Lasertec",
+        "ディスコ": "Disco", "日立": "Hitachi", "東芝": "Toshiba", "三菱": "Mitsubishi",
+        "任天堂": "Nintendo", "ソニー": "Sony", "トヨタ": "Toyota", "日産": "Nissan",
+    }
+    for k, v in romaji_map.items():
+        if k in clean and v not in search_terms:
+            search_terms.append(v)
+
+    for term in search_terms:
+        try:
+            url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(term)}&quotesCount=10&newsCount=0"
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                quotes = data.get("quotes", [])
+                t_quotes = [q for q in quotes if q.get("symbol", "").endswith(".T")]
+                if t_quotes:
+                    top = t_quotes[0]
+                    sym = str(top.get("symbol"))
+                    sname = str(top.get("shortname") or top.get("longname") or sym)
+                    return sym, sname
+        except Exception:
+            pass
+
+    return None
+
+
+def resolve_ticker(query: str) -> tuple[str, str] | None:
+    """Resolve user query string into a canonical ticker (e.g. '7203.T') and company name."""
     clean_text = query.strip()
     if not clean_text:
         return None
@@ -220,12 +329,8 @@ def resolve_ticker(query: str) -> tuple[str, str] | None:
 def extract_all_tickers(query: str) -> list[tuple[str, str]]:
     """Extract all distinct ticker symbols and company names mentioned in the query.
 
-    Preserves order of appearance in text and deduplicates.
-
-    Examples:
-        'トヨタと日産どっちがいい？' -> [('7203.T', 'トヨタ自動車'), ('7201.T', '日産自動車')]
-        'ソニーと任天堂を比較して' -> [('6758.T', 'ソニーグループ'), ('7974.T', '任天堂')]
-        '8058と8031' -> [('8058.T', '三菱商事'), ('8031.T', '三井物産')]
+    Handles Japanese particle separation (と, や, の, は, って, どっち, vs, etc.)
+    and dynamic ticker searches.
     """
     clean_text = query.strip().translate(str.maketrans("０１２３４５６７８９", "0123456789"))
     name_map = _get_universe_name_map()
@@ -261,6 +366,19 @@ def extract_all_tickers(query: str) -> list[tuple[str, str]]:
             if code not in seen_tickers:
                 results.append((code, name))
                 seen_tickers.add(code)
+
+    # 4. Tokenize by particles and try dynamic resolution if nothing found or to catch unlisted
+    particles = r"[とやのはをにがでよりならってどっちどう比較vsVS\s,、。！？\?!]+"
+    tokens = [t.strip() for t in re.split(particles, clean_text) if len(t.strip()) >= 2]
+    for token in tokens:
+        if any(token.lower() in alias.lower() for alias in PRIMARY_ALIASES):
+            continue
+        dynamic_res = search_ticker_dynamically(token)
+        if dynamic_res:
+            d_code, d_name = dynamic_res
+            if d_code not in seen_tickers:
+                results.append((d_code, d_name))
+                seen_tickers.add(d_code)
 
     return results
 
@@ -561,62 +679,251 @@ def _get_macro_context() -> dict[str, Any]:
     return macro
 
 
-def _try_llm_dialogue(system_prompt: str, user_prompt: str) -> str | None:
-    """Optional LLM dialogue synthesis if GEMINI_API_KEY or OPENAI_API_KEY is available."""
+def generate_llm_multi_persona_dialogue(
+    user_query: str,
+    tickers: list[tuple[str, str]] | None = None,
+) -> list[dict[str, Any]] | None:
+    """Generate structured multi-persona dialogue using Gemini API when available."""
     gemini_key = os.environ.get("GEMINI_API_KEY")
-    if gemini_key:
+    if not gemini_key:
+        return None
+
+    # 1. Gather live market context
+    macro = _get_macro_context()
+    summary = get_current_pipeline_summary()
+    top_o = summary.get("top_overnight", [])
+    top_t = summary.get("top_turnaround", [])
+    date_str = summary.get("date", datetime.now().strftime("%Y-%m-%d"))
+
+    lines_o = []
+    for item in top_o[:3]:
+        lines_o.append(
+            f"- {item.get('name')} ({item.get('ticker')}): 上昇確率 {item.get('probability_up', 0.0):.1%}, 終値 {item.get('close', 0):,.0f}円"
+        )
+    lines_t = []
+    for item in top_t[:3]:
+        pbr_s = f"{item['pbr']:.2f}倍" if item.get("pbr") is not None else "-"
+        lines_t.append(
+            f"- {item.get('name')} ({item.get('ticker')}): スコア {item.get('bargain_score', 0.0):.1f}点, 高値比 {item.get('drawdown_252d', 0.0):+.1%}, PBR {pbr_s}"
+        )
+
+    # Detailed data if tickers specified
+    target_info = []
+    if tickers:
+        for t_code, _ in tickers[:3]:
+            an = analyze_single_ticker(t_code)
+            if an:
+                e_info = "直前警戒" if an["earnings_risk"] else "通常"
+                target_info.append(
+                    f"- {an['name']} ({an['ticker']}): 終値 {an['close']:,.1f}円 ({an['pct_change']:+.2%}), "
+                    f"Overnight確率 {an['p_up']:.1%}, 割安スコア {an['bargain_score']:.1f}点, "
+                    f"52週高値比 {an['drawdown_52w']:+.1%}, RSI {an['rsi_14']:.1f}, 決算リスク: {e_info}"
+                )
+
+    target_text = "\n".join(target_info) if target_info else "指定なし（質問文から意図を解析してください）"
+
+    system_prompt = f"""あなたは日本株（日経225・東証プライム）のAI投資相談室で活躍する3人のプロAIアナリストチームです。
+ユーザーの質問に対して、以下の3人がプロのクオンツ視点から掛け合い形式で具体的・実践的に回答してください。
+
+【アナリスト紹介】
+1. 🎩 チーフ・ファンドマネージャー AI: 機関投資家の冷静な視点。全体戦略、総合ジャッジ、リスク管理方針を指示。
+2. ⚡ 短期スナイパー AI: Overnight翌朝寄り付きギャップ狙い専門。利確(+1.5%〜2%)・損切り(-1.5%)の絶対規律と短期勝機。
+3. 💎 バリューハンター AI: 中長期の激安回復株専門。52週高値比下落率、PBR1倍割れ、底打ち反転の安全域。
+
+【最新市場データ ({date_str})】
+・日経平均株価: {macro['nikkei_close']:,.0f}円 ({macro['nikkei_pct']:+.2%}) | ドル円為替: {macro['usdjpy']:.2f}円
+・仮想ファンド運用状況: 資産 {macro['equity']:,.0f}円 | {macro['portfolio_status']}
+・本日のOvernight Q5上位銘柄:
+{chr(10).join(lines_o) if lines_o else "- データ更新中"}
+・本日のTurnaround 激安株上位銘柄:
+{chr(10).join(lines_t) if lines_t else "- データ更新中"}
+・言及銘柄データ:
+{target_text}
+
+【回答の絶対厳守ルール】
+・抽象的な精神論や定型文（「ボラティリティに気をつけましょう」だけ等）は厳禁。
+・ユーザーの質問文（「持っている株を評価して」「売った方がいいか」「トヨタと日産どっち」等）に直接答えること。
+・銘柄が未指定の場合は、チーフが「具体的な銘柄名（例: 7203 や トヨタ）を教えていただければその株の数値を即診断します」と案内しつつ、売却判定基準（-1.5%損切り等）を提示すること。
+・スナイパーとハンターは提供された具体銘柄・数値を引用すること。
+
+必ず以下のJSON形式のみを出力してください（Markdownコードブロックは不要、純粋なJSON文字列）：
+{{
+  "chief_text": "チーフの発言テキスト",
+  "sniper_text": "スナイパーの発言テキスト",
+  "hunter_text": "ハンターの発言テキスト",
+  "embed_title": "Embedのタイトル",
+  "embed_fields": [
+    {{"name": "フィールド名1", "value": "フィールド内容1"}},
+    {{"name": "フィールド名2", "value": "フィールド内容2"}}
+  ]
+}}
+"""
+
+    models_to_try = ["gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-3.8-flash"]
+    payload = {
+        "contents": [
+            {"role": "user", "parts": [{"text": f"{system_prompt}\n\nユーザーの質問: {user_query}"}]}
+        ],
+        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 900},
+    }
+    req_data = json.dumps(payload).encode("utf-8")
+
+    for model_name in models_to_try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
+        req = urllib.request.Request(url, data=req_data, headers={"Content-Type": "application/json"}, method="POST")
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
-            payload = {
-                "contents": [
-                    {"role": "user", "parts": [{"text": f"{system_prompt}\n\nユーザーの質問: {user_prompt}"}]}
-                ],
-                "generationConfig": {"temperature": 0.7, "maxOutputTokens": 600},
-            }
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=4) as resp:
+            with urllib.request.urlopen(req, timeout=5) as resp:
                 res_data = json.loads(resp.read().decode("utf-8"))
                 candidates = res_data.get("candidates", [])
-                if candidates:
-                    parts = candidates[0].get("content", {}).get("parts", [])
-                    if parts and "text" in parts[0]:
-                        return str(parts[0]["text"])
-        except Exception as exc:
-            logger.debug("Gemini LLM optional call skipped or failed: %s", exc)
+                if not candidates:
+                    continue
+                part = candidates[0].get("content", {}).get("parts", [])
+                if not part or "text" not in part[0]:
+                    continue
+                raw_text = part[0]["text"].strip()
+                if raw_text.startswith("```"):
+                    raw_text = raw_text.split("\n", 1)[1].rsplit("\n", 1)[0].strip()
+                parsed = json.loads(raw_text)
 
-    openai_key = os.environ.get("OPENAI_API_KEY")
-    if openai_key:
-        try:
-            url = "https://api.openai.com/v1/chat/completions"
-            payload = {
-                "model": "gpt-4o-mini",
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "max_tokens": 600,
-                "temperature": 0.7,
-            }
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json", "Authorization": f"Bearer {openai_key}"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=4) as resp:
-                res_data = json.loads(resp.read().decode("utf-8"))
-                choices = res_data.get("choices", [])
-                if choices:
-                    return str(choices[0].get("message", {}).get("content", ""))
+                chief_msg = parsed.get("chief_text", "")
+                sniper_msg = parsed.get("sniper_text", "")
+                hunter_msg = parsed.get("hunter_text", "")
+                embed_title = parsed.get("embed_title", f"🧭 【AI投資相談室】対話ブリーフィング ({date_str})")
+                embed_fields = parsed.get("embed_fields", [])
+
+                if not chief_msg:
+                    continue
+
+                embed = {
+                    "title": embed_title,
+                    "description": "3人のクオンツAIによるリアルタイム戦略対話",
+                    "color": 3066993,
+                    "fields": embed_fields if embed_fields else [
+                        {"name": "🌐 市場環境", "value": f"日経平均: **{macro['nikkei_close']:,.0f}円** | ドル円: **{macro['usdjpy']:.2f}円**", "inline": True},
+                        {"name": "💡 相談アドバイス", "value": "個別銘柄コードを入力すると詳細なクオンツ指標を即時算出します。", "inline": False},
+                    ],
+                    "footer": {"text": f"Stock-AI Autonomous Real-Time Intelligence ({model_name})"},
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+
+                p_chief = {
+                    "username": "🎩 チーフ・ファンドマネージャー AI",
+                    "content": f"🎩 **チーフ・ファンドマネージャー AI**\n{chief_msg}",
+                    "text": f"🎩 **チーフ・ファンドマネージャー AI**\n{chief_msg}",
+                    "embeds": [embed],
+                }
+                p_sniper = {
+                    "username": "⚡ 短期スナイパー AI (Overnight担当)",
+                    "content": f"⚡ **短期スナイパー AI (Overnight担当)**\n{sniper_msg}",
+                    "text": f"⚡ **短期スナイパー AI (Overnight担当)**\n{sniper_msg}",
+                }
+                p_hunter = {
+                    "username": "💎 バリューハンター AI (中長期・激安株担当)",
+                    "content": f"💎 **バリューハンター AI (中長期・激安株担当)**\n{hunter_msg}",
+                    "text": f"💎 **バリューハンター AI (中長期・激安株担当)**\n{hunter_msg}",
+                }
+                return [p_chief, p_sniper, p_hunter]
         except Exception as exc:
-            logger.debug("OpenAI LLM optional call skipped or failed: %s", exc)
+            logger.debug("Gemini LLM model %s failed: %s", model_name, exc)
+            continue
 
     return None
+
+
+def build_holding_exit_strategy_dialogue_payloads(query: str = "") -> list[dict[str, Any]]:
+    """Build specific exit strategy and holding/selling decision guidance."""
+    macro = _get_macro_context()
+    summary = get_current_pipeline_summary()
+    top_o = summary.get("top_overnight", [])
+    top_t = summary.get("top_turnaround", [])
+    date_str = summary.get("date", datetime.now().strftime("%Y-%m-%d"))
+
+    top_o_pick = top_o[0] if top_o else {"name": "三菱商事", "ticker": "8058.T", "probability_up": 0.55}
+    top_t_pick = top_t[0] if top_t else {"name": "日産自動車", "ticker": "7201.T", "bargain_score": 75.0, "drawdown_252d": -0.35}
+
+    clean_q = query.strip()
+    chief_text = (
+        "🎩 **チーフ・ファンドマネージャー AI**\n"
+        "「『今持っている株を売るべきか、保有し続けるべきか』という出口戦略のご相談ですね。\n\n"
+        f"現在の市場環境は日経平均 **{macro['nikkei_close']:,.0f}円** ({macro['nikkei_pct']:+.2%})、ドル円 **{macro['usdjpy']:.2f}円**。\n"
+        "株式投資で資金を失う最大の原因は『エグジット（手仕舞い）の規律の欠如』です。\n"
+        "全銘柄共通の機関投資家ルールとして、取得単価から **-1.5%** 逆行した場合は感情を挟まず機械的にロスカットすべきです。\n\n"
+        "💡 **個別銘柄の判定を希望される場合**:\n"
+        "チャットに保有株の銘柄コード（例：`7203`）や企業名（例：`トヨタ`）を入力してください。直近のOvernight確率、RSI、高値比乖離から売却/ホールドをピンポイント判定します。」"
+    )
+
+    embed_fields = [
+        {
+            "name": "🚨 即座に売却（損切り・手仕舞い）すべき3大サイン",
+            "value": (
+                "1. **機械的損切りライン到達**: 買値から **-1.5% 〜 -2.0%** 下落（希望的観測は厳禁）\n"
+                "2. **決算地雷リスク**: 直近7日以内に決算発表を控えている（決算跨ぎギャンブル回避）\n"
+                "3. **目標達成**: Overnightで翌朝寄り付き **+1.5% 〜 +2.0%** の利確水準に到達"
+            ),
+            "inline": False,
+        },
+        {
+            "name": "💎 安心してホールド継続（保有）すべき3大条件",
+            "value": (
+                "1. **バリュー安全域**: PBR 1倍割れかつ52週高値から大きく売り込まれた底値圏\n"
+                "2. **テクニカル下げ止まり**: RSI(14)が30付近から反転サイン点灯中\n"
+                "3. **業績健全**: 減配や赤字転落リスクのない財務優良株"
+            ),
+            "inline": False,
+        },
+        {
+            "name": "📊 本日のクオンツ基準銘柄",
+            "value": (
+                f"⚡ **短期即効性トップ**: `{top_o_pick.get('ticker')}` {top_o_pick.get('name')} (Overnight確率 **{top_o_pick.get('probability_up', 0.55):.1%}**)\n"
+                f"💎 **中長期ホールド妙味**: `{top_t_pick.get('ticker')}` {top_t_pick.get('name')} (割安スコア **{top_t_pick.get('bargain_score', 70.0):.1f}点**)"
+            ),
+            "inline": False,
+        },
+    ]
+
+    embed = {
+        "title": f"📋 【保有株の売却・ホールド判定チェックシート】({date_str})",
+        "description": f"ご質問: 「{clean_q[:35]}」に対するプロの出口戦略診断",
+        "color": 3066993,
+        "fields": embed_fields,
+        "footer": {"text": "Stock-AI Autonomous Exit Strategy & Portfolio Advisory"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    p_chief = {
+        "username": "🎩 チーフ・ファンドマネージャー AI",
+        "content": chief_text,
+        "text": chief_text,
+        "embeds": [embed],
+    }
+
+    sniper_text = (
+        f"⚡ **短期スナイパー AI (Overnight担当)**\n"
+        f"「迷う暇があるなら数字を見ろ！🎯\n\n"
+        f"『まだ戻るかも…』とナンピンしたりホールドし続けるのが一番の自殺行為だ！\n"
+        f"短期スイングなら、**-1.5%** で機械的にロスカット（損切り）、寄り付きで **+1.5%〜2%** 取れたらサクッと利確して手仕舞いしろ！\n"
+        f"明朝のギャップアップを狙うなら、確率 {top_o_pick.get('probability_up', 0.55):.1%} の **{top_o_pick.get('name')}** みたいなシグナル合致株に資金を乗り換えるのがプロの鉄則だぜ！」"
+    )
+    p_sniper = {
+        "username": "⚡ 短期スナイパー AI (Overnight担当)",
+        "content": sniper_text,
+        "text": sniper_text,
+    }
+
+    hunter_text = (
+        f"💎 **バリューハンター AI (中長期・激安株担当)**\n"
+        f"「中長期バリュー投資なら、目先の下げで慌てて売る必要はありません💎\n\n"
+        f"**{top_t_pick.get('name')}** のように、52週高値から {top_t_pick.get('drawdown_252d', -0.3):+.1%} も売り叩かれてPBRが歴史的低水準にある銘柄は、下値余地が限定的です。\n"
+        f"業績に致命的な傷がないなら、配当を受け取りながら底打ち反転を待つべきです。\n"
+        f"保有銘柄名を教えてくだされば、その株が『損切りすべき傷物』か『保有すべきお宝』かを判定しますよ。」"
+    )
+    p_hunter = {
+        "username": "💎 バリューハンター AI (中長期・激安株担当)",
+        "content": hunter_text,
+        "text": hunter_text,
+    }
+
+    return [p_chief, p_sniper, p_hunter]
 
 
 def build_single_ticker_dialogue_payloads(
@@ -1476,12 +1783,51 @@ class DiscordPollingBot:
         if clean_lower in ("ヘルプ", "help", "使い方", "?", "コマンド", "help me"):
             return [build_help_payload()]
 
-        # 3. Multi-stock comparison inquiry (2 or more distinct tickers found)
+        # 3. Direct Rankings inquiry
+        if clean_lower in ("ランキング", "top", "順位", "注目", "ranking"):
+            return build_ranking_payloads()
+
+        # Extract tickers with dynamic search and particle tokenization
         tickers = extract_all_tickers(cleaned)
+
+        # Check if the query is an investment inquiry or ticker-related
+        has_investment_intent = any(
+            k in clean_lower
+            for k in [
+                "株", "投資", "買い", "売り", "損切り", "利確", "配当", "優待", "nisa",
+                "相場", "日経", "ドル", "為替", "円安", "円高", "決算", "チャート", "地合い",
+                "おすすめ", "ポートフォリオ", "資産", "資金", "予算", "評価", "分析", "予想",
+                "どう", "何", "どれ", "教えて", "いくら", "相談", "戦略", "手放す", "ホールド",
+                "持っている", "保有", "売った", "とっておく", "ナンピン", "仕込", "銘柄",
+                "上がる", "下がる", "急騰", "暴落", "反転", "割安", "スナイパー", "ハンター",
+            ]
+        )
+        if not tickers and not has_investment_intent:
+            logger.info("Message '%s' has no tickers and no investment intent. Skipping.", cleaned[:30])
+            return None
+
+        # 4. Method A: Try Gemini LLM Multi-Persona Dialogue Synthesis First
+        llm_reply = generate_llm_multi_persona_dialogue(cleaned, tickers=tickers)
+        if llm_reply:
+            return llm_reply
+
+        # -------------------------------------------------------------------
+        # Method B: Fine-grained Quantitative Dialogue Fallback Engine
+        # -------------------------------------------------------------------
+        # 4. Multi-stock comparison inquiry (2 or more distinct tickers found)
         if len(tickers) >= 2:
             return build_comparison_dialogue_payloads(tickers, query=cleaned)
 
-        # 4. Recommendation / Budget / Stock Selection inquiry
+        # 5. Holding / Exit Strategy / Selling vs Holding decision inquiry
+        exit_keywords = [
+            "持っている", "保有", "この株", "売った方", "売るべき", "とっておく",
+            "残す", "手仕舞い", "利確", "損切り", "含み損", "含み益", "売り時",
+            "切るべき", "ナンピン", "処分", "手放す", "評価",
+        ]
+        if any(k in clean_lower for k in exit_keywords) and len(tickers) == 0:
+            return build_holding_exit_strategy_dialogue_payloads(query=cleaned)
+
+        # 6. Recommendation / Budget / Stock Selection inquiry
         recommend_keywords = [
             "おすすめ", "何買えば", "何かいい銘柄", "どれがいい", "仕込むなら",
             "買えばいい", "勝てるやつ", "予算", "nisa", "放置", "万", "30万",
@@ -1490,16 +1836,7 @@ class DiscordPollingBot:
         if any(k in clean_lower for k in recommend_keywords) and len(tickers) == 0:
             return build_recommendation_dialogue_payloads(query=cleaned)
 
-        # 5. Market outlook / Strategy / Timing inquiry
-        market_keywords = [
-            "相場", "地合い", "日経", "円安", "円高", "ドル円", "買い時", "売り時",
-            "利確", "損切り", "基準", "気をつける", "どう思う", "市場", "暴落",
-            "調整", "ポジション", "ルール", "注意点", "見通し",
-        ]
-        if any(k in clean_lower for k in market_keywords) and len(tickers) == 0:
-            return build_market_outlook_dialogue_payloads(query=cleaned)
-
-        # 6. Single stock deep dive inquiry (1 ticker found or direct code/name)
+        # 7. Single stock deep dive inquiry (1 ticker found or direct code/name)
         if len(tickers) == 1:
             analysis = analyze_single_ticker(tickers[0][0])
             if analysis:
@@ -1510,11 +1847,20 @@ class DiscordPollingBot:
         if analysis:
             return build_single_ticker_dialogue_payloads(analysis, query=cleaned)
 
-        # 7. Daily Rankings inquiry
+        # 8. Market outlook / Strategy / Timing inquiry
+        market_keywords = [
+            "相場", "地合い", "日経", "円安", "円高", "ドル円", "買い時", "売り時",
+            "基準", "気をつける", "どう思う", "市場", "暴落", "調整", "ポジション",
+            "ルール", "注意点", "見通し", "暴騰", "先物",
+        ]
+        if any(k in clean_lower for k in market_keywords) and len(tickers) == 0:
+            return build_market_outlook_dialogue_payloads(query=cleaned)
+
+        # 9. Daily Rankings inquiry
         if clean_lower in ("ランキング", "top", "順位", "注目", "ranking"):
             return build_ranking_payloads()
 
-        # 8. Mentions or explicit request without resolved ticker
+        # 10. Mentions or explicit request without resolved ticker
         if "分析" in cleaned or "株価" in cleaned or "予想" in cleaned:
             guidance = (
                 f"申し訳ありません、「**{cleaned[:30]}**」から日本株の銘柄コードまたは企業名を特定できませんでした。\n\n"
@@ -1526,9 +1872,9 @@ class DiscordPollingBot:
                 "text": guidance,
             }]
 
-        # 9. General investment question fallback
+        # 11. General investment question fallback (Return holding/exit strategy guidance)
         if any(k in clean_lower for k in ["株", "投資", "買い", "売り", "儲かる", "教えて", "どう", "アドバイス"]):
-            return build_market_outlook_dialogue_payloads(query=cleaned)
+            return build_holding_exit_strategy_dialogue_payloads(query=cleaned)
 
         return None
 
