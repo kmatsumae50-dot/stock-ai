@@ -21,6 +21,10 @@ def test_resolve_ticker_numeric_code() -> None:
     assert resolve_ticker("７２０３") == ("7203.T", "トヨタ自動車")
     assert resolve_ticker("7974") == ("7974.T", "任天堂")
     assert resolve_ticker("6758.Tの予想教えて") == ("6758.T", "ソニーグループ")
+    # New code system (2024+, 3 digits + 1 letter like 285A)
+    assert resolve_ticker("285A") == ("285A.T", "キオクシアホールディングス")
+    assert resolve_ticker("285A.T") == ("285A.T", "キオクシアホールディングス")
+    assert resolve_ticker("２８５Ａ") == ("285A.T", "キオクシアホールディングス")
 
 
 def test_resolve_ticker_company_names() -> None:
@@ -31,6 +35,11 @@ def test_resolve_ticker_company_names() -> None:
     assert resolve_ticker("IHI") == ("7013.T", "IHI")
     assert resolve_ticker("ソフトバンクグループ") == ("9984.T", "ソフトバンクグループ")
     assert resolve_ticker("三菱商事") == ("8058.T", "三菱商事")
+    assert resolve_ticker("キオクシア") == ("285A.T", "キオクシアホールディングス")
+    assert resolve_ticker("東京メトロ") == ("9023.T", "東京地下鉄")
+    assert resolve_ticker("ソシオネクスト") == ("6526.T", "ソシオネクスト")
+    assert resolve_ticker("さくらインターネット") == ("3778.T", "さくらインターネット")
+    assert resolve_ticker("フジクラ") == ("5803.T", "フジクラ")
 
 
 def test_resolve_ticker_unknown() -> None:

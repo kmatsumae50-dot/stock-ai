@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import socket
 import sys
 import time
 import urllib.error
@@ -13,6 +14,9 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any
+
+# Enforce strict global socket timeout for all network I/O
+socket.setdefaulttimeout(10.0)
 
 import numpy as np
 import pandas as pd
@@ -222,6 +226,24 @@ PRIMARY_ALIASES: dict[str, tuple[str, str]] = {
     "住友不動産": ("8830.T", "住友不動産"),
     "INPEX": ("1605.T", "INPEX"),
     "インペックス": ("1605.T", "INPEX"),
+    # Trending Stocks & New Code Stocks (2024+)
+    "キオクシア": ("285A.T", "キオクシアホールディングス"),
+    "キオクシアHD": ("285A.T", "キオクシアホールディングス"),
+    "キオクシアホールディングス": ("285A.T", "キオクシアホールディングス"),
+    "Kioxia": ("285A.T", "キオクシアホールディングス"),
+    "東京メトロ": ("9023.T", "東京地下鉄"),
+    "東京地下鉄": ("9023.T", "東京地下鉄"),
+    "メトロ": ("9023.T", "東京地下鉄"),
+    "JX金属": ("5016.T", "JX金属"),
+    "ソシオネクスト": ("6526.T", "ソシオネクスト"),
+    "ソシオ": ("6526.T", "ソシオネクスト"),
+    "さくらインターネット": ("3778.T", "さくらインターネット"),
+    "さくら": ("3778.T", "さくらインターネット"),
+    "霞ヶ関キャピタル": ("3498.T", "霞ヶ関キャピタル"),
+    "霞ヶ関": ("3498.T", "霞ヶ関キャピタル"),
+    "メタプラネット": ("3350.T", "メタプラネット"),
+    "メタプラ": ("3350.T", "メタプラネット"),
+    "フジクラ": ("5803.T", "フジクラ"),
 }
 
 
@@ -261,6 +283,7 @@ def search_ticker_dynamically(query: str) -> tuple[str, str] | None:
         "サンリオ": "Sanrio", "イオン": "Aeon", "レーザーテック": "Lasertec",
         "ディスコ": "Disco", "日立": "Hitachi", "東芝": "Toshiba", "三菱": "Mitsubishi",
         "任天堂": "Nintendo", "ソニー": "Sony", "トヨタ": "Toyota", "日産": "Nissan",
+        "キオクシア": "Kioxia", "さくら": "Sakura", "メトロ": "Tokyo Metro",
     }
     for k, v in romaji_map.items():
         if k in clean and v not in search_terms:
@@ -273,13 +296,13 @@ def search_ticker_dynamically(query: str) -> tuple[str, str] | None:
                 url,
                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
             )
-            with urllib.request.urlopen(req, timeout=3) as resp:
+            with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 quotes = data.get("quotes", [])
                 t_quotes = [q for q in quotes if q.get("symbol", "").endswith(".T")]
                 if t_quotes:
                     top = t_quotes[0]
-                    sym = str(top.get("symbol"))
+                    sym = str(top.get("symbol")).upper()
                     sname = str(top.get("shortname") or top.get("longname") or sym)
                     return sym, sname
         except Exception:
@@ -288,20 +311,26 @@ def search_ticker_dynamically(query: str) -> tuple[str, str] | None:
     return None
 
 
+_ZEN_TO_HAN = str.maketrans(
+    "０１２３４５６７８９ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ",
+    "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+)
+
+
 def resolve_ticker(query: str) -> tuple[str, str] | None:
-    """Resolve user query string into a canonical ticker (e.g. '7203.T') and company name."""
+    """Resolve user query string into a canonical ticker (e.g. '7203.T', '285A.T') and company name."""
     clean_text = query.strip()
     if not clean_text:
         return None
 
-    # 1. Normalize full-width digits to half-width
-    clean_text = clean_text.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
+    # 1. Normalize full-width digits and letters to half-width
+    clean_text = clean_text.translate(_ZEN_TO_HAN)
     name_map = _get_universe_name_map()
 
-    # 2. Check 4-digit ticker code pattern
-    match = re.search(r"(?<!\d)(\d{4})(?:\.T)?(?!\d)", clean_text, re.IGNORECASE)
+    # 2. Check 4-character code pattern (4 digits or 3 digits + 1 letter, e.g. 7203, 285A, 7203.T, 285A.T)
+    match = re.search(r"(?<![A-Za-z0-9])(\d{3}[A-Za-z]|\d{4})(?:\.T)?(?![A-Za-z0-9])", clean_text, re.IGNORECASE)
     if match:
-        code_num = match.group(1)
+        code_num = match.group(1).upper()
         ticker = f"{code_num}.T"
         name = name_map.get(ticker)
         if not name:
@@ -332,14 +361,14 @@ def extract_all_tickers(query: str) -> list[tuple[str, str]]:
     Handles Japanese particle separation (と, や, の, は, って, どっち, vs, etc.)
     and dynamic ticker searches.
     """
-    clean_text = query.strip().translate(str.maketrans("０１２３４５６７８９", "0123456789"))
+    clean_text = query.strip().translate(_ZEN_TO_HAN)
     name_map = _get_universe_name_map()
     results: list[tuple[str, str]] = []
     seen_tickers: set[str] = set()
 
-    # 1. 4-digit code matches (preserving character position)
-    for m in re.finditer(r"(?<!\d)(\d{4})(?:\.T)?(?!\d)", clean_text, re.IGNORECASE):
-        code_num = m.group(1)
+    # 1. Code matches (both 4-digit and 3-digit+letter like 285A)
+    for m in re.finditer(r"(?<![A-Za-z0-9])(\d{3}[A-Za-z]|\d{4})(?:\.T)?(?![A-Za-z0-9])", clean_text, re.IGNORECASE):
+        code_num = m.group(1).upper()
         ticker = f"{code_num}.T"
         if ticker not in seen_tickers:
             name = name_map.get(ticker)
@@ -459,22 +488,30 @@ def analyze_single_ticker(query: str) -> dict[str, Any] | None:
 
     # Fetch live via yfinance if needed or to get fresh day change / RSI
     try:
+        socket.setdefaulttimeout(10.0)
         import yfinance as yf
 
         t_obj = yf.Ticker(ticker)
-        hist = t_obj.history(period="1y")
-        if not hist.empty and len(hist) >= 2:
+        hist = t_obj.history(period="1y", timeout=10)
+        if not hist.empty and len(hist) >= 1:
             close_val = float(hist["Close"].iloc[-1])
-            prev_close_val = float(hist["Close"].iloc[-2])
-            pct_change = (close_val - prev_close_val) / prev_close_val
+            if len(hist) >= 2:
+                prev_close_val = float(hist["Close"].iloc[-2])
+                pct_change = (close_val - prev_close_val) / prev_close_val
             high_52w = float(hist["High"].max())
             drawdown_52w = (close_val - high_52w) / high_52w if high_52w > 0 else 0.0
-            rsi_14 = _compute_rsi(hist["Close"], period=14)
+            rsi_14 = _compute_rsi(hist["Close"], period=14) if len(hist) >= 8 else 50.0
 
-        # Fundamentals fallback
-        if pbr_val is None:
-            fast_info = getattr(t_obj, "fast_info", None)
-            if fast_info and hasattr(fast_info, "price_to_book"):
+        # Fundamentals and fast_info fallback
+        fast_info = getattr(t_obj, "fast_info", None)
+        if fast_info:
+            if close_val is None and hasattr(fast_info, "last_price") and fast_info.last_price:
+                close_val = float(fast_info.last_price)
+            if prev_close_val is None and hasattr(fast_info, "previous_close") and fast_info.previous_close:
+                prev_close_val = float(fast_info.previous_close)
+                if close_val:
+                    pct_change = (close_val - prev_close_val) / prev_close_val
+            if pbr_val is None and hasattr(fast_info, "price_to_book"):
                 pbr_val = getattr(fast_info, "price_to_book", None)
     except Exception as exc:
         logger.debug("Failed fetching live yfinance data for %s: %s", ticker, exc)
@@ -1646,10 +1683,23 @@ class DiscordPollingBot:
                 # 2. Or dynamically resolve/create webhook for this channel
                 self._get_or_create_channel_webhook(ch_id)
 
-            # 3. Snapshot current latest message ID so bot ignores historical messages
-            msgs = self._api_request(f"/channels/{ch_id}/messages?limit=1")
+            # 3. Snapshot current latest message ID or catch unhandled user queries while bot was offline
+            msgs = self._api_request(f"/channels/{ch_id}/messages?limit=5")
             if isinstance(msgs, list) and msgs:
-                self.last_seen_message_id[ch_id] = str(msgs[0]["id"])
+                # msgs is returned newest first.
+                # Find the most recent message sent by this bot or a webhook.
+                bot_msg_id = None
+                for m in msgs:
+                    author = m.get("author", {})
+                    if author.get("bot") or m.get("webhook_id"):
+                        bot_msg_id = str(m["id"])
+                        break
+                if bot_msg_id:
+                    self.last_seen_message_id[ch_id] = bot_msg_id
+                else:
+                    # If all recent messages are from users without bot reply, start before them
+                    oldest_id = str(min(int(m["id"]) for m in msgs))
+                    self.last_seen_message_id[ch_id] = str(int(oldest_id) - 1)
             else:
                 self.last_seen_message_id[ch_id] = "0"
 

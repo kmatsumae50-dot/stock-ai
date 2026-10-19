@@ -27,12 +27,32 @@ $Arguments = @(
 ) -join " "
 
 Write-Host "Registering Scheduled Task: $TaskName"
-Write-Host "Trigger: At log on of current user"
 Write-Host "Action: $WscriptExe $Arguments"
 
 $Action = New-ScheduledTaskAction -Execute $WscriptExe -Argument $Arguments -WorkingDirectory $ProjectRoot
-$Trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-$Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Days 365)
+
+# Triggers:
+# 1. At user logon
+$LogonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+
+# 2. Recurring trigger repeating every 5 minutes for 10 years (re-spawns if closed or wakes from sleep)
+$RepeatTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
+
+$Triggers = @($LogonTrigger, $RepeatTrigger)
+
+# Settings:
+# - ExecutionTimeLimit: [TimeSpan]::Zero (Infinite run time, never kill after 3 days)
+# - RestartCount: 999, RestartInterval: 1 min
+# - MultipleInstances: IgnoreNew (single instance protected by mutex)
+# - StartWhenAvailable: Run immediately if missed during sleep/off
+$Settings = New-ScheduledTaskSettingsSet `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries `
+    -RestartCount 999 `
+    -RestartInterval (New-TimeSpan -Minutes 1) `
+    -ExecutionTimeLimit ([TimeSpan]::Zero) `
+    -MultipleInstances IgnoreNew `
+    -StartWhenAvailable
 
 $ExistingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($null -ne $ExistingTask) {
@@ -43,5 +63,5 @@ if ($null -ne $ExistingTask) {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
 }
 
-Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Description "Runs stock-ai interactive Discord Polling Bot permanently in the background" | Out-Null
-Write-Host "Task '$TaskName' registered successfully."
+Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Triggers -Settings $Settings -Description "Runs stock-ai interactive Discord Polling Bot permanently in the background with immortal watchdog" | Out-Null
+Write-Host "Task '$TaskName' registered successfully with immortal watchdog configuration."
