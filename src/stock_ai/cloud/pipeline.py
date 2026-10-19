@@ -2,11 +2,23 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 from stock_ai.cloud.notifications import (
     build_alert_report_payload,
@@ -356,3 +368,62 @@ def run_cloud_daily_pipeline(
         "paper_trader": paper_metrics,
         "top_turnaround": turnaround_picks[:3],
     }
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(description="Stock-AI Cloud Daily Autonomous Pipeline")
+    parser.add_argument("--start", type=str, default="2010-01-01", help="Data start date")
+    parser.add_argument(
+        "--force-download",
+        dest="force_download",
+        action="store_true",
+        default=True,
+        help="Force re-download of raw market data (default: True)",
+    )
+    parser.add_argument(
+        "--no-force-download",
+        dest="force_download",
+        action="store_false",
+        help="Skip downloading raw market data if existing files are present",
+    )
+    parser.add_argument(
+        "--force-features",
+        dest="force_features",
+        action="store_true",
+        default=True,
+        help="Force recalculation of features (default: True)",
+    )
+    parser.add_argument(
+        "--no-force-features",
+        dest="force_features",
+        action="store_false",
+        help="Skip recalculation of features if existing files are present",
+    )
+    parser.add_argument(
+        "--force-train",
+        dest="force_train",
+        action="store_true",
+        default=False,
+        help="Force retraining models (default: False, self-healing retains trained models)",
+    )
+    parser.add_argument(
+        "--webhook-url",
+        type=str,
+        default=None,
+        help="Override webhook URL (default: uses configured webhooks in .env)",
+    )
+    args = parser.parse_args()
+
+    pipeline_result = run_cloud_daily_pipeline(
+        start=args.start,
+        force_download=args.force_download,
+        force_features=args.force_features,
+        force_train=args.force_train,
+        webhook_url=args.webhook_url,
+    )
+    if pipeline_result.get("status") not in ("SUCCESS", "PARTIAL"):
+        sys.exit(1)
+
