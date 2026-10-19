@@ -197,6 +197,7 @@ class DiscordProvisioner:
         # Category 2: 🧠 戦略・ラボ
         cat2 = self.get_or_create_category(guild_id, "🧠 戦略・ラボ")
         cat2_id = cat2["id"]
+        ch_consult = self.get_or_create_text_channel(guild_id, "💬｜ai投資相談室", cat2_id)
         ch_notes = self.get_or_create_text_channel(guild_id, "📝｜相場メモ・独り言", cat2_id)
 
         # Webhooks
@@ -204,6 +205,8 @@ class DiscordProvisioner:
         wh_fund = self.get_or_create_webhook(ch_fund["id"], "Stock-AI Fund Reporter")
         wh_turn = self.get_or_create_webhook(ch_turn["id"], "Stock-AI Value Hunter")
         wh_alert = self.get_or_create_webhook(ch_alert["id"], "Stock-AI Risk Guardian")
+        wh_consult = self.get_or_create_webhook(ch_consult["id"], "Stock-AI Consultation Room")
+        wh_notes = self.get_or_create_webhook(ch_notes["id"], "Stock-AI Notes Reporter")
 
         return {
             "guild_id": guild_id,
@@ -216,6 +219,7 @@ class DiscordProvisioner:
                 "fund": ch_fund["id"],
                 "turnaround": ch_turn["id"],
                 "alert": ch_alert["id"],
+                "consultation": ch_consult["id"],
                 "notes": ch_notes["id"],
             },
             "webhooks": {
@@ -223,6 +227,8 @@ class DiscordProvisioner:
                 "fund": wh_fund,
                 "turnaround": wh_turn,
                 "alert": wh_alert,
+                "consultation": wh_consult,
+                "notes": wh_notes,
             },
         }
 
@@ -357,6 +363,39 @@ class DiscordProvisioner:
                 ],
             }
             self._post_webhook(webhooks["alert"], payload)
+            time.sleep(sleep_interval)
+
+        # 5. Consultation Room
+        if "consultation" in webhooks:
+            payload = {
+                "username": "☕ AI投資相談室 コンシェルジュ",
+                "content": (
+                    "☕ **【AI投資相談室へようこそ！】**\n\n"
+                    "ここでは、3人のAIアナリスト（🎩チーフFM、⚡短期スナイパー、💎バリューハンター）に対して、投資に関する疑問や戦略を自由に相談できます！\n\n"
+                    "💡 **こんな質問にお答えします**:\n"
+                    "・**複数銘柄の比較**: `トヨタと日産どっちがいい？`, `ソニーと任天堂を比較して`\n"
+                    "・**おすすめ・資金相談**: `今おすすめの株は？`, `30万円で仕込むなら？`, `短期で勝てるやつ教えて`\n"
+                    "・**相場観・売買タイミング**: `今の相場どう思う？`, `買い時？`, `今の相場で気をつけることは？`\n"
+                    "・**個別銘柄の深掘り**: `トヨタって今買い時かな？`, `日産はなぜ安いの？`\n\n"
+                    "気になることを何でも気軽に話しかけてみてください！"
+                ),
+                "embeds": [
+                    {
+                        "title": "💬 AI投資相談室 (Interactive Consultation Room) 開通",
+                        "description": "3人の専門AIアナリストがデータと戦略に基づいて親身にお答えします。",
+                        "color": 3447003,
+                        "fields": [
+                            {"name": "⚖️ 銘柄比較", "value": "短期上昇確率 × 中長期割安度の徹底比較", "inline": True},
+                            {"name": "💰 資金配分", "value": "予算（30万、50万等）に合わせた単元株提案", "inline": True},
+                            {"name": "📊 相場診断", "value": "日経平均・為替・ファンド動向から地合い診断", "inline": True},
+                        ],
+                        "footer": {"text": "Stock AI Real-Time Consultation Engine"},
+                        "timestamp": now_ts,
+                    }
+                ],
+            }
+            self._post_webhook(webhooks["consultation"], payload)
+
 
     @staticmethod
     def _post_webhook(webhook_url: str, payload: dict[str, Any]) -> None:

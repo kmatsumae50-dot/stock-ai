@@ -167,3 +167,94 @@ def test_polling_bot_poll_once_mock() -> None:
         assert processed == 1
         assert bot.last_seen_message_id["12345"] == "102"
         bot.send_reply.assert_called_once()
+
+
+def test_extract_all_tickers() -> None:
+    from stock_ai.cloud.discord_bot import extract_all_tickers
+
+    # Multi-ticker extraction
+    res1 = extract_all_tickers("トヨタと日産どっちがいい？")
+    assert len(res1) == 2
+    assert res1[0][0] == "7203.T"
+    assert res1[1][0] == "7201.T"
+
+    res2 = extract_all_tickers("ソニーと任天堂を比較して")
+    assert len(res2) == 2
+    assert res2[0][0] == "6758.T"
+    assert res2[1][0] == "7974.T"
+
+    res3 = extract_all_tickers("8058と8031")
+    assert len(res3) == 2
+    assert res3[0][0] == "8058.T"
+    assert res3[1][0] == "8031.T"
+
+
+def test_build_comparison_dialogue_payloads() -> None:
+    from stock_ai.cloud.discord_bot import build_comparison_dialogue_payloads
+
+    tickers = [("7203.T", "トヨタ自動車"), ("7201.T", "日産自動車")]
+    payloads = build_comparison_dialogue_payloads(tickers, query="トヨタと日産どっちがいい？")
+
+    assert len(payloads) == 3
+    # Chief FM with comparison embed
+    assert "チーフ・ファンドマネージャー" in payloads[0]["username"]
+    assert len(payloads[0]["embeds"]) == 1
+    assert "銘柄直接比較" in payloads[0]["embeds"][0]["title"]
+    # Sniper & Hunter
+    assert "短期スナイパー" in payloads[1]["username"]
+    assert "バリューハンター" in payloads[2]["username"]
+
+
+def test_build_recommendation_dialogue_payloads() -> None:
+    from stock_ai.cloud.discord_bot import build_recommendation_dialogue_payloads
+
+    payloads = build_recommendation_dialogue_payloads("今から30万円で仕込むなら何がいい？")
+    assert len(payloads) == 3
+    assert "チーフ・ファンドマネージャー" in payloads[0]["username"]
+    assert len(payloads[0]["embeds"]) == 1
+    assert "銘柄選定・資金配分プラン" in payloads[0]["embeds"][0]["title"]
+    assert "予算 30万円" in payloads[0]["embeds"][0]["title"]
+
+
+def test_build_market_outlook_dialogue_payloads() -> None:
+    from stock_ai.cloud.discord_bot import build_market_outlook_dialogue_payloads
+
+    payloads = build_market_outlook_dialogue_payloads("今の相場で気をつけることは？")
+    assert len(payloads) == 3
+    assert "チーフ・ファンドマネージャー" in payloads[0]["username"]
+    assert len(payloads[0]["embeds"]) == 1
+    assert "相場観・投資戦略ブリーフィング" in payloads[0]["embeds"][0]["title"]
+    assert "日経平均" in payloads[0]["content"]
+
+    payloads_timing = build_market_outlook_dialogue_payloads("利確や損切りの基準は？")
+    assert "損切り" in payloads_timing[1]["content"]
+
+
+def test_polling_bot_consultation_routing() -> None:
+    with patch.object(DiscordPollingBot, "__init__", lambda self: None):
+        bot = DiscordPollingBot()
+
+        # 1. Comparison consultation
+        res_comp = bot._handle_user_message("トヨタと日産どっちがいい？")
+        assert res_comp is not None
+        assert len(res_comp) == 3
+        assert "銘柄直接比較" in res_comp[0]["embeds"][0]["title"]
+
+        # 2. Recommendation / Budget consultation
+        res_rec = bot._handle_user_message("30万円で仕込むなら何がいい？")
+        assert res_rec is not None
+        assert len(res_rec) == 3
+        assert "銘柄選定・資金配分プラン" in res_rec[0]["embeds"][0]["title"]
+
+        # 3. Market outlook consultation
+        res_market = bot._handle_user_message("今の相場で気をつけることは？")
+        assert res_market is not None
+        assert len(res_market) == 3
+        assert "相場観・投資戦略ブリーフィング" in res_market[0]["embeds"][0]["title"]
+
+        # 4. Single ticker deep dive with intent
+        res_deep = bot._handle_user_message("日産は今買い時かな？")
+        assert res_deep is not None
+        assert len(res_deep) == 3
+        assert "日産自動車" in res_deep[0]["content"]
+        assert "買い時判定" in res_deep[0]["content"]

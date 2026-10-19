@@ -46,6 +46,7 @@ jobs:
           STOCK_AI_WEBHOOK_FUND: ${{ secrets.STOCK_AI_WEBHOOK_FUND }}
           STOCK_AI_WEBHOOK_TURNAROUND: ${{ secrets.STOCK_AI_WEBHOOK_TURNAROUND }}
           STOCK_AI_WEBHOOK_ALERT: ${{ secrets.STOCK_AI_WEBHOOK_ALERT }}
+          STOCK_AI_WEBHOOK_CONSULTATION: ${{ secrets.STOCK_AI_WEBHOOK_CONSULTATION }}
           STOCK_AI_CHANNEL_WEBHOOKS: ${{ secrets.STOCK_AI_CHANNEL_WEBHOOKS }}
         run: |
           python -m stock_ai.cloud.pipeline
