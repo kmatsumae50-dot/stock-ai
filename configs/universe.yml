@@ -1,4 +1,4 @@
-# Prime 20 Universe (10 Sectors) for overnight and stock-ai predictions
+# TSE Prime Core 50 High-Liquidity Universe (Leading 10+ Sectors)
 tickers:
   # 自動車 (Automotive)
   - code: "7203.T"
@@ -10,7 +10,8 @@ tickers:
   - code: "7201.T"
     name: "日産自動車"
     sector: "Automotive"
-  # 半導体 (Semiconductors)
+
+  # 半導体・製造装置・電子部品 (Semiconductors)
   - code: "8035.T"
     name: "東京エレクトロン"
     sector: "Semiconductors"
@@ -20,7 +21,59 @@ tickers:
   - code: "6723.T"
     name: "ルネサスエレクトロニクス"
     sector: "Semiconductors"
-  # 銀行・金融 (Banking & Finance)
+  - code: "6146.T"
+    name: "ディスコ"
+    sector: "Semiconductors"
+  - code: "6920.T"
+    name: "レーザーテック"
+    sector: "Semiconductors"
+  - code: "6526.T"
+    name: "ソシオネクスト"
+    sector: "Semiconductors"
+
+  # AIインフラ・電線・重電 (AI Infrastructure, Cables & Electronics)
+  - code: "5803.T"
+    name: "フジクラ"
+    sector: "Non-Ferrous Metals"
+  - code: "5801.T"
+    name: "古河電気工業"
+    sector: "Non-Ferrous Metals"
+  - code: "5802.T"
+    name: "住友電気工業"
+    sector: "Non-Ferrous Metals"
+  - code: "6501.T"
+    name: "日立製作所"
+    sector: "Electronics"
+
+  # 電機・精密・電子部品 (Electronics)
+  - code: "6758.T"
+    name: "ソニーグループ"
+    sector: "Electronics"
+  - code: "6762.T"
+    name: "TDK"
+    sector: "Electronics"
+  - code: "6861.T"
+    name: "キーエンス"
+    sector: "Electronics"
+
+  # 防衛・重工・機械 (Machinery & Defense)
+  - code: "7011.T"
+    name: "三菱重工業"
+    sector: "Machinery & Defense"
+  - code: "7012.T"
+    name: "川崎重工業"
+    sector: "Machinery & Defense"
+  - code: "7013.T"
+    name: "IHI"
+    sector: "Machinery & Defense"
+  - code: "6301.T"
+    name: "コマツ"
+    sector: "Machinery"
+  - code: "6367.T"
+    name: "ダイキン工業"
+    sector: "Machinery"
+
+  # 金融・銀行・保険 (Banking & Insurance)
   - code: "8306.T"
     name: "三菱UFJ FG"
     sector: "Banking & Finance"
@@ -30,6 +83,16 @@ tickers:
   - code: "8411.T"
     name: "みずほFG"
     sector: "Banking & Finance"
+  - code: "8766.T"
+    name: "東京海上HD"
+    sector: "Insurance & Finance"
+  - code: "8750.T"
+    name: "第一生命HD"
+    sector: "Insurance & Finance"
+  - code: "8591.T"
+    name: "オリックス"
+    sector: "Banking & Finance"
+
   # 総合商社 (Wholesale & Trading)
   - code: "8058.T"
     name: "三菱商事"
@@ -37,38 +100,78 @@ tickers:
   - code: "8031.T"
     name: "三井物産"
     sector: "Wholesale & Trading"
-  # 電機・精密 (Electronics)
-  - code: "6758.T"
-    name: "ソニーグループ"
-    sector: "Electronics"
-  - code: "6501.T"
-    name: "日立製作所"
-    sector: "Electronics"
-  # 防衛・重工 (Machinery & Defense)
-  - code: "7011.T"
-    name: "三菱重工業"
-    sector: "Machinery & Defense"
-  # 通信・AI投資 (Telecommunications & Tech)
-  - code: "9984.T"
-    name: "ソフトバンクグループ"
-    sector: "Telecommunications & Tech"
-  # 通信・ディフェンシブ (Telecommunications)
-  - code: "9433.T"
-    name: "KDDI"
-    sector: "Telecommunications"
-  # ゲーム・エンタメ (Entertainment & Gaming)
+  - code: "8001.T"
+    name: "伊藤忠商事"
+    sector: "Wholesale & Trading"
+  - code: "8002.T"
+    name: "丸紅"
+    sector: "Wholesale & Trading"
+  - code: "8053.T"
+    name: "住友商事"
+    sector: "Wholesale & Trading"
+
+  # ゲーム・IP・エンタメ・小売・内需 (Entertainment, Gaming & Retail)
   - code: "7974.T"
     name: "任天堂"
     sector: "Entertainment & Gaming"
-  # 小売・内需 (Retail)
+  - code: "8136.T"
+    name: "サンリオ"
+    sector: "Entertainment & Gaming"
+  - code: "7832.T"
+    name: "バンダイナムコHD"
+    sector: "Entertainment & Gaming"
+  - code: "9766.T"
+    name: "コナミグループ"
+    sector: "Entertainment & Gaming"
   - code: "9983.T"
     name: "ファーストリテイリング"
     sector: "Retail"
+  - code: "3382.T"
+    name: "セブン&アイHD"
+    sector: "Retail"
+
+  # 海運 (Marine Transportation)
+  - code: "9101.T"
+    name: "日本郵船"
+    sector: "Marine Transportation"
+  - code: "9104.T"
+    name: "商船三井"
+    sector: "Marine Transportation"
+  - code: "9107.T"
+    name: "川崎汽船"
+    sector: "Marine Transportation"
+
+  # 不動産 (Real Estate)
+  - code: "8801.T"
+    name: "三井不動産"
+    sector: "Real Estate"
+  - code: "8802.T"
+    name: "三菱地所"
+    sector: "Real Estate"
+
   # 医薬品 (Pharmaceuticals)
   - code: "4502.T"
     name: "武田薬品工業"
     sector: "Pharmaceuticals"
+  - code: "4519.T"
+    name: "中外製薬"
+    sector: "Pharmaceuticals"
+  - code: "4568.T"
+    name: "第一三共"
+    sector: "Pharmaceuticals"
+
   # 化学・素材 (Chemicals & Materials)
   - code: "4063.T"
     name: "信越化学工業"
     sector: "Chemicals & Materials"
+
+  # 通信・AI投資・通信大手 (Telecommunications)
+  - code: "9984.T"
+    name: "ソフトバンクグループ"
+    sector: "Telecommunications & Tech"
+  - code: "9433.T"
+    name: "KDDI"
+    sector: "Telecommunications"
+  - code: "9432.T"
+    name: "日本電信電話"
+    sector: "Telecommunications"

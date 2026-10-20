@@ -328,17 +328,21 @@ def simulate_overnight_strategy(
             equity_curve.append({"date": d.strftime("%Y-%m-%d"), "equity": equity})
             continue
 
+        valid_long_picks = []
         long_rets = []
         for t in long_picks:
             match = day_slice.loc[day_slice["ticker"] == t, "next_open_return"]
             if not match.empty and pd.notna(match.values[0]):
                 long_rets.append(float(match.values[0]))
+                valid_long_picks.append(t)
 
+        valid_short_picks = []
         short_rets = []
         for t in short_picks:
             match = day_slice.loc[day_slice["ticker"] == t, "next_open_return"]
             if not match.empty and pd.notna(match.values[0]):
                 short_rets.append(float(match.values[0]))
+                valid_short_picks.append(t)
 
         gross_return = 0.0
         applied_cost = 0.0
@@ -366,7 +370,7 @@ def simulate_overnight_strategy(
                     float(day_slice.loc[day_slice["ticker"] == t, "volatility_20"].values[0])
                     if "volatility_20" in day_slice.columns and not day_slice.loc[day_slice["ticker"] == t, "volatility_20"].empty
                     else 0.025
-                    for t in long_picks
+                    for t in valid_long_picks
                 ]
                 if len(long_rets) > 1 and all(v > 0 for v in pick_vols):
                     v_arr = np.clip(np.array(pick_vols), 0.015, 0.055)

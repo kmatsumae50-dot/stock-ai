@@ -354,18 +354,23 @@ def test_multi_ticker_overnight_universe_structure():
     assert len(auto_tickers) == 3
 
 
-def test_prime_20_universe_structure_and_sectors():
-    """Verify universe.yml contains 20 Prime stocks across 10 sectors with Japanese mapping."""
+def test_prime_50_universe_structure_and_sectors():
+    """Verify universe.yml contains 50 Prime stocks across 10+ sectors with Japanese mapping."""
     from stock_ai.data.universe import load_universe
 
     universe = load_universe()
-    assert len(universe) == 20
+    assert len(universe) == 50
 
     expected_tickers = [
         "7203.T", "7267.T", "7201.T", "8035.T", "6857.T", "6723.T",
         "8306.T", "8316.T", "8411.T", "8058.T", "8031.T", "6758.T",
         "6501.T", "7011.T", "9984.T", "9433.T", "7974.T", "9983.T",
-        "4502.T", "4063.T",
+        "4502.T", "4063.T", "6146.T", "6920.T", "6526.T", "6762.T",
+        "5803.T", "5801.T", "5802.T", "7012.T", "7013.T", "6301.T",
+        "6367.T", "8766.T", "8750.T", "8591.T", "8001.T", "8002.T",
+        "8053.T", "8136.T", "7832.T", "9766.T", "3382.T", "9101.T",
+        "9104.T", "9107.T", "8801.T", "8802.T", "4519.T", "4568.T",
+        "9432.T", "6861.T",
     ]
     codes = [t.code for t in universe]
     for code in expected_tickers:

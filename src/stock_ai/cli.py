@@ -2580,8 +2580,10 @@ def _build_features_for_ticker(ticker: str, settings) -> Path:
     )
     features = add_external_market_features(features, settings.paths.raw_data_dir)
     from stock_ai.features.overnight import add_overnight_features
+    from stock_ai.features.intraday import add_intraday_premarket_features
 
     features = add_overnight_features(features)
+    features = add_intraday_premarket_features(features)
     features = add_earnings_event_features(
         features,
         default_events_dir(settings.paths.raw_data_dir.parent),
