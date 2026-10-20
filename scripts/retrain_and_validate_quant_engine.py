@@ -86,6 +86,12 @@ def main():
         print("\n--- [3b/6] Retraining Cross-Sectional Pooled Overnight Model ---")
         _, cs_metrics = train_pooled_cross_sectional_overnight_model(universe=universe)
         print(f"Pooled CS Overnight Model Retrained: Test AUC = {cs_metrics.get('test_auc', 0.5):.4f}")
+
+        # 3c. Retrain 07:30 JST Intraday Model
+        print("\n--- [3c/6] Retraining 07:30 JST Pre-Market Intraday Model ---")
+        from stock_ai.models.intraday import train_pooled_cross_sectional_intraday_model
+        _, _, intra_metrics = train_pooled_cross_sectional_intraday_model(universe=universe)
+        print(f"Pooled Intraday Model Retrained: Val AUC = {intra_metrics.get('validation_auc', 0.5):.4f}")
     else:
         print("\n--- Skipping Feature Rebuild & Training (--skip-train specified) ---")
 

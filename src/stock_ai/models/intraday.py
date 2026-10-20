@@ -1,0 +1,319 @@
+"""src/stock_ai/models/intraday.py
+
+Intraday (Open-to-Close: 09:00 -> 15:30) LightGBM Pooled Cross-Sectional Model.
+Predicts daytime return and cross-sectional outperformance for morning 07:30 JST pre-market deployment.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import json
+import logging
+from pathlib import Path
+from typing import Any
+
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.metrics import accuracy_score, roc_auc_score
+
+from stock_ai.config import PROJECT_ROOT, Settings, load_settings
+from stock_ai.data.universe import TickerInfo, load_universe
+from stock_ai.features.intraday import (
+    ALL_INTRADAY_FEATURES,
+    add_cross_sectional_intraday_features,
+    add_intraday_premarket_features,
+)
+from stock_ai.storage.parquet_store import read_parquet, write_parquet
+
+logger = logging.getLogger(__name__)
+
+INTRADAY_MODEL_NAME = "lightgbm_intraday_pooled_cs"
+INTRADAY_TARGET = "target_intraday_cs_outperform"
+INTRADAY_ARTIFACT_FILENAME = "lightgbm_intraday_pooled_cs.joblib"
+INTRADAY_METRICS_FILENAME = "lightgbm_intraday_pooled_cs.json"
+
+INTRADAY_HIGH_CONVICTION_RETURN_THRESH = 0.0030  # +30 bps expected return hurdle
+INTRADAY_HIGH_CONVICTION_PROB_THRESH = 0.50
+
+INTRADAY_QUANTILE_CUTOFFS = [
+    {
+        "quantile": "Q1",
+        "min_p": 0.0,
+        "max_p": 0.44,
+        "label": "寄り天・陰線警戒帯",
+        "direction": "down",
+        "description": "寄り付き後の利確売り・陰線反落リスクが高い警戒ゾーン",
+    },
+    {
+        "quantile": "Q2",
+        "min_p": 0.44,
+        "max_p": 0.48,
+        "label": "軟調推移帯",
+        "direction": "down",
+        "description": "日中上値が重くアンダーパフォームしやすい軟調ゾーン",
+    },
+    {
+        "quantile": "Q3",
+        "min_p": 0.48,
+        "max_p": 0.52,
+        "label": "中立推移帯",
+        "direction": "neutral",
+        "description": "市場平均並みの値動き（キャッシュ待機推奨）",
+    },
+    {
+        "quantile": "Q4",
+        "min_p": 0.52,
+        "max_p": 0.56,
+        "label": "日中堅調帯",
+        "direction": "up",
+        "description": "寄り付きからの底堅い買い支えが期待できる堅調ゾーン",
+    },
+    {
+        "quantile": "Q5",
+        "min_p": 0.56,
+        "max_p": 1.0,
+        "label": "日中陽線急伸期待帯",
+        "direction": "up",
+        "description": "最も高い確率で日中大引けにかけて陽線上昇が期待できる特選ゾーン",
+    },
+]
+
+
+def classify_intraday_quantile(prob: float, pred_ret: float | None = None) -> dict[str, Any]:
+    """Classify an intraday predicted probability and return into human-interpretable bands."""
+    clamped_p = max(0.0, min(1.0, float(prob)))
+    selected = INTRADAY_QUANTILE_CUTOFFS[2]  # Default Q3
+    for b in INTRADAY_QUANTILE_CUTOFFS:
+        if b["min_p"] <= clamped_p < b["max_p"] or (b["quantile"] == "Q5" and clamped_p >= b["min_p"]):
+            selected = b
+            break
+
+    is_conviction = (
+        clamped_p >= INTRADAY_HIGH_CONVICTION_PROB_THRESH
+        and (pred_ret is None or pred_ret >= INTRADAY_HIGH_CONVICTION_RETURN_THRESH)
+    )
+
+    return {
+        "quantile": selected["quantile"],
+        "label": selected["label"],
+        "direction": selected["direction"],
+        "description": selected["description"],
+        "probability": clamped_p,
+        "expected_return": pred_ret,
+        "is_high_conviction": is_conviction,
+    }
+
+
+def train_pooled_cross_sectional_intraday_model(
+    universe: list[TickerInfo] | None = None,
+    settings: Settings | None = None,
+    features_dir: Path | str | None = None,
+    train_end_date: str = "2024-04-01",
+    sync_features_to_disk: bool = True,
+) -> tuple[Any, list[str], dict[str, Any]]:
+    """Train a leak-free Pooled Cross-Sectional Intraday model (Classifier + Regressor bundle).
+
+    Trained strictly on dates prior to `train_end_date` (2024-04-01) across all universe tickers.
+    """
+    import lightgbm as lgb
+
+    if settings is None:
+        settings = load_settings()
+    if universe is None:
+        universe = load_universe()
+
+    features_path = Path(features_dir or settings.paths.feature_data_dir)
+    models_path = settings.paths.model_dir
+    metrics_path = Path("reports") / "metrics"
+    models_path.mkdir(parents=True, exist_ok=True)
+    metrics_path.mkdir(parents=True, exist_ok=True)
+
+    records: list[pd.DataFrame] = []
+    ticker_dfs: dict[str, pd.DataFrame] = {}
+
+    for t in universe:
+        code = t.code
+        f_file = features_path / f"{code}.parquet"
+        if not f_file.exists():
+            continue
+        df = read_parquet(f_file)
+        if df.empty or len(df) < 50:
+            continue
+        df["ticker"] = code
+        df["sector"] = getattr(t, "sector_ja", "") or getattr(t, "sector", "") or "General"
+        df = add_intraday_premarket_features(df)
+        records.append(df)
+        ticker_dfs[code] = df
+
+    if not records:
+        raise ValueError("No feature files found for intraday training.")
+
+    all_df = pd.concat(records, ignore_index=True)
+    all_df["date"] = pd.to_datetime(all_df["date"])
+    all_df = all_df.sort_values(["date", "ticker"]).reset_index(drop=True)
+
+    # Attach Cross-Sectional relative features
+    all_df = add_cross_sectional_intraday_features(all_df)
+
+    if sync_features_to_disk:
+        for code in ticker_dfs:
+            t_sub = all_df[all_df["ticker"] == code].sort_values("date").reset_index(drop=True)
+            write_parquet(t_sub, features_path / f"{code}.parquet")
+
+    feature_columns = [c for c in ALL_INTRADAY_FEATURES if c in all_df.columns]
+
+    split_dt = pd.to_datetime(train_end_date)
+    train_mask = all_df["date"] < split_dt
+    train_subset = all_df[train_mask].dropna(subset=feature_columns + [INTRADAY_TARGET, "intraday_return"])
+
+    if train_subset.empty:
+        raise ValueError("Training subset for Intraday model is empty.")
+
+    # Validation window: last 15% of train dates
+    train_dates = sorted(train_subset["date"].unique())
+    valid_start_idx = max(1, int(len(train_dates) * 0.85))
+    valid_start_dt = train_dates[valid_start_idx]
+
+    train_data = train_subset[train_subset["date"] < valid_start_dt]
+    valid_data = train_subset[train_subset["date"] >= valid_start_dt]
+
+    # 1. Train Classifier for Cross-Sectional Outperform
+    clf = lgb.LGBMClassifier(
+        objective="binary",
+        n_estimators=200,
+        learning_rate=0.03,
+        num_leaves=12,
+        min_child_samples=50,
+        subsample=0.8,
+        colsample_bytree=0.7,
+        reg_alpha=0.5,
+        reg_lambda=2.0,
+        random_state=42,
+        verbose=-1,
+    )
+    clf.fit(
+        train_data[feature_columns],
+        train_data[INTRADAY_TARGET].astype(int),
+        eval_set=[(valid_data[feature_columns], valid_data[INTRADAY_TARGET].astype(int))],
+        eval_metric="auc",
+        callbacks=[lgb.early_stopping(50, verbose=False)],
+    )
+
+    val_probs = clf.predict_proba(valid_data[feature_columns])[:, 1]
+    val_auc = float(roc_auc_score(valid_data[INTRADAY_TARGET].astype(int), val_probs))
+    val_acc = float(accuracy_score(valid_data[INTRADAY_TARGET].astype(int), (val_probs >= 0.5).astype(int)))
+
+    # Refit classifier on full training set
+    clf.fit(train_subset[feature_columns], train_subset[INTRADAY_TARGET].astype(int))
+
+    # 2. Train Regressor for expected return hurdle
+    reg = lgb.LGBMRegressor(
+        n_estimators=180,
+        learning_rate=0.02,
+        num_leaves=10,
+        min_child_samples=40,
+        subsample=0.8,
+        colsample_bytree=0.7,
+        reg_alpha=0.5,
+        reg_lambda=2.0,
+        random_state=42,
+        verbose=-1,
+    )
+    reg.fit(train_subset[feature_columns], train_subset["intraday_return"])
+
+    metrics_info = {
+        "model_name": INTRADAY_MODEL_NAME,
+        "target": INTRADAY_TARGET,
+        "trained_samples": len(train_data),
+        "validation_samples": len(valid_data),
+        "validation_auc": val_auc,
+        "validation_accuracy": val_acc,
+        "feature_columns_count": len(feature_columns),
+        "top_features": [
+            {"feature": f, "importance": int(imp)}
+            for f, imp in sorted(
+                zip(feature_columns, clf.feature_importances_),
+                key=lambda x: x[1],
+                reverse=True,
+            )[:15]
+        ],
+    }
+
+    bundle = {
+        "model": clf,
+        "regressor": reg,
+        "feature_columns": feature_columns,
+        "metadata": metrics_info,
+        "trained_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    artifact_path = models_path / INTRADAY_ARTIFACT_FILENAME
+    joblib.dump(bundle, artifact_path)
+    (metrics_path / INTRADAY_METRICS_FILENAME).write_text(
+        json.dumps(metrics_info, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    logger.info("Saved Intraday model bundle to %s", artifact_path)
+
+    return bundle, feature_columns, metrics_info
+
+
+def predict_intraday_for_ticker(
+    ticker: str,
+    settings: Settings | None = None,
+    features_df: pd.DataFrame | None = None,
+) -> dict[str, Any] | None:
+    """Predict intraday open-to-close probability and expected return for a ticker."""
+    if settings is None:
+        settings = load_settings()
+
+    artifact_path = settings.paths.model_dir / INTRADAY_ARTIFACT_FILENAME
+    if not artifact_path.exists():
+        return None
+
+    try:
+        bundle = joblib.load(artifact_path)
+    except Exception as exc:
+        logger.warning("Failed loading intraday model bundle: %s", exc)
+        return None
+
+    if features_df is None:
+        f_path = settings.paths.feature_data_dir / f"{ticker}.parquet"
+        if not f_path.exists():
+            return None
+        features_df = read_parquet(f_path)
+
+    if features_df.empty:
+        return None
+
+    # Ensure premarket features exist
+    if "prior_return_1d" not in features_df.columns:
+        features_df = add_intraday_premarket_features(features_df)
+
+    feat_cols = [c for c in bundle["feature_columns"] if c in features_df.columns]
+    if len(feat_cols) < len(bundle["feature_columns"]) * 0.70:
+        return None
+
+    # Fill any missing feature columns with default 0.0
+    row_df = features_df.tail(1).copy()
+    for col in bundle["feature_columns"]:
+        if col not in row_df.columns:
+            row_df[col] = 0.0
+
+    X_row = row_df[bundle["feature_columns"]].fillna(0.0)
+
+    clf = bundle["model"]
+    reg = bundle.get("regressor")
+
+    prob = float(clf.predict_proba(X_row)[:, 1][0])
+    pred_ret = float(reg.predict(X_row)[0]) if reg is not None else 0.0
+
+    info = classify_intraday_quantile(prob, pred_ret=pred_ret)
+    info["ticker"] = ticker
+    info["date"] = str(row_df["date"].iloc[0]) if "date" in row_df.columns else "-"
+    info["p_intraday_cs"] = prob
+    info["pred_intraday_return"] = pred_ret
+    info["expected_return_bps"] = pred_ret * 10000.0
+
+    return info

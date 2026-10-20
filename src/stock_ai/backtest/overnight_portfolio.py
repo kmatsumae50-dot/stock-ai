@@ -10,6 +10,10 @@ import pandas as pd
 
 from stock_ai.data.universe import TickerInfo, load_universe
 from stock_ai.events.earnings_guard import check_earnings_risk
+from stock_ai.models.intraday import (
+    INTRADAY_ARTIFACT_FILENAME,
+    classify_intraday_quantile,
+)
 from stock_ai.models.overnight import (
     OVERNIGHT_ARTIFACT_FILENAME,
     POOLED_OVERNIGHT_ARTIFACT_FILENAME,
@@ -56,6 +60,15 @@ def collect_overnight_universe_predictions(
     if pooled_m_file.exists():
         try:
             pooled_bundle = load_model_bundle(pooled_m_file)
+        except Exception:
+            pass
+
+    intraday_m_file = models_path / INTRADAY_ARTIFACT_FILENAME
+    intraday_bundle = None
+    if intraday_m_file.exists():
+        try:
+            import joblib
+            intraday_bundle = joblib.load(intraday_m_file)
         except Exception:
             pass
 
@@ -108,6 +121,25 @@ def collect_overnight_universe_predictions(
         else:
             sub["p_cs"] = probs
 
+        # Calculate morning 07:30 intraday predictions if available
+        if intraday_bundle is not None:
+            i_cols = intraday_bundle["feature_columns"]
+            missing_i_cols = [c for c in i_cols if c not in sub.columns]
+            if missing_i_cols:
+                from stock_ai.features.intraday import add_intraday_premarket_features
+                sub = add_intraday_premarket_features(sub)
+            for c in i_cols:
+                if c not in sub.columns:
+                    sub[c] = 0.0
+            sub["p_intraday_cs"] = intraday_bundle["model"].predict_proba(sub[i_cols].fillna(0.0))[:, 1]
+            if "regressor" in intraday_bundle and intraday_bundle["regressor"] is not None:
+                sub["pred_intraday_ret"] = intraday_bundle["regressor"].predict(sub[i_cols].fillna(0.0))
+            else:
+                sub["pred_intraday_ret"] = 0.0
+        else:
+            sub["p_intraday_cs"] = 0.5
+            sub["pred_intraday_ret"] = 0.0
+
         quantiles: list[str] = []
         win_rates: list[float] = []
         directions: list[str] = []
@@ -139,6 +171,12 @@ def collect_overnight_universe_predictions(
         elif "intraday_return" not in sub.columns:
             sub["intraday_return"] = sub.get("return_1d", 0.0)
 
+        if "overnight_gap" not in sub.columns and "open" in sub.columns and "close" in sub.columns:
+            prev_c = sub["close"].shift(1)
+            sub["overnight_gap"] = ((sub["open"] - prev_c) / (prev_c + 1e-8)).fillna(0.0)
+        elif "overnight_gap" not in sub.columns:
+            sub["overnight_gap"] = 0.0
+
         # Check jumping catch risk row-by-row
         jc_risks: list[bool] = []
         jc_reasons: list[str] = []
@@ -165,8 +203,12 @@ def collect_overnight_universe_predictions(
             "sector",
             "close",
             "next_open_return",
+            "intraday_return",
+            "overnight_gap",
             "p_up",
             "p_cs",
+            "p_intraday_cs",
+            "pred_intraday_ret",
             "quantile",
             "win_rate",
             "direction",
@@ -413,6 +455,226 @@ def simulate_overnight_strategy(
     }
 
 
+def simulate_intraday_strategy(
+    df: pd.DataFrame,
+    dates: list[pd.Timestamp],
+    strategy_name: str = "intraday_top1_long",
+    cost: float = 0.0020,
+    initial_capital: float = 1_000_000.0,
+    hurdle_bps: float = 30.0,
+) -> dict[str, Any]:
+    """Simulate morning 07:30 pre-market intraday (Open[t] -> Close[t]) strategy with strict cost deduction."""
+    equity = initial_capital
+    trade_logs: list[dict[str, Any]] = []
+    equity_curve: list[dict[str, Any]] = []
+    hurdle = hurdle_bps / 10000.0
+
+    for d in dates:
+        day_slice = df[df["date"] == d].copy()
+        is_latest = d == dates[-1]
+
+        picks: list[str] = []
+        if "pred_intraday_ret" in day_slice.columns:
+            cands = day_slice[day_slice["pred_intraday_ret"] >= hurdle].sort_values("pred_intraday_ret", ascending=False)
+            if not cands.empty:
+                for _, c in cands.iterrows():
+                    # Intraday earnings guard
+                    e_risk, _ = check_earnings_risk(c["ticker"], ref_date=d)
+                    if not e_risk:
+                        picks = [c["ticker"]]
+                        break
+
+        if is_latest:
+            trade_logs.append(
+                {
+                    "date": d.strftime("%Y-%m-%d"),
+                    "long_picks": picks,
+                    "short_picks": [],
+                    "gross_return": 0.0,
+                    "net_return": 0.0,
+                    "pnl": 0.0,
+                    "equity": equity,
+                    "is_pending": True,
+                }
+            )
+            equity_curve.append({"date": d.strftime("%Y-%m-%d"), "equity": equity})
+            continue
+
+        gross_return = 0.0
+        applied_cost = 0.0
+        if picks:
+            match = day_slice.loc[day_slice["ticker"] == picks[0], "intraday_return"]
+            if not match.empty and pd.notna(match.values[0]):
+                gross_return = float(match.values[0])
+                applied_cost = cost
+
+        net_return = gross_return - applied_cost if picks else 0.0
+        pnl = equity * net_return
+        equity += pnl
+
+        trade_logs.append(
+            {
+                "date": d.strftime("%Y-%m-%d"),
+                "long_picks": picks,
+                "short_picks": [],
+                "gross_return": gross_return,
+                "net_return": net_return,
+                "pnl": pnl,
+                "equity": equity,
+                "is_pending": False,
+            }
+        )
+        equity_curve.append({"date": d.strftime("%Y-%m-%d"), "equity": equity})
+
+    settled_logs = [log for log in trade_logs if not log["is_pending"]]
+    returns = np.array([log["net_return"] for log in settled_logs])
+    active_returns = np.array([log["net_return"] for log in settled_logs if log["long_picks"]])
+
+    cum_return = (equity / initial_capital) - 1.0
+    total_days = len(settled_logs)
+    cagr = ((1.0 + cum_return) ** (250.0 / total_days)) - 1.0 if total_days > 0 and (1.0 + cum_return) > 0 else 0.0
+    sharpe = float(np.mean(returns) / np.std(returns) * np.sqrt(250.0)) if np.std(returns) > 1e-9 else 0.0
+
+    eq_series = pd.Series([log["equity"] for log in settled_logs])
+    peak = eq_series.cummax()
+    dd = (peak - eq_series) / peak
+    max_dd = float(dd.max()) if not dd.empty else 0.0
+
+    win_rate = float(np.mean(active_returns > 0)) if len(active_returns) > 0 else 0.0
+    gains = [log["pnl"] for log in settled_logs if log["pnl"] > 0]
+    losses = [abs(log["pnl"]) for log in settled_logs if log["pnl"] < 0]
+    profit_factor = (sum(gains) / sum(losses)) if sum(losses) > 0 else (99.0 if sum(gains) > 0 else 1.0)
+    avg_trade_bps = float(np.mean(active_returns) * 10000.0) if len(active_returns) > 0 else 0.0
+
+    metrics = StrategyMetrics(
+        strategy_name=strategy_name,
+        cost_bps=cost * 10000.0,
+        initial_capital=initial_capital,
+        final_equity=equity,
+        cumulative_return=cum_return,
+        cagr=cagr,
+        sharpe_ratio=sharpe,
+        max_drawdown=max_dd,
+        total_days=total_days,
+        active_days=len(active_returns),
+        win_rate=win_rate,
+        profit_factor=profit_factor,
+        avg_trade_bps=avg_trade_bps,
+    )
+
+    return {
+        "metrics": asdict(metrics),
+        "trade_logs": trade_logs,
+        "equity_curve": equity_curve,
+    }
+
+
+def simulate_dual_shift_strategy(
+    overnight_res: dict[str, Any],
+    intraday_res: dict[str, Any],
+    cost: float = 0.0020,
+    initial_capital: float = 1_000_000.0,
+) -> dict[str, Any]:
+    """Simulate Dual-Shift 2毛作 Compound Fund: Overnight leg (15:30 -> 09:00) × Intraday leg (09:00 -> 15:30)."""
+    equity = initial_capital
+    trade_logs: list[dict[str, Any]] = []
+    equity_curve: list[dict[str, Any]] = []
+
+    on_by_date = {t["date"]: t for t in overnight_res["trade_logs"]}
+    intra_by_date = {t["date"]: t for t in intraday_res["trade_logs"]}
+    all_dates = [t["date"] for t in overnight_res["trade_logs"]]
+
+    for d_str in all_dates:
+        on_log = on_by_date.get(d_str, {})
+        intra_log = intra_by_date.get(d_str, {})
+        is_latest = on_log.get("is_pending", False) or intra_log.get("is_pending", False)
+
+        on_picks = on_log.get("long_picks", [])
+        intra_picks = intra_log.get("long_picks", [])
+
+        if is_latest:
+            trade_logs.append(
+                {
+                    "date": d_str,
+                    "long_picks": on_picks,
+                    "intraday_picks": intra_picks,
+                    "short_picks": [],
+                    "gross_return": 0.0,
+                    "net_return": 0.0,
+                    "pnl": 0.0,
+                    "equity": equity,
+                    "is_pending": True,
+                }
+            )
+            equity_curve.append({"date": d_str, "equity": equity})
+            continue
+
+        r_on = on_log.get("net_return", 0.0)
+        r_intra = intra_log.get("net_return", 0.0)
+        compound_ret = (1.0 + r_on) * (1.0 + r_intra) - 1.0
+        pnl = equity * compound_ret
+        equity += pnl
+
+        trade_logs.append(
+            {
+                "date": d_str,
+                "long_picks": on_picks,
+                "intraday_picks": intra_picks,
+                "short_picks": [],
+                "overnight_return": r_on,
+                "intraday_return": r_intra,
+                "gross_return": compound_ret + (cost if (on_picks or intra_picks) else 0.0),
+                "net_return": compound_ret,
+                "pnl": pnl,
+                "equity": equity,
+                "is_pending": False,
+            }
+        )
+        equity_curve.append({"date": d_str, "equity": equity})
+
+    settled_logs = [log for log in trade_logs if not log["is_pending"]]
+    returns = np.array([log["net_return"] for log in settled_logs])
+    active_returns = np.array([log["net_return"] for log in settled_logs if (log["long_picks"] or log.get("intraday_picks"))])
+
+    cum_return = (equity / initial_capital) - 1.0
+    total_days = len(settled_logs)
+    cagr = ((1.0 + cum_return) ** (250.0 / total_days)) - 1.0 if total_days > 0 and (1.0 + cum_return) > 0 else 0.0
+    sharpe = float(np.mean(returns) / np.std(returns) * np.sqrt(250.0)) if np.std(returns) > 1e-9 else 0.0
+
+    eq_series = pd.Series([log["equity"] for log in settled_logs])
+    peak = eq_series.cummax()
+    dd = (peak - eq_series) / peak
+    max_dd = float(dd.max()) if not dd.empty else 0.0
+
+    win_rate = float(np.mean(active_returns > 0)) if len(active_returns) > 0 else 0.0
+    gains = [log["pnl"] for log in settled_logs if log["pnl"] > 0]
+    losses = [abs(log["pnl"]) for log in settled_logs if log["pnl"] < 0]
+    profit_factor = (sum(gains) / sum(losses)) if sum(losses) > 0 else (99.0 if sum(gains) > 0 else 1.0)
+    avg_trade_bps = float(np.mean(active_returns) * 10000.0) if len(active_returns) > 0 else 0.0
+
+    metrics = StrategyMetrics(
+        strategy_name="dual_shift_compound",
+        cost_bps=cost * 10000.0,
+        initial_capital=initial_capital,
+        final_equity=equity,
+        cumulative_return=cum_return,
+        cagr=cagr,
+        sharpe_ratio=sharpe,
+        max_drawdown=max_dd,
+        total_days=total_days,
+        active_days=len(active_returns),
+        win_rate=win_rate,
+        profit_factor=profit_factor,
+        avg_trade_bps=avg_trade_bps,
+    )
+
+    return {
+        "metrics": asdict(metrics),
+        "trade_logs": trade_logs,
+        "equity_curve": equity_curve,
+    }
+
+
 def run_full_overnight_portfolio_backtest(
     universe: list[TickerInfo] | None = None,
     features_dir: Path | str = "data/features",
@@ -433,7 +695,13 @@ def run_full_overnight_portfolio_backtest(
     if df.empty or not dates:
         return {"error": "No prediction data found."}
 
-    strategies = ["q5_equal_weight", "elite_top2_long", "long_short_spread"]
+    strategies = [
+        "q5_equal_weight",
+        "elite_top2_long",
+        "long_short_spread",
+        "intraday_top1_long",
+        "dual_shift_compound",
+    ]
     cost_tiers = [
         ("0bps", 0.0),
         ("5bps", 0.0005),
@@ -444,7 +712,8 @@ def run_full_overnight_portfolio_backtest(
     results_by_cost: dict[str, dict[str, Any]] = {k: {} for k, _ in cost_tiers}
 
     for cost_key, cost_val in cost_tiers:
-        for s in strategies:
+        # 1. Overnight standard strategies
+        for s in ["q5_equal_weight", "elite_top2_long", "long_short_spread"]:
             res = simulate_overnight_strategy(
                 df,
                 dates,
@@ -455,11 +724,31 @@ def run_full_overnight_portfolio_backtest(
             )
             results_by_cost[cost_key][s] = res
 
+        # 2. Intraday standalone strategy (09:00 -> 15:30)
+        intra_res = simulate_intraday_strategy(
+            df,
+            dates,
+            strategy_name="intraday_top1_long",
+            cost=cost_val,
+            initial_capital=initial_capital,
+            hurdle_bps=30.0,
+        )
+        results_by_cost[cost_key]["intraday_top1_long"] = intra_res
+
+        # 3. Dual-Shift Compound (2毛作) strategy: Overnight B × Intraday Top 1
+        dual_res = simulate_dual_shift_strategy(
+            overnight_res=results_by_cost[cost_key]["elite_top2_long"],
+            intraday_res=intra_res,
+            cost=cost_val,
+            initial_capital=initial_capital,
+        )
+        results_by_cost[cost_key]["dual_shift_compound"] = dual_res
+
     # 2026 YTD sub-analysis (Standard 20bps operational cost)
     dates_2026 = [d for d in dates if d >= pd.to_datetime("2026-01-01")]
     ytd_2026: dict[str, Any] = {}
     if dates_2026:
-        for s in strategies:
+        for s in ["q5_equal_weight", "elite_top2_long", "long_short_spread"]:
             res_2026 = simulate_overnight_strategy(
                 df,
                 dates_2026,
@@ -469,6 +758,24 @@ def run_full_overnight_portfolio_backtest(
                 max_position_weight=0.50,
             )
             ytd_2026[s] = res_2026["metrics"]
+
+        intra_2026 = simulate_intraday_strategy(
+            df,
+            dates_2026,
+            strategy_name="intraday_top1_long",
+            cost=0.0020,
+            initial_capital=initial_capital,
+            hurdle_bps=30.0,
+        )
+        ytd_2026["intraday_top1_long"] = intra_2026["metrics"]
+
+        dual_2026 = simulate_dual_shift_strategy(
+            overnight_res=simulate_overnight_strategy(df, dates_2026, "elite_top2_long", cost=0.0020, initial_capital=initial_capital, max_position_weight=0.50),
+            intraday_res=intra_2026,
+            cost=0.0020,
+            initial_capital=initial_capital,
+        )
+        ytd_2026["dual_shift_compound"] = dual_2026["metrics"]
 
     # Ticker contribution analysis (Strategy B, 2026 YTD at standard 20bps cost)
     ticker_contrib: list[dict[str, Any]] = []
@@ -512,8 +819,9 @@ def run_full_overnight_portfolio_backtest(
         "date": latest_date_str,
         "strategies": {
             s: {
-                "long_picks": results_by_cost["20bps"][s]["trade_logs"][-1]["long_picks"],
-                "short_picks": results_by_cost["20bps"][s]["trade_logs"][-1]["short_picks"],
+                "long_picks": results_by_cost["20bps"][s]["trade_logs"][-1].get("long_picks", []),
+                "intraday_picks": results_by_cost["20bps"][s]["trade_logs"][-1].get("intraday_picks", []),
+                "short_picks": results_by_cost["20bps"][s]["trade_logs"][-1].get("short_picks", []),
                 "equity": results_by_cost["20bps"][s]["metrics"]["final_equity"],
             }
             for s in strategies
@@ -569,24 +877,27 @@ def export_portfolio_simulation_reports(
     ]
 
     strat_labels = {
-        "q5_equal_weight": "Strategy A: Q5 均等配分 (最大5銘柄)",
-        "elite_top2_long": "Strategy B: 精鋭集中 (AUC>=0.58 上位2銘柄)",
+        "q5_equal_weight": "Strategy A: Q5 均等配分 (Overnight 最大5銘柄)",
+        "elite_top2_long": "Strategy B: Overnight 精鋭集中 (AUC>=0.50, Q5, Execution Guard)",
         "long_short_spread": "Strategy C: Long/Short スプレッド (B Long + Q1 Short)",
+        "intraday_top1_long": "Strategy D: Intraday (Open-to-Close) 単体 (寄前確定・高確信度厳選)",
+        "dual_shift_compound": "Strategy E: 🚀 Overnight × Intraday 2毛作 (Dual-Shift Compound) ファンド",
     }
 
     for s_key, s_label in strat_labels.items():
-        m = res_20[s_key]["metrics"]
-        lines.append(
-            f"| **{s_label}** | **{m['final_equity']:,.0f} 円** | **{m['cumulative_return']:+.1%}** | "
-            f"{m['cagr']:+.1%} | **{m['sharpe_ratio']:.2f}** | {m['max_drawdown']:.1%} | "
-            f"{m['win_rate']:.1%} | {m['profit_factor']:.2f} | {m['active_days']}日 |"
-        )
+        if s_key in res_20:
+            m = res_20[s_key]["metrics"]
+            lines.append(
+                f"| **{s_label}** | **{m['final_equity']:,.0f} 円** | **{m['cumulative_return']:+.1%}** | "
+                f"{m['cagr']:+.1%} | **{m['sharpe_ratio']:.2f}** | {m['max_drawdown']:.1%} | "
+                f"{m['win_rate']:.1%} | {m['profit_factor']:.2f} | {m['active_days']}日 |"
+            )
 
     lines.extend([
         "",
-        "### コスト感度分析 (往復コスト別 Strategy B 精鋭集中の推移)",
+        "### コスト感度分析 (往復コスト別 2毛作 Dual-Shift Compound vs Overnight 単体)",
         "",
-        "| コスト水準 | 最終資産額 (円) | 累積リターン | Sharpe | 最大DD | 日次勝率 | 判定 |",
+        "| コスト水準 | 2毛作ファンド最終資産 | 2毛作累積 | 2毛作Sharpe | 2毛作PF | Overnight単体資産 | 判定 |",
         "|:---:|:---:|:---:|:---:|:---:|:---:|:---|",
     ])
     cost_display = [
@@ -598,11 +909,13 @@ def export_portfolio_simulation_reports(
     ]
     for label, k in cost_display:
         if k in simulation_data["results_by_cost"]:
-            m = simulation_data["results_by_cost"][k]["elite_top2_long"]["metrics"]
-            status = "✅ プラス期待値" if m["final_equity"] >= 1_000_000 else "⚠️ コスト負け"
+            m_dual = simulation_data["results_by_cost"][k].get("dual_shift_compound", {}).get("metrics", {})
+            m_on = simulation_data["results_by_cost"][k].get("elite_top2_long", {}).get("metrics", {})
+            status = "✅ プラス期待値" if m_dual.get("final_equity", 0) >= 1_000_000 else "⚠️ コスト負け"
             lines.append(
-                f"| {label} | **{m['final_equity']:,.0f} 円** | **{m['cumulative_return']:+.1%}** | "
-                f"{m['sharpe_ratio']:.2f} | {m['max_drawdown']:.1%} | {m['win_rate']:.1%} | {status} |"
+                f"| {label} | **{m_dual.get('final_equity', 0):,.0f} 円** | **{m_dual.get('cumulative_return', 0):+.1%}** | "
+                f"{m_dual.get('sharpe_ratio', 0):.2f} | {m_dual.get('profit_factor', 0):.2f} | "
+                f"{m_on.get('final_equity', 0):,.0f} 円 | {status} |"
             )
 
     lines.extend([

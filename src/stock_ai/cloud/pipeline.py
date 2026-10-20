@@ -37,6 +37,11 @@ from stock_ai.data.yfinance_provider import fetch_daily_ohlcv
 from stock_ai.events.earnings_guard import check_earnings_risk
 from stock_ai.external.market_data import download_external_market_data_report
 from stock_ai.features.overnight import check_jumping_catch_risk
+from stock_ai.models.intraday import (
+    INTRADAY_ARTIFACT_FILENAME,
+    predict_intraday_for_ticker,
+    train_pooled_cross_sectional_intraday_model,
+)
 from stock_ai.models.overnight import (
     OVERNIGHT_ARTIFACT_FILENAME,
     POOLED_OVERNIGHT_ARTIFACT_FILENAME,
@@ -246,6 +251,16 @@ def run_cloud_daily_pipeline(
         except Exception as exc:
             print(f"WARN: Failed self-healing pooled overnight training: {exc}")
 
+    # Check Pooled Cross-Sectional Intraday (07:30 JST) model self-healing
+    intraday_model_file = settings.paths.model_dir / INTRADAY_ARTIFACT_FILENAME
+    if not intraday_model_file.exists() or force_train:
+        print("Self-Healing: Training missing 07:30 JST Pre-Market Intraday LightGBM model...")
+        try:
+            train_pooled_cross_sectional_intraday_model(universe=universe)
+            trained_count += 1
+        except Exception as exc:
+            print(f"WARN: Failed self-healing intraday training: {exc}")
+
     step_results["models_self_healed"] = trained_count
 
     # -------------------------------------------------------------
@@ -316,6 +331,13 @@ def run_cloud_daily_pipeline(
                         except Exception as e_cs:
                             logger.debug("Failed computing p_cs for %s: %s", code, e_cs)
 
+                # Compute 07:30 JST Pre-Market Intraday prediction if available
+                intraday_pred = predict_intraday_for_ticker(code, settings)
+                p_intraday_cs = intraday_pred.get("p_intraday_cs") if intraday_pred else None
+                pred_intraday_ret = intraday_pred.get("pred_intraday_return") if intraday_pred else None
+                intraday_quantile = intraday_pred.get("quantile") if intraday_pred else None
+                intraday_label = intraday_pred.get("label") if intraday_pred else None
+
                 e_risk, e_date = check_earnings_risk(code, ref_date=p_date)
                 scanner_rows.append({
                     "ticker": code,
@@ -325,6 +347,10 @@ def run_cloud_daily_pipeline(
                     "close": raw_close,
                     "probability_up": p_up,
                     "p_cs": p_cs,
+                    "p_intraday_cs": p_intraday_cs,
+                    "pred_intraday_return": pred_intraday_ret,
+                    "intraday_quantile": intraday_quantile,
+                    "intraday_label": intraday_label,
                     "direction": "Up ⬆️" if p_up >= 0.5 else "Down ⬇️",
                     "q_band": q_band,
                     "quantile": f"{q_band} ({q_label})" if q_label else q_band,
@@ -397,21 +423,33 @@ def run_cloud_daily_pipeline(
             output_md_path="reports/autonomous/overnight_portfolio_simulation_report.md",
         )
         if "results_by_cost" in sim_data:
-            best_s = (
-                sim_data["results_by_cost"].get("20bps", {}).get("elite_top2_long")
-                or sim_data["results_by_cost"].get("5bps", {}).get("elite_top2_long")
-                or {}
-            )
+            res_20 = sim_data["results_by_cost"].get("20bps") or sim_data["results_by_cost"].get("5bps") or {}
+            best_s = res_20.get("elite_top2_long", {})
+            dual_s = res_20.get("dual_shift_compound", {})
             m = best_s.get("metrics", {})
+            m_dual = dual_s.get("metrics", {})
             pending_b = sim_data.get("latest_pending", {}).get("strategies", {}).get("elite_top2_long", {})
+            pending_dual = sim_data.get("latest_pending", {}).get("strategies", {}).get("dual_shift_compound", {})
             picks = pending_b.get("long_picks", [])
+            intra_picks = pending_dual.get("intraday_picks", [])
             paper_metrics = {
-                "final_equity": m.get("final_equity", 1_000_000.0),
-                "cumulative_return": m.get("cumulative_return", 0.0),
-                "win_rate": m.get("win_rate", 0.0),
-                "sharpe_ratio": m.get("sharpe_ratio", 0.0),
-                "max_drawdown": m.get("max_drawdown", 0.0),
+                "final_equity": m_dual.get("final_equity", m.get("final_equity", 1_000_000.0)),
+                "cumulative_return": m_dual.get("cumulative_return", m.get("cumulative_return", 0.0)),
+                "overnight_equity": m.get("final_equity", 1_000_000.0),
+                "overnight_return": m.get("cumulative_return", 0.0),
+                "overnight_sharpe": m.get("sharpe_ratio", 0.0),
+                "overnight_max_dd": m.get("max_drawdown", 0.0),
+                "win_rate": m_dual.get("win_rate", m.get("win_rate", 0.0)),
+                "sharpe_ratio": m_dual.get("sharpe_ratio", m.get("sharpe_ratio", 0.0)),
+                "max_drawdown": m_dual.get("max_drawdown", m.get("max_drawdown", 0.0)),
+                "profit_factor": m_dual.get("profit_factor", m.get("profit_factor", 1.0)),
                 "next_positions": ", ".join(picks) if picks else "本日エントリーなし (キャッシュ待機判定)",
+                "dual_shift_positions": (
+                    f"🌙 夜間Overnight: {', '.join(picks) if picks else 'キャッシュ待機'} | "
+                    f"☀️ 日中Intraday: {', '.join(intra_picks) if intra_picks else 'キャッシュ待機'}"
+                ),
+                "next_picks": picks,
+                "next_intraday_picks": intra_picks,
             }
         print("Paper trader portfolio simulation successfully updated.")
         step_results["paper_trader"] = "SUCCESS"

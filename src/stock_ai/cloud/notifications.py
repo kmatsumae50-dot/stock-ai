@@ -161,21 +161,34 @@ def get_current_pipeline_summary(
     if p_file.exists():
         try:
             p_data = json.loads(p_file.read_text(encoding="utf-8"))
-            best_s = (
-                p_data.get("results_by_cost", {}).get("20bps", {}).get("elite_top2_long")
-                or p_data.get("results_by_cost", {}).get("5bps", {}).get("elite_top2_long")
-                or {}
-            )
+            res_20 = p_data.get("results_by_cost", {}).get("20bps") or p_data.get("results_by_cost", {}).get("5bps") or {}
+            best_s = res_20.get("elite_top2_long", {})
+            dual_s = res_20.get("dual_shift_compound", {})
             m = best_s.get("metrics", {})
+            m_dual = dual_s.get("metrics", {})
             pending_b = p_data.get("latest_pending", {}).get("strategies", {}).get("elite_top2_long", {})
+            pending_dual = p_data.get("latest_pending", {}).get("strategies", {}).get("dual_shift_compound", {})
             picks = pending_b.get("long_picks", [])
+            intra_picks = pending_dual.get("intraday_picks", [])
+            next_pos_str = ", ".join(picks) if picks else "本日エントリーなし (キャッシュ待機判定)"
             paper_metrics = {
-                "final_equity": m.get("final_equity", 1_000_000.0),
-                "cumulative_return": m.get("cumulative_return", 0.0),
-                "win_rate": m.get("win_rate", 0.0),
-                "sharpe_ratio": m.get("sharpe_ratio", 0.0),
-                "max_drawdown": m.get("max_drawdown", 0.0),
-                "next_positions": ", ".join(picks) if picks else "本日エントリーなし (キャッシュ待機判定)",
+                "final_equity": m_dual.get("final_equity", m.get("final_equity", 1_000_000.0)),
+                "cumulative_return": m_dual.get("cumulative_return", m.get("cumulative_return", 0.0)),
+                "overnight_equity": m.get("final_equity", 1_000_000.0),
+                "overnight_return": m.get("cumulative_return", 0.0),
+                "overnight_sharpe": m.get("sharpe_ratio", 0.0),
+                "overnight_max_dd": m.get("max_drawdown", 0.0),
+                "win_rate": m_dual.get("win_rate", m.get("win_rate", 0.0)),
+                "sharpe_ratio": m_dual.get("sharpe_ratio", m.get("sharpe_ratio", 0.0)),
+                "max_drawdown": m_dual.get("max_drawdown", m.get("max_drawdown", 0.0)),
+                "profit_factor": m_dual.get("profit_factor", m.get("profit_factor", 1.0)),
+                "next_positions": next_pos_str,
+                "dual_shift_positions": (
+                    f"🌙 夜間Overnight: {', '.join(picks) if picks else 'キャッシュ待機'} | "
+                    f"☀️ 日中Intraday: {', '.join(intra_picks) if intra_picks else 'キャッシュ待機'}"
+                ),
+                "next_picks": picks,
+                "next_intraday_picks": intra_picks,
             }
         except Exception:
             pass
@@ -319,14 +332,14 @@ def build_multi_agent_webhook_payloads(summary_data: dict[str, Any]) -> list[dic
     chief_speech = (
         f"🎩 **チーフ・ファンドマネージャー AI**\n"
         f"「皆さん、本日もお疲れ様です。{date_str} の作戦ブリーフィングを開始します。\n\n"
-        f"当ファンド（Overnight Paper Trader）の現在の総資産は **{eq:,.0f} 円**（通算リターン: **{ret:+.1%}** / 勝率: **{win:.1%}** / Sharpe: **{sh:.2f}** / MaxDD: **{max_dd:.1%}**）で推移しています。\n\n"
+        f"当ファンド（Overnight × Intraday 2毛作 Compound Fund）の現在の総資産は **{eq:,.0f} 円**（通算リターン: **{ret:+.1%}** / 勝率: **{win:.1%}** / Sharpe: **{sh:.2f}** / MaxDD: **{max_dd:.1%}**）で力強く推移しています。\n\n"
         f"{entry_decision}\n\n"
-        f"それではスナイパー、短期Overnightスキャンの精査結果を報告してください。」"
+        f"それではスナイパー、短期Overnight＆日中寄前スキャンの精査結果を報告してください。」"
     )
 
     embed_chief = {
-        "title": f"💼 仮想100万円ファンド 本日の運用状況 ({date_str})",
-        "description": "規律あるリスク管理に基づく Overnight Paper Trader の運用推移",
+        "title": f"💼 仮想100万円ファンド (2毛作) 本日の運用状況 ({date_str})",
+        "description": "Overnight (夜) × Intraday (昼) 2毛作 Compound Fund 運用推移",
         "color": 3066993,  # 0x2ecc71 (Emerald Green)
         "fields": [
             {
@@ -376,10 +389,17 @@ def build_multi_agent_webhook_payloads(summary_data: dict[str, Any]) -> list[dic
             e_flag = "⚠️決算警戒" if i.get("earnings_risk") else "✅通常"
             jc_flag = " | ⚠️高値掴み警戒" if i.get("jumping_catch_risk") else ""
             cs_score = i.get("p_cs")
-            cs_val_str = f" | CS相対: **{cs_score:.1%}**" if cs_score is not None else ""
+            cs_val_str = f" [CS: {cs_score:.1%}]" if cs_score is not None else ""
+            p_intra = i.get("p_intraday_cs")
+            pred_ret = i.get("pred_intraday_return")
+            intra_str = ""
+            if p_intra is not None:
+                ret_bps = (pred_ret or 0.0) * 10000.0
+                intra_str = f" | ☀️日中: **{p_intra:.1%}** ({ret_bps:+.0f}bps)"
+
             overnight_fields.append({
                 "name": f"{idx}. `{ticker}` {name} ({sector})",
-                "value": f"上昇確率: **{p_up:.1%}** ({q_band}){cs_val_str} | 決算: **{e_flag}**{jc_flag}",
+                "value": f"🌙夜間: **{p_up:.1%}** ({q_band}){cs_val_str}{intra_str} | 決算: **{e_flag}**{jc_flag}",
                 "inline": False,
             })
 

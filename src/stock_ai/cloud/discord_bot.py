@@ -566,6 +566,29 @@ def analyze_single_ticker(query: str) -> dict[str, Any] | None:
 
         earnings_risk, earnings_date = check_earnings_risk(ticker)
 
+    # 3b. Morning 07:30 JST Intraday analytics
+    p_intraday_cs: float | None = None
+    pred_intraday_ret: float | None = None
+    intraday_q: str | None = None
+    intraday_label: str | None = None
+
+    if cached_overnight and "p_intraday_cs" in cached_overnight and cached_overnight.get("p_intraday_cs") is not None:
+        p_intraday_cs = cached_overnight.get("p_intraday_cs")
+        pred_intraday_ret = cached_overnight.get("pred_intraday_return")
+        intraday_q = cached_overnight.get("intraday_quantile")
+        intraday_label = cached_overnight.get("intraday_label")
+    else:
+        try:
+            from stock_ai.models.intraday import predict_intraday_for_ticker
+            i_info = predict_intraday_for_ticker(ticker)
+            if i_info:
+                p_intraday_cs = i_info.get("p_intraday_cs")
+                pred_intraday_ret = i_info.get("pred_intraday_return")
+                intraday_q = i_info.get("quantile")
+                intraday_label = i_info.get("label")
+        except Exception:
+            pass
+
     # 4. Jumping Catch Execution Guard Verification
     jumping_catch_risk = False
     jumping_catch_reason = ""
@@ -617,21 +640,26 @@ def analyze_single_ticker(query: str) -> dict[str, Any] | None:
     if p_cs is not None and cs_rank is not None:
         cs_desc = f"\n全銘柄相対スコア（Cross-Sectional）: **{p_cs:.1%}**（順位: **{cs_rank}位**）"
 
+    intra_comment = ""
+    if p_intraday_cs is not None:
+        ret_bps_val = (pred_intraday_ret or 0.0) * 10000.0
+        intra_comment = f"\n☀️ **日中(09:00寄付→15:30引け)判定**: 陽線・アウトパフォーム確率 **{p_intraday_cs:.1%}** ({intraday_q or 'Q3'}：{intraday_label or '中立'} / 期待値: **{ret_bps_val:+.0f} bps**)"
+
     if jumping_catch_risk:
         sniper_comment = (
             f"⚠️ **【高値掴み警戒（過熱見送り）】** {jumping_catch_reason}\n"
             f"明朝寄り付き上昇確率は **{p_up:.1%}**（{q_band}）ですが、大引け時点の過熱度/上ヒゲ失速により翌朝ギャップダウンの罠リスクが極めて高くなっています。クオンツ執行フィルターによりエントリー対象から除外（見送り）判定です！{cs_desc}\n"
-            f"決算チェック: **{e_flag_str}**。"
+            f"決算チェック: **{e_flag_str}**。{intra_comment}"
         )
     elif p_up >= 0.52:
         sniper_comment = (
             f"明朝寄り付き上昇確率 **{p_up:.1%}**（{q_band}）。買い優位のシグナルが点灯しています！{cs_desc}\n"
-            f"決算チェック: **{e_flag_str}**。"
+            f"決算チェック: **{e_flag_str}**。{intra_comment}"
         )
     else:
         sniper_comment = (
             f"明朝寄り付き上昇確率 **{p_up:.1%}**（{q_band}）。寄り付きギャップの上値追いは慎重に。{cs_desc}\n"
-            f"決算チェック: **{e_flag_str}**。"
+            f"決算チェック: **{e_flag_str}**。{intra_comment}"
         )
 
     # --- Persona 3: Value Hunter ---
@@ -718,6 +746,10 @@ def analyze_single_ticker(query: str) -> dict[str, Any] | None:
         "cs_rank_pct": cs_rank_pct,
         "q_band": q_band,
         "q_label": q_label,
+        "p_intraday_cs": p_intraday_cs,
+        "pred_intraday_return": pred_intraday_ret,
+        "intraday_quantile": intraday_q,
+        "intraday_label": intraday_label,
         "earnings_risk": earnings_risk,
         "earnings_date": earnings_date,
         "jumping_catch_risk": jumping_catch_risk,
@@ -1068,6 +1100,15 @@ def build_single_ticker_dialogue_payloads(
         {"name": "💎 割安反転スコア", "value": f"**{score:.1f}点** ({status})", "inline": True},
         {"name": "📈 RSI(14) / PBR", "value": f"**{rsi:.1f}** / **{pbr_s}**", "inline": True},
     ]
+    if analysis.get("p_intraday_cs") is not None:
+        p_intra = analysis["p_intraday_cs"]
+        ret_bps = (analysis.get("pred_intraday_return") or 0.0) * 10000.0
+        intra_q = analysis.get("intraday_quantile") or "Q3"
+        chief_fields.append({
+            "name": "☀️ 日中Intraday予測",
+            "value": f"**{p_intra:.1%}** ({intra_q} / **{ret_bps:+.0f} bps**)",
+            "inline": True,
+        })
     if analysis.get("jumping_catch_risk"):
         chief_fields.append({
             "name": "🛡️ 執行ガード判定",
