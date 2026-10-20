@@ -74,6 +74,7 @@ models/*.joblib
 # Temporary files and accidental output
 tmp/
 temp/
+scratch/
 *.tmp
 Unknown
 Unknown/

@@ -18,6 +18,7 @@ class ExternalMarketSpec:
     name: str
     group: str = "market"
     fallback_symbols: tuple[str, ...] = ()
+    is_foreign: bool = False
 
 
 @dataclass(frozen=True)
@@ -66,20 +67,21 @@ class ExternalMarketContext:
 
 
 CORE_MARKET_SPECS = (
-    ExternalMarketSpec(symbol="USDJPY=X", prefix="usdjpy", name="USDJPY"),
-    ExternalMarketSpec(symbol="^N225", prefix="n225", name="Nikkei 225"),
+    ExternalMarketSpec(symbol="USDJPY=X", prefix="usdjpy", name="USDJPY", is_foreign=True),
+    ExternalMarketSpec(symbol="^N225", prefix="n225", name="Nikkei 225", is_foreign=False),
     ExternalMarketSpec(
         symbol="^TOPX",
         prefix="topix",
         name="TOPIX",
         fallback_symbols=("^TPX", "1306.T"),
+        is_foreign=False,
     ),
 )
 AUTO_SECTOR_SPECS = (
-    ExternalMarketSpec(symbol="7267.T", prefix="honda", name="Honda", group="auto_sector"),
-    ExternalMarketSpec(symbol="7201.T", prefix="nissan", name="Nissan", group="auto_sector"),
-    ExternalMarketSpec(symbol="TSLA", prefix="tesla", name="Tesla", group="auto_sector"),
-    ExternalMarketSpec(symbol="1211.HK", prefix="byd", name="BYD", group="auto_sector"),
+    ExternalMarketSpec(symbol="7267.T", prefix="honda", name="Honda", group="auto_sector", is_foreign=False),
+    ExternalMarketSpec(symbol="7201.T", prefix="nissan", name="Nissan", group="auto_sector", is_foreign=False),
+    ExternalMarketSpec(symbol="TSLA", prefix="tesla", name="Tesla", group="auto_sector", is_foreign=True),
+    ExternalMarketSpec(symbol="1211.HK", prefix="byd", name="BYD", group="auto_sector", is_foreign=True),
 )
 DEFAULT_EXTERNAL_MARKETS = (*CORE_MARKET_SPECS, *AUTO_SECTOR_SPECS)
 EXTERNAL_DATA_SUBDIR = "external"
@@ -197,12 +199,25 @@ def _download_external_spec(
     )
 
 
+def is_foreign_market_spec(spec: ExternalMarketSpec) -> bool:
+    """Check if market spec represents non-Tokyo hours requiring shift(1) at 15:30 close."""
+    if getattr(spec, "is_foreign", False):
+        return True
+    return not (spec.symbol.endswith(".T") or spec.symbol in ("^N225", "^TOPX", "^TPX", "1306.T"))
+
+
 def add_external_market_features(
     stock_data: pd.DataFrame,
     raw_data_dir: str | Path,
     specs: tuple[ExternalMarketSpec, ...] | None = None,
+    lag_foreign: bool = True,
 ) -> pd.DataFrame:
-    """Merge available external market features into a stock feature frame."""
+    """Merge available external market features into a stock feature frame.
+
+    When lag_foreign=True (the default for 15:30 JST close prediction), all overseas
+    series (TSLA, BYD, USDJPY) are shifted by 1 trading session (shift(1)) so that
+    uncompleted overnight moves cannot leak into the 15:30 close features.
+    """
     feature_frames: list[pd.DataFrame] = []
     feature_frames_by_prefix: dict[str, pd.DataFrame] = {}
     for spec in specs or DEFAULT_EXTERNAL_MARKETS:
@@ -210,7 +225,7 @@ def add_external_market_features(
         if not path.exists():
             continue
         raw = read_parquet(path)
-        feature_frame = build_external_market_feature_frame(raw, spec)
+        feature_frame = build_external_market_feature_frame(raw, spec, lag_foreign=lag_foreign)
         feature_frames.append(feature_frame)
         feature_frames_by_prefix[spec.prefix] = feature_frame
 
@@ -224,8 +239,13 @@ def add_external_market_features(
 def build_external_market_feature_frame(
     data: pd.DataFrame,
     spec: ExternalMarketSpec,
+    lag_foreign: bool = True,
 ) -> pd.DataFrame:
-    """Create past-and-current-day external features for one market series."""
+    """Create past-and-current-day external features for one market series.
+
+    If lag_foreign is True and spec is foreign/US/overnight, the external features
+    are shifted by 1 trading session (shift(1)) to prevent Look-Ahead Bias at 15:30 JST.
+    """
     if data.empty:
         return pd.DataFrame(columns=["date"])
 
@@ -255,7 +275,74 @@ def build_external_market_feature_frame(
     available = ["date", *[column for column in columns if column in technical.columns]]
     result = technical[available].rename(columns=columns)
     result["date"] = pd.to_datetime(result["date"], errors="coerce")
-    return result.sort_values("date").reset_index(drop=True)
+    result = result.sort_values("date").reset_index(drop=True)
+
+    if lag_foreign and is_foreign_market_spec(spec):
+        feature_cols = [c for c in result.columns if c != "date"]
+        result[feature_cols] = result[feature_cols].shift(1)
+
+    return result
+
+
+def add_premarket_overnight_gap_features(
+    stock_data: pd.DataFrame,
+    raw_data_dir: str | Path,
+    specs: tuple[ExternalMarketSpec, ...] | None = None,
+) -> pd.DataFrame:
+    """Build leak-free 07:30 JST pre-market gap and intraday reversal features.
+
+    At 07:30 JST, the previous night's US market (dated t-1 relative to Tokyo date t)
+    is completely finalized (closed at 05:00 JST).
+    This function computes the gap shock, expected opening gap, and intraday
+    reversal / momentum indicators for the upcoming 09:00 Open to 15:30 Close session.
+    """
+    result = stock_data.copy()
+    if result.empty or "date" not in result.columns:
+        return result
+
+    result["date"] = pd.to_datetime(result["date"], errors="coerce")
+    result = result.sort_values("date").reset_index(drop=True)
+
+    overnight_frames: list[pd.DataFrame] = []
+    for spec in specs or DEFAULT_EXTERNAL_MARKETS:
+        path = external_data_path(raw_data_dir, spec)
+        if not path.exists():
+            continue
+        raw = read_parquet(path)
+        feat = build_external_market_feature_frame(raw, spec, lag_foreign=False)
+        pre_cols = {c: f"premarket_{c}" for c in feat.columns if c != "date"}
+        overnight_frames.append(feat.rename(columns=pre_cols))
+
+    if overnight_frames:
+        result = merge_external_feature_frames(result, overnight_frames)
+
+    us_lead = (
+        result["premarket_tesla_return_1d"]
+        if "premarket_tesla_return_1d" in result.columns
+        else pd.Series(0.0, index=result.index)
+    )
+    fx_lead = (
+        result["premarket_usdjpy_return_1d"]
+        if "premarket_usdjpy_return_1d" in result.columns
+        else pd.Series(0.0, index=result.index)
+    )
+    dom_ret = result["return_1d"] if "return_1d" in result.columns else pd.Series(0.0, index=result.index)
+
+    result["premarket_overnight_us_shock"] = us_lead.fillna(0.0)
+    result["premarket_overnight_fx_shock"] = fx_lead.fillna(0.0)
+    result["premarket_expected_gap"] = 0.60 * us_lead.fillna(0.0) + 0.40 * fx_lead.fillna(0.0)
+    result["premarket_gap_divergence"] = result["premarket_expected_gap"] - dom_ret.fillna(0.0)
+    result["intraday_gap_reversal_pressure"] = np.where(
+        result["premarket_expected_gap"].abs() > 0.015,
+        -np.sign(result["premarket_expected_gap"]),
+        0.0,
+    )
+
+    if "open" in result.columns and "close" in result.columns:
+        result["intraday_open_to_close_return"] = (result["close"] - result["open"]) / (result["open"] + 1e-8)
+        result["target_open_to_close_binary"] = (result["close"] > result["open"]).astype(int)
+
+    return result
 
 
 def build_auto_sector_feature_frame(

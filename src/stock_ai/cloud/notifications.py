@@ -155,7 +155,11 @@ def get_current_pipeline_summary(
     if p_file.exists():
         try:
             p_data = json.loads(p_file.read_text(encoding="utf-8"))
-            best_s = p_data.get("results_by_cost", {}).get("5bps", {}).get("elite_top2_long", {})
+            best_s = (
+                p_data.get("results_by_cost", {}).get("20bps", {}).get("elite_top2_long")
+                or p_data.get("results_by_cost", {}).get("5bps", {}).get("elite_top2_long")
+                or {}
+            )
             m = best_s.get("metrics", {})
             pending_b = p_data.get("latest_pending", {}).get("strategies", {}).get("elite_top2_long", {})
             picks = pending_b.get("long_picks", [])
@@ -510,7 +514,7 @@ def build_fund_report_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
 
     embed = {
         "title": f"💰 仮想100万円ファンド ポートフォリオ運用詳細 ({date_str})",
-        "description": "5bps摩擦コスト反映済 Overnight エリートTop2ロング戦略シミュレーション",
+        "description": "実運用水準20bps摩擦コスト反映済 Overnight エリートTop2ロング戦略シミュレーション（1銘柄上限50%・リークゼロ）",
         "color": 3066993,  # Emerald Green
         "fields": [
             {"name": "💵 総資産", "value": f"**{eq:,.0f} 円**", "inline": True},

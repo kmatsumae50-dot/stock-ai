@@ -1474,7 +1474,9 @@ def main() -> None:
                 args.data_freshness_status or freshness.get("freshness_status") or "UNKNOWN"
             ),
             stale_at_run_time=bool(
-                args.stale_at_run_time or freshness.get("stale_at_run_time")
+                args.stale_at_run_time
+                if args.data_freshness_status is not None
+                else (args.stale_at_run_time or freshness.get("stale_at_run_time"))
             ),
             latest_raw_date=freshness.get("latest_raw_date"),
             latest_feature_date=freshness.get("latest_feature_date"),
@@ -2577,6 +2579,9 @@ def _build_features_for_ticker(ticker: str, settings) -> Path:
         bollinger_window=settings.features.bollinger_window,
     )
     features = add_external_market_features(features, settings.paths.raw_data_dir)
+    from stock_ai.features.overnight import add_overnight_features
+
+    features = add_overnight_features(features)
     features = add_earnings_event_features(
         features,
         default_events_dir(settings.paths.raw_data_dir.parent),
@@ -2642,13 +2647,14 @@ def train_overnight_model_for_ticker(
         feature_columns,
         target_column=TARGET_NEXT_OPEN_BINARY,
     )
-    test_sub = test_data.dropna(subset=feature_columns + [TARGET_NEXT_OPEN_BINARY])
-    test_sub = test_sub[test_sub[TARGET_NEXT_OPEN_BINARY].isin([0, 1])]
-    if not test_sub.empty:
-        test_probs = model.predict_proba(test_sub[feature_columns])[:, 1]
+    # Calibrate quantile cutoffs strictly on the historical validation window (In-sample Selection Bias prevention)
+    valid_sub = valid_data.dropna(subset=feature_columns + [TARGET_NEXT_OPEN_BINARY])
+    valid_sub = valid_sub[valid_sub[TARGET_NEXT_OPEN_BINARY].isin([0, 1])]
+    if not valid_sub.empty:
+        valid_probs = model.predict_proba(valid_sub[feature_columns])[:, 1]
         quantile_cutoffs = compute_empirical_quantile_cutoffs(
-            test_sub[TARGET_NEXT_OPEN_BINARY].to_numpy(),
-            test_probs,
+            valid_sub[TARGET_NEXT_OPEN_BINARY].to_numpy(),
+            valid_probs,
         )
     else:
         quantile_cutoffs = OVERNIGHT_QUANTILE_CUTOFFS

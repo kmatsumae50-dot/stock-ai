@@ -118,3 +118,29 @@ def test_specs_for_symbols_contains_default_auto_sector_symbols():
     prefixes = {spec.prefix for spec in specs_for_symbols(None)}
 
     assert {"honda", "nissan", "tesla", "byd"}.issubset(prefixes)
+
+
+def test_build_external_market_feature_frame_strictly_lags_foreign_markets():
+    # US series (TSLA) must be shifted by 1 to prevent lookahead leak at 15:30 JST close
+    tesla_spec = ExternalMarketSpec(symbol="TSLA", prefix="tesla", name="Tesla", is_foreign=True)
+    raw = _market_frame(10)
+    raw["close"] = [100.0 + i * 2.0 for i in range(10)]
+
+    unlagged = build_external_market_feature_frame(raw, tesla_spec, lag_foreign=False)
+    lagged = build_external_market_feature_frame(raw, tesla_spec, lag_foreign=True)
+
+    # In unlagged, row 1 has return between row 0 and row 1
+    # In lagged (shift 1), row 1 is NaN, and row 2 has the return of row 1
+    assert not pd.isna(unlagged.loc[1, "tesla_return_1d"])
+    assert pd.isna(lagged.loc[1, "tesla_return_1d"])
+    assert lagged.loc[2, "tesla_return_1d"] == unlagged.loc[1, "tesla_return_1d"]
+
+
+def test_build_external_market_feature_frame_does_not_lag_domestic_japanese_markets():
+    # Japanese domestic (closes at 15:30 JST) is not lagged
+    n225_spec = ExternalMarketSpec(symbol="^N225", prefix="n225", name="Nikkei 225", is_foreign=False)
+    raw = _market_frame(10)
+
+    result = build_external_market_feature_frame(raw, n225_spec, lag_foreign=True)
+    assert not pd.isna(result.loc[1, "n225_return_1d"])
+

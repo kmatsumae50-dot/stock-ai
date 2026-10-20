@@ -177,7 +177,9 @@ def train_lightgbm_overnight_classifier(
         valid_data = add_next_open_binary_target(valid_data)
 
     if feature_columns is None:
-        feature_columns = select_feature_columns(train_data, target_column=TARGET_NEXT_OPEN_BINARY)
+        from stock_ai.features.overnight import select_overnight_curated_features
+
+        feature_columns = select_overnight_curated_features(train_data)
 
     train_subset = train_data.dropna(subset=feature_columns + [TARGET_NEXT_OPEN_BINARY])
     valid_subset = valid_data.dropna(subset=feature_columns + [TARGET_NEXT_OPEN_BINARY])
@@ -190,8 +192,11 @@ def train_lightgbm_overnight_classifier(
         n_estimators=300,
         learning_rate=0.03,
         num_leaves=31,
-        subsample=0.9,
-        colsample_bytree=0.9,
+        min_child_samples=30,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        reg_alpha=0.1,
+        reg_lambda=1.0,
         random_state=42,
         verbose=-1,
     )

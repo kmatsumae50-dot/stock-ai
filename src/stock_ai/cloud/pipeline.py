@@ -334,8 +334,12 @@ def run_cloud_daily_pipeline(
             output_json_path="reports/autonomous/overnight_portfolio_simulation_results.json",
             output_md_path="reports/autonomous/overnight_portfolio_simulation_report.md",
         )
-        if "results_by_cost" in sim_data and "5bps" in sim_data["results_by_cost"]:
-            best_s = sim_data["results_by_cost"]["5bps"].get("elite_top2_long") or {}
+        if "results_by_cost" in sim_data:
+            best_s = (
+                sim_data["results_by_cost"].get("20bps", {}).get("elite_top2_long")
+                or sim_data["results_by_cost"].get("5bps", {}).get("elite_top2_long")
+                or {}
+            )
             m = best_s.get("metrics", {})
             pending_b = sim_data.get("latest_pending", {}).get("strategies", {}).get("elite_top2_long", {})
             picks = pending_b.get("long_picks", [])

@@ -136,10 +136,11 @@ def simulate_overnight_strategy(
     df: pd.DataFrame,
     dates: list[pd.Timestamp],
     strategy_name: str,
-    cost: float = 0.0005,
+    cost: float = 0.0020,
     initial_capital: float = 1_000_000.0,
+    max_position_weight: float | None = None,
 ) -> dict[str, Any]:
-    """Simulate a given portfolio strategy over the date range."""
+    """Simulate a given portfolio strategy over the date range with realistic costs and position limits."""
     equity = initial_capital
     trade_logs: list[dict[str, Any]] = []
     equity_curve: list[dict[str, Any]] = []
@@ -158,14 +159,13 @@ def simulate_overnight_strategy(
                 long_picks = q5s.head(5)["ticker"].tolist()
 
         elif strategy_name == "elite_top2_long":
-            # AUC >= 0.58 and (Q5 or (Q4 and win_rate >= 0.60)), up to 2, p_up desc
+            # High Conviction Long: Model AUC >= 0.50 (edge over coin flip),
+            # Q5 (top probability quintile) with validation win_rate >= 0.50, up to 2 tickers, p_up desc
             # Earnings Guard: Filter out earnings risk tickers
             eligible = day_slice[
-                (day_slice["auc"] >= 0.58)
-                & (
-                    (day_slice["quantile"] == "Q5")
-                    | ((day_slice["quantile"] == "Q4") & (day_slice["win_rate"] >= 0.60))
-                )
+                (day_slice["auc"] >= 0.50)
+                & (day_slice["quantile"] == "Q5")
+                & (day_slice["win_rate"] >= 0.50)
             ]
             if "earnings_risk" in eligible.columns:
                 eligible = eligible[~eligible["earnings_risk"].fillna(False).astype(bool)]
@@ -176,11 +176,9 @@ def simulate_overnight_strategy(
         elif strategy_name == "long_short_spread":
             # Long: Strategy B with Earnings Guard
             eligible = day_slice[
-                (day_slice["auc"] >= 0.58)
-                & (
-                    (day_slice["quantile"] == "Q5")
-                    | ((day_slice["quantile"] == "Q4") & (day_slice["win_rate"] >= 0.60))
-                )
+                (day_slice["auc"] >= 0.50)
+                & (day_slice["quantile"] == "Q5")
+                & (day_slice["win_rate"] >= 0.50)
             ]
             if "earnings_risk" in eligible.columns:
                 eligible = eligible[~eligible["earnings_risk"].fillna(False).astype(bool)]
@@ -188,8 +186,10 @@ def simulate_overnight_strategy(
             if not elites.empty:
                 long_picks = elites.head(2)["ticker"].tolist()
 
-            # Short: Q1, up to 2, p_up asc
-            q1s = day_slice[day_slice["quantile"] == "Q1"].sort_values("p_up", ascending=True)
+            # Short: Q1 with auc >= 0.50, up to 2, p_up asc
+            q1s = day_slice[
+                (day_slice["auc"] >= 0.50) & (day_slice["quantile"] == "Q1")
+            ].sort_values("p_up", ascending=True)
             if not q1s.empty:
                 short_picks = q1s.head(2)["ticker"].tolist()
 
@@ -213,26 +213,51 @@ def simulate_overnight_strategy(
         for t in long_picks:
             match = day_slice.loc[day_slice["ticker"] == t, "next_open_return"]
             if not match.empty and pd.notna(match.values[0]):
-                long_rets.append(match.values[0])
+                long_rets.append(float(match.values[0]))
 
         short_rets = []
         for t in short_picks:
             match = day_slice.loc[day_slice["ticker"] == t, "next_open_return"]
             if not match.empty and pd.notna(match.values[0]):
-                short_rets.append(match.values[0])
+                short_rets.append(float(match.values[0]))
 
         gross_return = 0.0
         applied_cost = 0.0
 
         if long_rets and short_rets:
-            gross_return = 0.5 * float(np.mean(long_rets)) - 0.5 * float(np.mean(short_rets))
-            applied_cost = cost
+            # Long/Short spread: longs allocated max 50%, shorts allocated max 50%
+            w_long_single = (
+                min(0.50 / len(long_rets), max_position_weight)
+                if max_position_weight is not None
+                else (0.50 / len(long_rets))
+            )
+            w_short_single = (
+                min(0.50 / len(short_rets), max_position_weight)
+                if max_position_weight is not None
+                else (0.50 / len(short_rets))
+            )
+            w_total_long = w_long_single * len(long_rets)
+            w_total_short = w_short_single * len(short_rets)
+            gross_return = (w_total_long * float(np.mean(long_rets))) - (w_total_short * float(np.mean(short_rets)))
+            applied_cost = cost * (w_total_long + w_total_short)
         elif long_rets:
-            gross_return = float(np.mean(long_rets))
-            applied_cost = cost
+            if max_position_weight is not None:
+                pos_w = min(1.0 / len(long_rets), max_position_weight)
+                total_w = pos_w * len(long_rets)
+                gross_return = float(np.sum(np.array(long_rets) * pos_w))
+                applied_cost = cost * total_w
+            else:
+                gross_return = float(np.mean(long_rets))
+                applied_cost = cost
         elif short_rets:
-            gross_return = -float(np.mean(short_rets))
-            applied_cost = cost
+            if max_position_weight is not None:
+                pos_w = min(1.0 / len(short_rets), max_position_weight)
+                total_w = pos_w * len(short_rets)
+                gross_return = -float(np.sum(np.array(short_rets) * pos_w))
+                applied_cost = cost * total_w
+            else:
+                gross_return = -float(np.mean(short_rets))
+                applied_cost = cost
 
         net_return = gross_return - applied_cost if (long_rets or short_rets) else 0.0
         pnl = equity * net_return
@@ -317,9 +342,16 @@ def run_full_overnight_portfolio_backtest(
         return {"error": "No prediction data found."}
 
     strategies = ["q5_equal_weight", "elite_top2_long", "long_short_spread"]
-    results_by_cost: dict[str, dict[str, Any]] = {"0bps": {}, "5bps": {}}
+    cost_tiers = [
+        ("0bps", 0.0),
+        ("5bps", 0.0005),
+        ("10bps", 0.0010),
+        ("20bps", 0.0020),
+        ("30bps", 0.0030),
+    ]
+    results_by_cost: dict[str, dict[str, Any]] = {k: {} for k, _ in cost_tiers}
 
-    for cost_key, cost_val in [("0bps", 0.0), ("5bps", 0.0005)]:
+    for cost_key, cost_val in cost_tiers:
         for s in strategies:
             res = simulate_overnight_strategy(
                 df,
@@ -327,10 +359,11 @@ def run_full_overnight_portfolio_backtest(
                 strategy_name=s,
                 cost=cost_val,
                 initial_capital=initial_capital,
+                max_position_weight=0.50,
             )
             results_by_cost[cost_key][s] = res
 
-    # 2026 YTD sub-analysis
+    # 2026 YTD sub-analysis (Standard 20bps operational cost)
     dates_2026 = [d for d in dates if d >= pd.to_datetime("2026-01-01")]
     ytd_2026: dict[str, Any] = {}
     if dates_2026:
@@ -339,14 +372,15 @@ def run_full_overnight_portfolio_backtest(
                 df,
                 dates_2026,
                 strategy_name=s,
-                cost=0.0005,
+                cost=0.0020,
                 initial_capital=initial_capital,
+                max_position_weight=0.50,
             )
             ytd_2026[s] = res_2026["metrics"]
 
-    # Ticker contribution analysis (Strategy B, 2026 YTD)
+    # Ticker contribution analysis (Strategy B, 2026 YTD at standard 20bps cost)
     ticker_contrib: list[dict[str, Any]] = []
-    strat_b_logs = results_by_cost["5bps"]["elite_top2_long"]["trade_logs"]
+    strat_b_logs = results_by_cost["20bps"]["elite_top2_long"]["trade_logs"]
     pnl_by_ticker: dict[str, float] = {}
     trades_by_ticker: dict[str, int] = {}
     meta_map = {t.code: (t.name, getattr(t, "sector_ja", t.sector)) for t in (universe or load_universe())}
@@ -359,12 +393,12 @@ def run_full_overnight_portfolio_backtest(
             continue
         d = pd.to_datetime(log["date"])
         day_slice = df[df["date"] == d]
-        weight = 1.0 / len(picks)
+        weight = min(1.0 / len(picks), 0.50)
         for t in picks:
             match = day_slice.loc[day_slice["ticker"] == t, "next_open_return"]
             if not match.empty and pd.notna(match.values[0]):
-                r = match.values[0]
-                net_r = r - 0.0005
+                r = float(match.values[0])
+                net_r = r - 0.0020
                 pnl = log["equity"] * (weight * net_r)
                 pnl_by_ticker[t] = pnl_by_ticker.get(t, 0.0) + pnl
                 trades_by_ticker[t] = trades_by_ticker.get(t, 0) + 1
@@ -386,9 +420,9 @@ def run_full_overnight_portfolio_backtest(
         "date": latest_date_str,
         "strategies": {
             s: {
-                "long_picks": results_by_cost["5bps"][s]["trade_logs"][-1]["long_picks"],
-                "short_picks": results_by_cost["5bps"][s]["trade_logs"][-1]["short_picks"],
-                "equity": results_by_cost["5bps"][s]["metrics"]["final_equity"],
+                "long_picks": results_by_cost["20bps"][s]["trade_logs"][-1]["long_picks"],
+                "short_picks": results_by_cost["20bps"][s]["trade_logs"][-1]["short_picks"],
+                "equity": results_by_cost["20bps"][s]["metrics"]["final_equity"],
             }
             for s in strategies
         },
@@ -419,8 +453,8 @@ def export_portfolio_simulation_reports(
 
     json_path.write_text(json.dumps(simulation_data, indent=2, ensure_ascii=False), encoding="utf-8")
 
+    res_20 = simulation_data["results_by_cost"].get("20bps") or simulation_data["results_by_cost"].get("5bps")
     res_0 = simulation_data["results_by_cost"]["0bps"]
-    res_5 = simulation_data["results_by_cost"]["5bps"]
     ytd = simulation_data.get("ytd_2026", {})
     contrib = simulation_data.get("ticker_contribution_2026", [])
     pending = simulation_data.get("latest_pending", {})
@@ -431,10 +465,12 @@ def export_portfolio_simulation_reports(
         f"- **期間**: {simulation_data['start_date']} 〜 {simulation_data['end_date']} (全 {simulation_data['total_days']} 営業日)",
         "- **初期資金**: 1,000,000 円 (100万円)",
         "- **対象ユニバース**: 東証プライム主力20銘柄 (Core 20 / 10セクター)",
+        "- **執行コスト基準**: 往復 20bps (0.20% スリッページ・手数料控除)",
+        "- **資金管理ルール**: 1銘柄最大投資比率上限 50%（確信度不足時は100%キャッシュ待機）",
         "",
         "## 1. 3大戦略 パフォーマンス比較表 (2024.04 〜 2026.10)",
         "",
-        "### コスト控除後 (スリッページ・往復コスト 5bps / 0.05%)",
+        "### 実運用標準コスト控除後 (往復コスト 20bps / 0.20%)",
         "",
         "| 戦略名 | 最終資産額 (円) | 累積リターン | 年率リターン (CAGR) | Sharpe | 最大DD | 日次勝率 | PF | 取引日数 |",
         "|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|",
@@ -447,7 +483,7 @@ def export_portfolio_simulation_reports(
     }
 
     for s_key, s_label in strat_labels.items():
-        m = res_5[s_key]["metrics"]
+        m = res_20[s_key]["metrics"]
         lines.append(
             f"| **{s_label}** | **{m['final_equity']:,.0f} 円** | **{m['cumulative_return']:+.1%}** | "
             f"{m['cagr']:+.1%} | **{m['sharpe_ratio']:.2f}** | {m['max_drawdown']:.1%} | "
@@ -456,21 +492,30 @@ def export_portfolio_simulation_reports(
 
     lines.extend([
         "",
-        "### 理論値 (コスト 0bps)",
+        "### コスト感度分析 (往復コスト別 Strategy B 精鋭集中の推移)",
         "",
-        "| 戦略名 | 最終資産額 (円) | 累積リターン | Sharpe | 最大DD | 日次勝率 | PF |",
-        "|:---|:---:|:---:|:---:|:---:|:---:|:---:|",
+        "| コスト水準 | 最終資産額 (円) | 累積リターン | Sharpe | 最大DD | 日次勝率 | 判定 |",
+        "|:---:|:---:|:---:|:---:|:---:|:---:|:---|",
     ])
-    for s_key, s_label in strat_labels.items():
-        m = res_0[s_key]["metrics"]
-        lines.append(
-            f"| {s_label} | {m['final_equity']:,.0f} 円 | {m['cumulative_return']:+.1%} | "
-            f"{m['sharpe_ratio']:.2f} | {m['max_drawdown']:.1%} | {m['win_rate']:.1%} | {m['profit_factor']:.2f} |"
-        )
+    cost_display = [
+        ("0bps (理論値)", "0bps"),
+        ("5bps (旧レポート表示)", "5bps"),
+        ("10bps (低コスト証券)", "10bps"),
+        ("20bps (実運用標準)", "20bps"),
+        ("30bps (厳格スリッページ)", "30bps"),
+    ]
+    for label, k in cost_display:
+        if k in simulation_data["results_by_cost"]:
+            m = simulation_data["results_by_cost"][k]["elite_top2_long"]["metrics"]
+            status = "✅ プラス期待値" if m["final_equity"] >= 1_000_000 else "⚠️ コスト負け"
+            lines.append(
+                f"| {label} | **{m['final_equity']:,.0f} 円** | **{m['cumulative_return']:+.1%}** | "
+                f"{m['sharpe_ratio']:.2f} | {m['max_drawdown']:.1%} | {m['win_rate']:.1%} | {status} |"
+            )
 
     lines.extend([
         "",
-        "## 2. 2026年単独 (年初来) パフォーマンス (コスト 5bps)",
+        "## 2. 2026年単独 (年初来) パフォーマンス (実運用コスト 20bps)",
         "",
         "| 戦略名 | 最終資産額 (円) | 累積リターン | Sharpe | 最大DD | 日次勝率 |",
         "|:---|:---:|:---:|:---:|:---:|:---:|",

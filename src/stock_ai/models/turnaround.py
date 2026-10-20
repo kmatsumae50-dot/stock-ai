@@ -286,8 +286,12 @@ def calculate_bargain_score(
     pos_in_52w_range: float,
     ma_gap_200d: float,
     p_turnaround: float,
+    pbr: float | None = None,
+    per: float | None = None,
+    dividend_yield: float | None = None,
+    return_5d: float | None = None,
 ) -> tuple[float, float, float]:
-    """Calculate the Turnaround Bargain Score (0 to 100).
+    """Calculate the Turnaround Bargain Score (0 to 100) with Fundamental Value Trap Filtering.
 
     Returns:
         (total_score, discount_factor, recovery_factor)
@@ -300,7 +304,30 @@ def calculate_bargain_score(
 
     # Recovery factor (0 to 50 pts):
     recovery_factor = float(np.clip(p_turnaround * 50.0, 0, 50.0))
-    total_score = float(np.clip(discount_factor + recovery_factor, 0.0, 100.0))
+    raw_score = discount_factor + recovery_factor
+
+    # Fundamental & Falling Knife Hard Filters (Value Trap Protection)
+    penalty = 0.0
+    if per is not None and per <= 0:
+        # Negative earnings / loss-making zombie company
+        penalty += 25.0
+    if pbr is not None and (pbr < 0.30 or pbr > 3.0):
+        # Distressed liquidation risk (<0.3) or not a value stock (>3.0)
+        penalty += 15.0
+    if return_5d is not None and return_5d < -0.08:
+        # Active crash / falling knife
+        penalty += 15.0
+
+    # Fundamental Quality Bonus: sound PBR (0.4-1.2) + profitable PER + dividend
+    bonus = 0.0
+    if pbr is not None and 0.4 <= pbr <= 1.2:
+        bonus += 3.0
+    if per is not None and 5.0 <= per <= 15.0:
+        bonus += 3.0
+    if dividend_yield is not None and dividend_yield >= 2.5:
+        bonus += 4.0
+
+    total_score = float(np.clip(raw_score - penalty + bonus, 0.0, 100.0))
     return round(total_score, 1), round(discount_factor, 1), round(recovery_factor, 1)
 
 
@@ -490,19 +517,37 @@ def scan_turnaround_universe(
         x = feat_df.iloc[[-1]][feature_cols]
         prob = float(model.predict(x)[0])
 
+        fund = fundamentals.get(code, {})
+        pbr = fund.get("pbr")
+        per = fund.get("per")
+        dy = fund.get("dividend_yield")
+        ret_5d = float(latest_row.get("return_5d", 0.0))
+
         score, disc_factor, rec_factor = calculate_bargain_score(
             drawdown_252d=float(latest_row["drawdown_252d"]),
             pos_in_52w_range=float(latest_row["pos_in_52w_range"]),
             ma_gap_200d=float(latest_row["ma_gap_200d"]),
             p_turnaround=prob,
+            pbr=pbr,
+            per=per,
+            dividend_yield=dy,
+            return_5d=ret_5d,
+        )
+
+        is_value_trap = bool(
+            (per is not None and per <= 0)
+            or (pbr is not None and (pbr < 0.30 or pbr > 3.0))
+            or ret_5d < -0.08
         )
 
         o_data = overnight_info.get(code, {"p_up": None, "quantile": "-", "label": ""})
         o_pup = o_data.get("p_up")
         o_q = o_data.get("quantile", "-")
-        is_golden = bool(score >= 60.0 and o_q in ("Q4", "Q5"))
+        is_golden = bool(score >= 60.0 and o_q in ("Q4", "Q5") and not is_value_trap)
 
-        if score >= 70.0:
+        if is_value_trap:
+            status = "⚠️ バリュートラップ警戒（業績赤字・急落リスク）"
+        elif score >= 70.0:
             status = "💎 超割安・底打ち反転圏"
         elif score >= 50.0:
             status = "👀 調整監視圏"
@@ -512,7 +557,6 @@ def scan_turnaround_universe(
         if is_golden:
             status += " ⭐ 始動"
 
-        fund = fundamentals.get(code, {})
         name, sec = meta_map.get(code, (code, ""))
 
         rankings.append(
@@ -528,9 +572,10 @@ def scan_turnaround_universe(
                 "discount_factor": disc_factor,
                 "recovery_factor": rec_factor,
                 "bargain_score": score,
-                "pbr": fund.get("pbr"),
-                "per": fund.get("per"),
-                "dividend_yield": fund.get("dividend_yield"),
+                "pbr": pbr,
+                "per": per,
+                "dividend_yield": dy,
+                "is_value_trap": is_value_trap,
                 "overnight_p_up": o_pup,
                 "overnight_quantile": f"{o_q} ({o_data.get('label', '')})" if o_q != "-" else "-",
                 "is_golden_signal": is_golden,
@@ -538,8 +583,8 @@ def scan_turnaround_universe(
             }
         )
 
-    # Sort by bargain_score descending
-    rankings.sort(key=lambda r: r["bargain_score"], reverse=True)
+    # Sort fundamentally clean stocks first, ordered by bargain_score descending
+    rankings.sort(key=lambda r: (not r.get("is_value_trap", False), r["bargain_score"]), reverse=True)
 
     metrics_file = Path("reports/metrics") / TURNAROUND_METRICS_FILENAME
     metrics_info = {}
