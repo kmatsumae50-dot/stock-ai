@@ -520,8 +520,15 @@ def analyze_single_ticker(query: str) -> dict[str, Any] | None:
         close_val = 1000.0
 
     # 3. Overnight Sniper Analytics
+    p_cs: float | None = None
+    cs_rank: int | None = None
+    cs_rank_pct: float | None = None
+
     if cached_overnight:
         p_up = float(cached_overnight.get("probability_up", 0.50))
+        p_cs = float(cached_overnight["p_cs"]) if cached_overnight.get("p_cs") is not None else None
+        cs_rank = int(cached_overnight["cs_rank"]) if cached_overnight.get("cs_rank") is not None else None
+        cs_rank_pct = float(cached_overnight["cs_rank_pct"]) if cached_overnight.get("cs_rank_pct") is not None else None
         q_band = cached_overnight.get("q_band") or "Q3"
         q_label = cached_overnight.get("label") or "中立帯"
         earnings_risk = bool(cached_overnight.get("earnings_risk", False))
@@ -585,14 +592,18 @@ def analyze_single_ticker(query: str) -> dict[str, Any] | None:
     # 5. Formulate AI Analyst Dialogue Statements
     # --- Persona 2: Sniper ---
     e_flag_str = "⚠️ 決算発表直前警戒（決算跨ぎリスクあり）" if earnings_risk else "✅ 通常（決算地雷なし）"
+    cs_desc = ""
+    if p_cs is not None and cs_rank is not None:
+        cs_desc = f"\n全銘柄相対スコア（Cross-Sectional）: **{p_cs:.1%}**（順位: **{cs_rank}位**）"
+
     if p_up >= 0.52:
         sniper_comment = (
-            f"明朝寄り付き上昇確率 **{p_up:.1%}**（{q_band}）。買い優位のシグナルが点灯しています！\n"
+            f"明朝寄り付き上昇確率 **{p_up:.1%}**（{q_band}）。買い優位のシグナルが点灯しています！{cs_desc}\n"
             f"決算チェック: **{e_flag_str}**。"
         )
     else:
         sniper_comment = (
-            f"明朝寄り付き上昇確率 **{p_up:.1%}**（{q_band}）。寄り付きギャップの上値追いは慎重に。\n"
+            f"明朝寄り付き上昇確率 **{p_up:.1%}**（{q_band}）。寄り付きギャップの上値追いは慎重に。{cs_desc}\n"
             f"決算チェック: **{e_flag_str}**。"
         )
 
@@ -620,6 +631,18 @@ def analyze_single_ticker(query: str) -> dict[str, Any] | None:
             "🚨 **【チーフ判断: 見送り推奨】**\n"
             "直近に決算発表が控えており、ボラティリティ急変によるギャンブル跨ぎは厳禁です。"
             "発表後の市場反応を確認してからポジションを構築しましょう。"
+        )
+    elif p_up >= 0.52 and p_cs is not None and p_cs >= 0.50 and bargain_score >= 65.0:
+        chief_conclusion = (
+            "🎯 **【チーフ判断: トリプル確認（個別×全銘柄CS×バリュー）点灯】**\n"
+            "個別Overnightモデル・全銘柄相対Cross-Sectionalモデル・割安反転指標のすべてが買い一致！"
+            "最も統計的確信度の高いエントリーチャンスです💎"
+        )
+    elif p_up >= 0.52 and p_cs is not None and p_cs >= 0.50:
+        chief_conclusion = (
+            "⚡ **【チーフ判断: デュアル確認（個別×全銘柄CS）買い推奨】**\n"
+            "個別モデル確率と全銘柄Cross-Sectionalモデルの両輪でアウトパフォームが確認されています。"
+            "寄り付きギャップ狙いの優位性が高い状態です！"
         )
     elif p_up >= 0.52 and bargain_score >= 65.0:
         chief_conclusion = (
@@ -656,6 +679,9 @@ def analyze_single_ticker(query: str) -> dict[str, Any] | None:
         "rsi_14": rsi_14,
         "pbr": pbr_val,
         "p_up": p_up,
+        "p_cs": p_cs,
+        "cs_rank": cs_rank,
+        "cs_rank_pct": cs_rank_pct,
         "q_band": q_band,
         "q_label": q_label,
         "earnings_risk": earnings_risk,

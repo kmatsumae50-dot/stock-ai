@@ -33,9 +33,11 @@ def build_webhook_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
             ticker = item.get("ticker", "")
             name = item.get("name") or ticker
             sector = item.get("sector", "-")
+            cs_score = item.get("p_cs")
+            cs_str = f" | CS: **{cs_score:.1%}**" if cs_score is not None else ""
             lines.append(
                 f"  {idx}. `{ticker}` {name} ({sector}): "
-                f"**{p_up:.1%}** ({q_info}) | {e_flag}"
+                f"**{p_up:.1%}** ({q_info}){cs_str} | {e_flag}"
             )
     else:
         lines.append("  (該当なし)")
@@ -82,8 +84,10 @@ def build_webhook_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
             name = i.get("name") or ticker
             p_up = i.get("probability_up", 0.0)
             q_band = i.get("q_band") or i.get("quantile") or "Q5"
+            cs_score = i.get("p_cs")
+            cs_str = f" [CS: {cs_score:.1%}]" if cs_score is not None else ""
             overnight_embed_items.append(
-                f"・`{ticker}` {name}: **{p_up:.1%}** ({q_band}) | {e_flag}"
+                f"・`{ticker}` {name}: **{p_up:.1%}** ({q_band}){cs_str} | {e_flag}"
             )
 
     turnaround_embed_items = []
@@ -367,9 +371,11 @@ def build_multi_agent_webhook_payloads(summary_data: dict[str, Any]) -> list[dic
             p_up = i.get("probability_up", 0.0)
             q_band = i.get("q_band") or i.get("quantile") or "Q5"
             e_flag = "⚠️決算警戒" if i.get("earnings_risk") else "✅通常"
+            cs_score = i.get("p_cs")
+            cs_val_str = f" | CS相対: **{cs_score:.1%}**" if cs_score is not None else ""
             overnight_fields.append({
                 "name": f"{idx}. `{ticker}` {name} ({sector})",
-                "value": f"上昇確率: **{p_up:.1%}** ({q_band}) | 決算リスク: **{e_flag}**",
+                "value": f"上昇確率: **{p_up:.1%}** ({q_band}){cs_val_str} | 決算リスク: **{e_flag}**",
                 "inline": False,
             })
 

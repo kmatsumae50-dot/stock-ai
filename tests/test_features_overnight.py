@@ -5,7 +5,9 @@ import pandas as pd
 import pytest
 
 from stock_ai.features.overnight import (
+    CROSS_SECTIONAL_FEATURES,
     OVERNIGHT_CURATED_FEATURES,
+    add_cross_sectional_overnight_features,
     add_overnight_features,
     purged_walk_forward_splits,
     select_overnight_curated_features,
@@ -128,3 +130,73 @@ def test_purged_walk_forward_splits_prevents_leakage():
         assert train_idx.max() < test_idx.min()
         # Embargo ensures gap between train_max and test_min
         assert test_idx.min() - train_idx.max() >= 2
+
+
+def test_add_cross_sectional_overnight_features():
+    # Build pooled dataframe with 2 dates and 3 tickers
+    dates = pd.to_datetime(["2024-01-01", "2024-01-02"])
+    rows = []
+    for d in dates:
+        # Ticker A: high return, high CLV, high volume surge
+        rows.append({
+            "date": d,
+            "ticker": "A",
+            "sector": "Tech",
+            "return_1d": 0.03,
+            "return_5d": 0.05,
+            "close_location_value": 0.9,
+            "volume_surge_5d": 2.5,
+            "rsi_14": 75.0,
+            "next_open_return": 0.02,
+        })
+        # Ticker B: medium return, medium CLV
+        rows.append({
+            "date": d,
+            "ticker": "B",
+            "sector": "Tech",
+            "return_1d": 0.01,
+            "return_5d": 0.02,
+            "close_location_value": 0.1,
+            "volume_surge_5d": 1.1,
+            "rsi_14": 50.0,
+            "next_open_return": 0.005,
+        })
+        # Ticker C: low return, low CLV
+        rows.append({
+            "date": d,
+            "ticker": "C",
+            "sector": "Auto",
+            "return_1d": -0.02,
+            "return_5d": -0.03,
+            "close_location_value": -0.8,
+            "volume_surge_5d": 0.7,
+            "rsi_14": 30.0,
+            "next_open_return": -0.01,
+        })
+
+    pooled_df = pd.DataFrame(rows)
+    result = add_cross_sectional_overnight_features(pooled_df)
+
+    # 1. Verify required columns
+    for col in CROSS_SECTIONAL_FEATURES:
+        assert col in result.columns, f"Missing feature: {col}"
+    assert "target_cs_outperform" in result.columns
+
+    # 2. Check percentile ranking order on 2024-01-01
+    day1 = result[result["date"] == pd.Timestamp("2024-01-01")].set_index("ticker")
+    assert day1.loc["A", "cs_rank_intraday_return"] > day1.loc["B", "cs_rank_intraday_return"]
+    assert day1.loc["B", "cs_rank_intraday_return"] > day1.loc["C", "cs_rank_intraday_return"]
+    assert day1.loc["A", "cs_rank_close_location"] > day1.loc["C", "cs_rank_close_location"]
+
+    # 3. Percentiles are strictly within [0.0, 1.0]
+    for col in ["cs_rank_intraday_return", "cs_rank_close_location", "cs_rank_volume_surge", "cs_rank_rsi_14"]:
+        assert (result[col] >= 0.0).all()
+        assert (result[col] <= 1.0).all()
+
+    # 4. Check Outperform Target: Ticker A (next_open_return=0.02) vs median (0.005) -> 1, C -> 0
+    assert day1.loc["A", "target_cs_outperform"] == 1
+    assert day1.loc["C", "target_cs_outperform"] == 0
+
+    # 5. Check Sector Relative Return
+    assert day1.loc["A", "sector_relative_return_1d"] > 0
+

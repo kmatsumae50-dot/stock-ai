@@ -124,9 +124,108 @@ def add_overnight_features(data: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+CROSS_SECTIONAL_FEATURES = [
+    "cs_rank_intraday_return",
+    "cs_rank_close_location",
+    "cs_rank_volume_surge",
+    "cs_rank_rsi_14",
+    "cs_zscore_return_1d",
+    "cs_zscore_return_5d",
+    "sector_relative_return_1d",
+]
+
+
+def add_cross_sectional_overnight_features(pooled_df: pd.DataFrame) -> pd.DataFrame:
+    """Compute daily cross-sectional (relative ranking & z-score) features across universe.
+
+    Strictly uses information determined at 15:30 JST close for each date (zero lookahead).
+    """
+    if pooled_df.empty or "date" not in pooled_df.columns:
+        return pooled_df
+
+    result = pooled_df.copy()
+    result["date"] = pd.to_datetime(result["date"])
+
+    # Ensure prerequisite columns exist
+    if "intraday_return" not in result.columns and "open" in result.columns and "close" in result.columns:
+        result["intraday_return"] = (result["close"] - result["open"]) / (result["open"] + 1e-8)
+    elif "intraday_return" not in result.columns and "return_1d" in result.columns:
+        result["intraday_return"] = result["return_1d"]
+    elif "intraday_return" not in result.columns:
+        result["intraday_return"] = 0.0
+
+    if "close_location_value" not in result.columns and "high" in result.columns and "low" in result.columns and "close" in result.columns:
+        hl = (result["high"] - result["low"]).replace(0.0, np.nan)
+        result["close_location_value"] = ((2.0 * result["close"] - result["high"] - result["low"]) / (hl + 1e-8)).clip(-1.0, 1.0).fillna(0.0)
+    elif "close_location_value" not in result.columns:
+        result["close_location_value"] = 0.0
+
+    if "return_1d" not in result.columns and "close" in result.columns:
+        if "ticker" in result.columns:
+            result["return_1d"] = result.groupby("ticker")["close"].pct_change().fillna(0.0)
+        else:
+            result["return_1d"] = result["close"].pct_change().fillna(0.0)
+
+    if "return_5d" not in result.columns and "close" in result.columns:
+        if "ticker" in result.columns:
+            result["return_5d"] = result.groupby("ticker")["close"].pct_change(5).fillna(0.0)
+        else:
+            result["return_5d"] = result["close"].pct_change(5).fillna(0.0)
+
+    vol_col = "volume_surge_5d" if "volume_surge_5d" in result.columns else ("volume" if "volume" in result.columns else None)
+    rsi_col = "rsi_14" if "rsi_14" in result.columns else None
+
+    # Group by date for pure cross-sectional computations on same day
+    grouped = result.groupby("date", group_keys=False)
+
+    # 1. Percentile Ranks (0.0 to 1.0)
+    result["cs_rank_intraday_return"] = grouped["intraday_return"].rank(pct=True).fillna(0.5)
+    result["cs_rank_close_location"] = grouped["close_location_value"].rank(pct=True).fillna(0.5)
+
+    if vol_col is not None:
+        result["cs_rank_volume_surge"] = grouped[vol_col].rank(pct=True).fillna(0.5)
+    else:
+        result["cs_rank_volume_surge"] = 0.5
+
+    if rsi_col is not None:
+        result["cs_rank_rsi_14"] = grouped[rsi_col].rank(pct=True).fillna(0.5)
+    else:
+        result["cs_rank_rsi_14"] = 0.5
+
+    # 2. Z-scores across tickers
+    m1 = grouped["return_1d"].transform("mean")
+    s1 = grouped["return_1d"].transform("std").replace(0.0, np.nan)
+    result["cs_zscore_return_1d"] = ((result["return_1d"] - m1) / (s1 + 1e-8)).clip(-3.0, 3.0).fillna(0.0)
+
+    m5 = grouped["return_5d"].transform("mean")
+    s5 = grouped["return_5d"].transform("std").replace(0.0, np.nan)
+    result["cs_zscore_return_5d"] = ((result["return_5d"] - m5) / (s5 + 1e-8)).clip(-3.0, 3.0).fillna(0.0)
+
+    # 3. Sector relative return (or market median if sector unavailable)
+    if "sector" in result.columns and result["sector"].nunique() > 1:
+        sec_m = result.groupby(["date", "sector"])["return_1d"].transform("mean")
+        result["sector_relative_return_1d"] = (result["return_1d"] - sec_m).fillna(0.0)
+    else:
+        market_med = grouped["return_1d"].transform("median")
+        result["sector_relative_return_1d"] = (result["return_1d"] - market_med).fillna(0.0)
+
+    # 4. Outperform Target (if next_open_return is present)
+    if "next_open_return" in result.columns:
+        valid_next = result["next_open_return"].notna()
+        daily_med_next = grouped["next_open_return"].transform("median")
+        result["target_cs_outperform"] = np.where(
+            valid_next,
+            (result["next_open_return"] > daily_med_next).astype(float),
+            np.nan,
+        )
+
+    return result
+
+
 def select_overnight_curated_features(data: pd.DataFrame) -> list[str]:
     """Prune noise and return only the curated, high-importance overnight feature columns."""
-    available = [col for col in OVERNIGHT_CURATED_FEATURES if col in data.columns]
+    all_curated = OVERNIGHT_CURATED_FEATURES + CROSS_SECTIONAL_FEATURES
+    available = [col for col in all_curated if col in data.columns]
     # Fallback to any numeric columns if curated list is not yet populated
     if len(available) < 5:
         from stock_ai.models.baseline import select_feature_columns

@@ -6,7 +6,7 @@ Provides Clean Test calibrated Quantile bands (Q1-Q5) and historical win rates.
 """
 
 from __future__ import annotations
-
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 from typing import Any
@@ -22,6 +22,11 @@ OVERNIGHT_MODEL_NAME = "lightgbm_overnight_binary"
 OVERNIGHT_TARGET = "next_open_binary"
 OVERNIGHT_ARTIFACT_FILENAME = "lightgbm_overnight_binary_{ticker}.joblib"
 OVERNIGHT_METRICS_FILENAME = "lightgbm_overnight_binary_{ticker}.json"
+
+POOLED_OVERNIGHT_MODEL_NAME = "lightgbm_overnight_pooled_cs"
+POOLED_OVERNIGHT_TARGET = "target_cs_outperform"
+POOLED_OVERNIGHT_ARTIFACT_FILENAME = "lightgbm_overnight_pooled_cs.joblib"
+POOLED_OVERNIGHT_METRICS_FILENAME = "lightgbm_overnight_pooled_cs.json"
 
 # Clean Test Window (2024-04-01 to 2026-09-17) empirical quantile cutoffs
 OVERNIGHT_QUANTILE_CUTOFFS = [
@@ -263,3 +268,160 @@ def predict_latest_overnight_rows(
         for features in shap_contributions
     ]
     return result.reset_index(drop=True)
+
+
+def train_pooled_cross_sectional_overnight_model(
+    universe: list[Any] | None = None,
+    features_dir: Path | str = "data/features",
+    models_dir: Path | str = "models/artifacts",
+    metrics_dir: Path | str = "reports/metrics",
+    train_end_date: str = "2024-04-01",
+    sync_features_to_disk: bool = True,
+) -> tuple[Any, list[str], dict[str, Any]]:
+    """Train a universe-wide pooled panel LightGBM model on cross-sectional outperformance.
+
+    Strictly purges lookahead bias by using pre-2024 data and cross-sectional rank targets.
+    """
+    import lightgbm as lgb
+    from sklearn.metrics import accuracy_score, roc_auc_score
+
+    from stock_ai.data.universe import load_universe
+    from stock_ai.features.overnight import (
+        add_cross_sectional_overnight_features,
+        select_overnight_curated_features,
+    )
+    from stock_ai.models.baseline import save_model
+    from stock_ai.storage.parquet_store import read_parquet, write_parquet
+
+    features_path = Path(features_dir)
+    models_path = Path(models_dir)
+    metrics_path = Path(metrics_dir)
+    models_path.mkdir(parents=True, exist_ok=True)
+    metrics_path.mkdir(parents=True, exist_ok=True)
+
+    uni = universe or load_universe()
+    records: list[pd.DataFrame] = []
+    ticker_dfs: dict[str, pd.DataFrame] = {}
+
+    for t in uni:
+        code = getattr(t, "code", str(t))
+        name = getattr(t, "name", code)
+        sec = getattr(t, "sector_ja", "") or getattr(t, "sector", "") or ""
+        f_file = features_path / f"{code}.parquet"
+        if f_file.exists():
+            df_t = read_parquet(f_file)
+            if not df_t.empty and "date" in df_t.columns:
+                df_t["ticker"] = code
+                df_t["name"] = name
+                df_t["sector"] = sec
+                records.append(df_t)
+                ticker_dfs[code] = df_t
+
+    if not records:
+        raise ValueError("No feature files found in universe.")
+
+    all_df = pd.concat(records, ignore_index=True)
+    all_df["date"] = pd.to_datetime(all_df["date"])
+    all_df = all_df.sort_values(["date", "ticker"]).reset_index(drop=True)
+
+    # Attach cross-sectional features and outperformance target across universe
+    all_df = add_cross_sectional_overnight_features(all_df)
+
+    # Persist the cross-sectional features back to individual parquet files
+    if sync_features_to_disk:
+        for code in ticker_dfs:
+            t_sub = all_df[all_df["ticker"] == code].sort_values("date").reset_index(drop=True)
+            write_parquet(t_sub, features_path / f"{code}.parquet")
+
+    feature_columns = select_overnight_curated_features(all_df)
+
+    # Purged time split: Train < train_end_date
+    split_dt = pd.to_datetime(train_end_date)
+    train_mask = all_df["date"] < split_dt
+    feature_cols_clean = [c for c in feature_columns if c in all_df.columns]
+    feature_columns = feature_cols_clean
+    train_subset = all_df[train_mask].dropna(subset=feature_columns + [POOLED_OVERNIGHT_TARGET])
+
+    if train_subset.empty:
+        raise ValueError("Training subset is empty.")
+
+    # Validation window: last 15% of train dates
+    train_dates = sorted(train_subset["date"].unique())
+    n_train_dates = len(train_dates)
+    valid_start_idx = max(1, int(n_train_dates * 0.85))
+    valid_start_dt = train_dates[valid_start_idx]
+
+    train_data = train_subset[train_subset["date"] < valid_start_dt]
+    valid_data = train_subset[train_subset["date"] >= valid_start_dt]
+
+    model = lgb.LGBMClassifier(
+        objective="binary",
+        n_estimators=75,
+        learning_rate=0.05,
+        num_leaves=12,
+        min_child_samples=60,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        reg_alpha=0.5,
+        reg_lambda=2.0,
+        random_state=42,
+        verbose=-1,
+    )
+    model.fit(
+        train_data[feature_columns],
+        train_data[POOLED_OVERNIGHT_TARGET].astype(int),
+        eval_set=[(valid_data[feature_columns], valid_data[POOLED_OVERNIGHT_TARGET].astype(int))],
+        eval_metric="auc",
+        callbacks=[lgb.early_stopping(50, verbose=False)],
+    )
+
+    # Validation metrics
+    val_probs = model.predict_proba(valid_data[feature_columns])[:, 1]
+    val_auc = float(roc_auc_score(valid_data[POOLED_OVERNIGHT_TARGET].astype(int), val_probs))
+    val_acc = float(accuracy_score(valid_data[POOLED_OVERNIGHT_TARGET].astype(int), (val_probs >= 0.5).astype(int)))
+
+    # Empirical quantile cutoffs on validation set
+    quantile_cutoffs = compute_empirical_quantile_cutoffs(
+        valid_data[POOLED_OVERNIGHT_TARGET].astype(int),
+        val_probs,
+    )
+
+    # Fit final production model on all pre-2024 training observations (zero test leakage)
+    model.fit(
+        train_subset[feature_columns],
+        train_subset[POOLED_OVERNIGHT_TARGET].astype(int),
+    )
+
+    metrics_info = {
+        "model_name": POOLED_OVERNIGHT_MODEL_NAME,
+        "target": POOLED_OVERNIGHT_TARGET,
+        "trained_samples": len(train_data),
+        "validation_samples": len(valid_data),
+        "validation_auc": val_auc,
+        "validation_accuracy": val_acc,
+        "feature_columns_count": len(feature_columns),
+        "top_features": [
+            {"feature": f, "importance": int(imp)}
+            for f, imp in sorted(
+                zip(feature_columns, model.feature_importances_),
+                key=lambda x: x[1],
+                reverse=True,
+            )[:15]
+        ],
+        "quantile_cutoffs": quantile_cutoffs,
+    }
+
+    # Save artifacts
+    save_model(
+        model=model,
+        feature_columns=feature_columns,
+        path=models_path / POOLED_OVERNIGHT_ARTIFACT_FILENAME,
+        metadata=metrics_info,
+    )
+
+    (metrics_path / POOLED_OVERNIGHT_METRICS_FILENAME).write_text(
+        json.dumps(metrics_info, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    return model, feature_columns, metrics_info

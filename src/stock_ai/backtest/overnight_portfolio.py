@@ -12,6 +12,7 @@ from stock_ai.data.universe import TickerInfo, load_universe
 from stock_ai.events.earnings_guard import check_earnings_risk
 from stock_ai.models.overnight import (
     OVERNIGHT_ARTIFACT_FILENAME,
+    POOLED_OVERNIGHT_ARTIFACT_FILENAME,
     classify_overnight_quantile,
 )
 from stock_ai.models.predict import load_model_bundle
@@ -48,6 +49,14 @@ def collect_overnight_universe_predictions(
     features_path = Path(features_dir)
     models_path = Path(models_dir)
     metrics_path = Path(metrics_dir)
+
+    pooled_m_file = models_path / POOLED_OVERNIGHT_ARTIFACT_FILENAME
+    pooled_bundle = None
+    if pooled_m_file.exists():
+        try:
+            pooled_bundle = load_model_bundle(pooled_m_file)
+        except Exception:
+            pass
 
     records: list[pd.DataFrame] = []
     meta_map = {t.code: (t.name, getattr(t, "sector_ja", t.sector)) for t in universe}
@@ -88,6 +97,16 @@ def collect_overnight_universe_predictions(
         sub["name"] = meta_map.get(code, (code, ""))[0]
         sub["sector"] = meta_map.get(code, (code, ""))[1]
 
+        # Calculate pooled cross-sectional outperform score if available
+        if pooled_bundle is not None:
+            p_cols = [c for c in pooled_bundle["feature_columns"] if c in sub.columns]
+            if len(p_cols) == len(pooled_bundle["feature_columns"]):
+                sub["p_cs"] = pooled_bundle["model"].predict_proba(sub[p_cols])[:, 1]
+            else:
+                sub["p_cs"] = probs
+        else:
+            sub["p_cs"] = probs
+
         quantiles: list[str] = []
         win_rates: list[float] = []
         directions: list[str] = []
@@ -115,6 +134,7 @@ def collect_overnight_universe_predictions(
             "close",
             "next_open_return",
             "p_up",
+            "p_cs",
             "quantile",
             "win_rate",
             "direction",
@@ -128,6 +148,8 @@ def collect_overnight_universe_predictions(
 
     full_df = pd.concat(records, ignore_index=True)
     full_df["date"] = pd.to_datetime(full_df["date"])
+    if "p_cs" in full_df.columns:
+        full_df["cs_rank"] = full_df.groupby("date")["p_cs"].rank(pct=True).fillna(0.5)
     dates = sorted(full_df["date"].unique())
     return full_df, dates
 
@@ -159,37 +181,49 @@ def simulate_overnight_strategy(
                 long_picks = q5s.head(5)["ticker"].tolist()
 
         elif strategy_name == "elite_top2_long":
-            # High Conviction Long: Model AUC >= 0.50 (edge over coin flip),
-            # Q5 (top probability quintile) with validation win_rate >= 0.50, up to 2 tickers, p_up desc
-            # Earnings Guard: Filter out earnings risk tickers
+            # High Conviction Long: Dual confirmation
+            # 1. Individual Model AUC >= 0.50 (edge over coin flip)
+            # 2. Individual Quantile == Q5 with validation win_rate >= 0.50
+            # 3. Cross-Sectional Confirmation: p_cs >= daily median p_cs (when pooled model available)
+            # 4. Earnings Guard: Filter out earnings risk tickers
+            has_cs = "p_cs" in day_slice.columns
+            med_cs = day_slice["p_cs"].median() if has_cs else 0.5
             eligible = day_slice[
                 (day_slice["auc"] >= 0.50)
                 & (day_slice["quantile"] == "Q5")
                 & (day_slice["win_rate"] >= 0.50)
+                & ((day_slice["p_cs"] >= med_cs) if has_cs else True)
             ]
             if "earnings_risk" in eligible.columns:
                 eligible = eligible[~eligible["earnings_risk"].fillna(False).astype(bool)]
-            elites = eligible.sort_values("p_up", ascending=False)
+            sort_col = "p_cs" if has_cs else "p_up"
+            elites = eligible.sort_values(sort_col, ascending=False)
             if not elites.empty:
                 long_picks = elites.head(2)["ticker"].tolist()
 
         elif strategy_name == "long_short_spread":
             # Long: Strategy B with Earnings Guard
+            has_cs = "p_cs" in day_slice.columns
+            med_cs = day_slice["p_cs"].median() if has_cs else 0.5
             eligible = day_slice[
                 (day_slice["auc"] >= 0.50)
                 & (day_slice["quantile"] == "Q5")
                 & (day_slice["win_rate"] >= 0.50)
+                & ((day_slice["p_cs"] >= med_cs) if has_cs else True)
             ]
             if "earnings_risk" in eligible.columns:
                 eligible = eligible[~eligible["earnings_risk"].fillna(False).astype(bool)]
-            elites = eligible.sort_values("p_up", ascending=False)
+            sort_col = "p_cs" if has_cs else "p_up"
+            elites = eligible.sort_values(sort_col, ascending=False)
             if not elites.empty:
                 long_picks = elites.head(2)["ticker"].tolist()
 
-            # Short: Q1 with auc >= 0.50, up to 2, p_up asc
+            # Short: Q1 with auc >= 0.50, and p_cs <= median, up to 2, p_cs asc
             q1s = day_slice[
-                (day_slice["auc"] >= 0.50) & (day_slice["quantile"] == "Q1")
-            ].sort_values("p_up", ascending=True)
+                (day_slice["auc"] >= 0.50)
+                & (day_slice["quantile"] == "Q1")
+                & ((day_slice["p_cs"] <= med_cs) if has_cs else True)
+            ].sort_values(sort_col, ascending=True)
             if not q1s.empty:
                 short_picks = q1s.head(2)["ticker"].tolist()
 

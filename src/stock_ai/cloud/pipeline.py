@@ -38,7 +38,9 @@ from stock_ai.events.earnings_guard import check_earnings_risk
 from stock_ai.external.market_data import download_external_market_data_report
 from stock_ai.models.overnight import (
     OVERNIGHT_ARTIFACT_FILENAME,
+    POOLED_OVERNIGHT_ARTIFACT_FILENAME,
     classify_overnight_quantile,
+    train_pooled_cross_sectional_overnight_model,
 )
 from stock_ai.models.turnaround import (
     TURNAROUND_ARTIFACT_FILENAME,
@@ -233,6 +235,16 @@ def run_cloud_daily_pipeline(
         except Exception as exc:
             print(f"WARN: Failed self-healing turnaround training: {exc}")
 
+    # Check Pooled Cross-Sectional Overnight model self-healing
+    pooled_overnight_file = settings.paths.model_dir / POOLED_OVERNIGHT_ARTIFACT_FILENAME
+    if not pooled_overnight_file.exists() or force_train:
+        print("Self-Healing: Training missing Cross-Sectional Pooled Overnight LightGBM model...")
+        try:
+            train_pooled_cross_sectional_overnight_model(universe=universe)
+            trained_count += 1
+        except Exception as exc:
+            print(f"WARN: Failed self-healing pooled overnight training: {exc}")
+
     step_results["models_self_healed"] = trained_count
 
     # -------------------------------------------------------------
@@ -241,6 +253,16 @@ def run_cloud_daily_pipeline(
     print("\n--- [Step C] Predicting Overnight (Close-to-Open) Universe ---")
     scanner_rows: list[dict[str, Any]] = []
     latest_pred_date: str | None = None
+
+    # Load Cross-Sectional Pooled Model if present
+    pooled_bundle = None
+    pooled_model_file = settings.paths.model_dir / POOLED_OVERNIGHT_ARTIFACT_FILENAME
+    if pooled_model_file.exists():
+        try:
+            import joblib
+            pooled_bundle = joblib.load(pooled_model_file)
+        except Exception as exc:
+            print(f"WARN: Could not load pooled overnight model: {exc}")
 
     for t in universe:
         code = t.code
@@ -276,11 +298,19 @@ def run_cloud_daily_pipeline(
                 q_win = notes.get("historical_win_rate")
 
                 raw_close = None
+                p_cs = None
                 feat_p = settings.paths.feature_data_dir / f"{code}.parquet"
                 if feat_p.exists():
                     f_df = read_parquet(feat_p)
                     if not f_df.empty and "close" in f_df.columns:
                         raw_close = float(f_df["close"].iloc[-1])
+                    if pooled_bundle is not None and not f_df.empty:
+                        try:
+                            p_cols = [c for c in pooled_bundle["feature_columns"] if c in f_df.columns]
+                            if len(p_cols) == len(pooled_bundle["feature_columns"]):
+                                p_cs = float(pooled_bundle["model"].predict_proba(f_df[p_cols].tail(1))[:, 1][0])
+                        except Exception as e_cs:
+                            logger.debug("Failed computing p_cs for %s: %s", code, e_cs)
 
                 e_risk, e_date = check_earnings_risk(code, ref_date=p_date)
                 scanner_rows.append({
@@ -290,6 +320,7 @@ def run_cloud_daily_pipeline(
                     "date": p_date,
                     "close": raw_close,
                     "probability_up": p_up,
+                    "p_cs": p_cs,
                     "direction": "Up ⬆️" if p_up >= 0.5 else "Down ⬇️",
                     "q_band": q_band,
                     "quantile": f"{q_band} ({q_label})" if q_label else q_band,
@@ -303,8 +334,22 @@ def run_cloud_daily_pipeline(
         except Exception as exc:
             print(f"WARN: Overnight predict failed for {code}: {exc}")
 
-    # Sort rankings by probability_up descending
-    scanner_rows.sort(key=lambda x: x["probability_up"], reverse=True)
+    # Calculate Cross-Sectional rank & rank percentiles if available
+    valid_cs = [r for r in scanner_rows if r.get("p_cs") is not None]
+    if valid_cs:
+        sorted_by_cs = sorted(valid_cs, key=lambda x: x["p_cs"], reverse=True)
+        n = len(sorted_by_cs)
+        for rank_idx, r in enumerate(sorted_by_cs, 1):
+            r["cs_rank"] = rank_idx
+            r["cs_rank_pct"] = round(1.0 - (rank_idx - 1) / max(1, n - 1), 2)
+
+    # Sort rankings by Cross-Sectional outperform score if available, else probability_up
+    has_cs = any(r.get("p_cs") is not None for r in scanner_rows)
+    if has_cs:
+        scanner_rows.sort(key=lambda x: (x.get("p_cs") is not None, x.get("p_cs") or 0.0), reverse=True)
+    else:
+        scanner_rows.sort(key=lambda x: x["probability_up"], reverse=True)
+
     for idx, row in enumerate(scanner_rows, 1):
         row["rank"] = idx
         row["is_top_pick"] = (idx == 1)
