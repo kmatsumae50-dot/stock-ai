@@ -15,6 +15,7 @@ from stock_ai.models.overnight import (
     POOLED_OVERNIGHT_ARTIFACT_FILENAME,
     classify_overnight_quantile,
 )
+from stock_ai.features.overnight import check_jumping_catch_risk
 from stock_ai.models.predict import load_model_bundle
 
 
@@ -126,6 +127,37 @@ def collect_overnight_universe_predictions(
         e_risk, _ = check_earnings_risk(code, ref_date=latest_dt)
         sub.loc[sub["date"] == latest_dt, "earnings_risk"] = e_risk
 
+        # Attach execution guard & risk features
+        if "high" in sub.columns and "low" in sub.columns and "close" in sub.columns:
+            hl = (sub["high"] - sub["low"]).replace(0.0, np.nan)
+            sub["pullback_from_high"] = ((sub["high"] - sub["close"]) / (hl + 1e-8)).clip(0.0, 1.0).fillna(0.0)
+        else:
+            sub["pullback_from_high"] = 0.0
+
+        if "intraday_return" not in sub.columns and "open" in sub.columns and "close" in sub.columns:
+            sub["intraday_return"] = ((sub["close"] - sub["open"]) / (sub["open"] + 1e-8)).fillna(0.0)
+        elif "intraday_return" not in sub.columns:
+            sub["intraday_return"] = sub.get("return_1d", 0.0)
+
+        # Check jumping catch risk row-by-row
+        jc_risks: list[bool] = []
+        jc_reasons: list[str] = []
+        for _, row_val in sub.iterrows():
+            is_jc, jc_rsn = check_jumping_catch_risk(row_val)
+            jc_risks.append(is_jc)
+            jc_reasons.append(jc_rsn)
+
+        sub["jumping_catch_risk"] = jc_risks
+        sub["jumping_catch_reason"] = jc_reasons
+        if "volatility_20" not in sub.columns:
+            sub["volatility_20"] = 0.02
+        if "return_1d" not in sub.columns:
+            sub["return_1d"] = 0.0
+        if "rsi_14" not in sub.columns:
+            sub["rsi_14"] = 50.0
+        if "vol_adjusted_momentum_1d" not in sub.columns:
+            sub["vol_adjusted_momentum_1d"] = 0.0
+
         cols_to_keep = [
             "date",
             "ticker",
@@ -140,6 +172,12 @@ def collect_overnight_universe_predictions(
             "direction",
             "auc",
             "earnings_risk",
+            "jumping_catch_risk",
+            "jumping_catch_reason",
+            "volatility_20",
+            "return_1d",
+            "rsi_14",
+            "pullback_from_high",
         ]
         records.append(sub[cols_to_keep])
 
@@ -181,11 +219,12 @@ def simulate_overnight_strategy(
                 long_picks = q5s.head(5)["ticker"].tolist()
 
         elif strategy_name == "elite_top2_long":
-            # High Conviction Long: Dual confirmation
+            # High Conviction Long: Dual confirmation + Execution Guard
             # 1. Individual Model AUC >= 0.50 (edge over coin flip)
             # 2. Individual Quantile == Q5 with validation win_rate >= 0.50
             # 3. Cross-Sectional Confirmation: p_cs >= daily median p_cs (when pooled model available)
             # 4. Earnings Guard: Filter out earnings risk tickers
+            # 5. Anti-Jumping-Catch Execution Guard: Filter out overbought/exhaustion traps
             has_cs = "p_cs" in day_slice.columns
             med_cs = day_slice["p_cs"].median() if has_cs else 0.5
             eligible = day_slice[
@@ -196,13 +235,15 @@ def simulate_overnight_strategy(
             ]
             if "earnings_risk" in eligible.columns:
                 eligible = eligible[~eligible["earnings_risk"].fillna(False).astype(bool)]
+            if "jumping_catch_risk" in eligible.columns:
+                eligible = eligible[~eligible["jumping_catch_risk"].fillna(False).astype(bool)]
             sort_col = "p_cs" if has_cs else "p_up"
             elites = eligible.sort_values(sort_col, ascending=False)
             if not elites.empty:
                 long_picks = elites.head(2)["ticker"].tolist()
 
         elif strategy_name == "long_short_spread":
-            # Long: Strategy B with Earnings Guard
+            # Long: Strategy B with Earnings Guard and Jumping Catch Guard
             has_cs = "p_cs" in day_slice.columns
             med_cs = day_slice["p_cs"].median() if has_cs else 0.5
             eligible = day_slice[
@@ -213,6 +254,8 @@ def simulate_overnight_strategy(
             ]
             if "earnings_risk" in eligible.columns:
                 eligible = eligible[~eligible["earnings_risk"].fillna(False).astype(bool)]
+            if "jumping_catch_risk" in eligible.columns:
+                eligible = eligible[~eligible["jumping_catch_risk"].fillna(False).astype(bool)]
             sort_col = "p_cs" if has_cs else "p_up"
             elites = eligible.sort_values(sort_col, ascending=False)
             if not elites.empty:
@@ -276,9 +319,24 @@ def simulate_overnight_strategy(
             applied_cost = cost * (w_total_long + w_total_short)
         elif long_rets:
             if max_position_weight is not None:
-                pos_w = min(1.0 / len(long_rets), max_position_weight)
-                total_w = pos_w * len(long_rets)
-                gross_return = float(np.sum(np.array(long_rets) * pos_w))
+                # Volatility-adaptive sizing when volatility_20 is available
+                pick_vols = [
+                    float(day_slice.loc[day_slice["ticker"] == t, "volatility_20"].values[0])
+                    if "volatility_20" in day_slice.columns and not day_slice.loc[day_slice["ticker"] == t, "volatility_20"].empty
+                    else 0.025
+                    for t in long_picks
+                ]
+                if len(long_rets) > 1 and all(v > 0 for v in pick_vols):
+                    v_arr = np.clip(np.array(pick_vols), 0.015, 0.055)
+                    inv_v = 1.0 / v_arr
+                    raw_w = (inv_v / inv_v.sum()) * 0.95
+                    pos_weights = np.minimum(raw_w, max_position_weight)
+                else:
+                    pos_w = min(1.0 / len(long_rets), max_position_weight)
+                    pos_weights = np.array([pos_w] * len(long_rets))
+
+                total_w = float(np.sum(pos_weights))
+                gross_return = float(np.sum(np.array(long_rets) * pos_weights))
                 applied_cost = cost * total_w
             else:
                 gross_return = float(np.mean(long_rets))

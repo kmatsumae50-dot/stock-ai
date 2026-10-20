@@ -259,3 +259,86 @@ def purged_walk_forward_splits(
         splits.append((train_idx, test_idx))
 
     return splits
+
+
+# ---------------------------------------------------------------------------
+# Anti-Jumping-Catch Execution Guard Constants & Rules
+# ---------------------------------------------------------------------------
+
+OVERNIGHT_EXHAUSTION_RETURN_THRESH = 0.045
+OVERNIGHT_MOMENTUM_BURST_THRESH = 2.2
+OVERNIGHT_RSI_OVERBOUGHT_MIN = 65.0
+OVERNIGHT_RSI_OVERBOUGHT_MAX = 75.0
+OVERNIGHT_RSI_OVERBOUGHT_RETURN_THRESH = 0.010
+OVERNIGHT_UPPER_SHADOW_PULLBACK_THRESH = 0.60
+OVERNIGHT_UPPER_SHADOW_INTRADAY_THRESH = -0.005
+OVERNIGHT_UPPER_SHADOW_RSI_MIN = 55.0
+OVERNIGHT_PANIC_PLUNGE_THRESH = -0.060
+
+
+def check_jumping_catch_risk(row: pd.Series | dict[str, Any]) -> tuple[bool, str]:
+    """Evaluate whether an overnight long candidate suffers from jumping-catch / exhaustion risk.
+
+    Checks 4 empirical execution trap patterns:
+    1. Overheating / Climax Exhaustion: Daily gain > 4.5% or momentum > 2.2x volatility
+    2. Overbought Stalemate: RSI 65-75 extending higher (+1.0%)
+    3. Upper Shadow Stall: Intraday push collapsed into close with negative intraday return
+    4. Panic Plunge / Crashing Knife: Extreme down move < -6.0%
+
+    Returns:
+        (is_risky, reason_description)
+    """
+    ret_1d = float(row.get("return_1d", 0.0) or 0.0)
+    mom_1d = float(row.get("vol_adjusted_momentum_1d", 0.0) or 0.0)
+    rsi_14 = float(row.get("rsi_14", 50.0) or 50.0)
+    intra_ret = float(row.get("intraday_return", 0.0) or 0.0)
+    pb = float(row.get("pullback_from_high", 0.0) or 0.0)
+
+    # 1. Overheating Exhaustion Guard
+    if ret_1d > OVERNIGHT_EXHAUSTION_RETURN_THRESH:
+        return True, f"⚠️ 過熱暴騰警戒（当日騰落率 {ret_1d:+.1%} > +4.5%）"
+    if mom_1d > OVERNIGHT_MOMENTUM_BURST_THRESH:
+        return True, f"⚠️ 過熱モメンタム警戒（ボラ調整モメンタム {mom_1d:.2f} > 2.2）"
+
+    # 2. Overbought Extension Guard
+    if OVERNIGHT_RSI_OVERBOUGHT_MIN <= rsi_14 <= OVERNIGHT_RSI_OVERBOUGHT_MAX and ret_1d > OVERNIGHT_RSI_OVERBOUGHT_RETURN_THRESH:
+        return True, f"⚠️ RSI過熱追随警戒（RSI {rsi_14:.1f} 帯での続伸）"
+
+    # 3. Upper Shadow Stall Guard
+    if pb >= OVERNIGHT_UPPER_SHADOW_PULLBACK_THRESH and intra_ret < OVERNIGHT_UPPER_SHADOW_INTRADAY_THRESH and rsi_14 >= OVERNIGHT_UPPER_SHADOW_RSI_MIN:
+        return True, f"⚠️ 上ヒゲ失速警戒（高値押し戻し率 {pb:.0%}, 陰線引け）"
+
+    # 4. Panic Plunge Guard
+    if ret_1d < OVERNIGHT_PANIC_PLUNGE_THRESH:
+        return True, f"⚠️ 暴落ナイフ警戒（当日下落率 {ret_1d:+.1%} < -6.0%）"
+
+    return False, ""
+
+
+def add_execution_guard_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute and attach execution guard features (pullback_from_high, jumping_catch_risk)."""
+    if df.empty:
+        return df
+    result = df.copy()
+    if "high" in result.columns and "low" in result.columns and "close" in result.columns:
+        hl = (result["high"] - result["low"]).replace(0.0, np.nan)
+        result["pullback_from_high"] = ((result["high"] - result["close"]) / (hl + 1e-8)).clip(0.0, 1.0).fillna(0.0)
+    elif "pullback_from_high" not in result.columns:
+        result["pullback_from_high"] = 0.0
+
+    if "intraday_return" not in result.columns and "open" in result.columns and "close" in result.columns:
+        result["intraday_return"] = ((result["close"] - result["open"]) / (result["open"] + 1e-8)).fillna(0.0)
+    elif "intraday_return" not in result.columns:
+        result["intraday_return"] = 0.0
+
+    risks: list[bool] = []
+    reasons: list[str] = []
+    for _, row in result.iterrows():
+        is_r, rsn = check_jumping_catch_risk(row)
+        risks.append(is_r)
+        reasons.append(rsn)
+
+    result["jumping_catch_risk"] = risks
+    result["jumping_catch_reason"] = reasons
+    return result
+

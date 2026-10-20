@@ -30,6 +30,7 @@ def build_webhook_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
             p_up = item.get("probability_up", 0.0)
             q_info = item.get("quantile") or item.get("label") or "Q5"
             e_flag = "⚠️決算警戒" if item.get("earnings_risk") else "✅通常"
+            jc_flag = " | ⚠️高値掴み警戒" if item.get("jumping_catch_risk") else ""
             ticker = item.get("ticker", "")
             name = item.get("name") or ticker
             sector = item.get("sector", "-")
@@ -37,7 +38,7 @@ def build_webhook_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
             cs_str = f" | CS: **{cs_score:.1%}**" if cs_score is not None else ""
             lines.append(
                 f"  {idx}. `{ticker}` {name} ({sector}): "
-                f"**{p_up:.1%}** ({q_info}){cs_str} | {e_flag}"
+                f"**{p_up:.1%}** ({q_info}){cs_str} | {e_flag}{jc_flag}"
             )
     else:
         lines.append("  (該当なし)")
@@ -80,6 +81,7 @@ def build_webhook_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
     if top_overnight:
         for i in top_overnight[:3]:
             e_flag = "⚠️決算警戒" if i.get("earnings_risk") else "✅通常"
+            jc_flag = " | ⚠️高値掴み警戒" if i.get("jumping_catch_risk") else ""
             ticker = i.get("ticker", "")
             name = i.get("name") or ticker
             p_up = i.get("probability_up", 0.0)
@@ -87,7 +89,7 @@ def build_webhook_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
             cs_score = i.get("p_cs")
             cs_str = f" [CS: {cs_score:.1%}]" if cs_score is not None else ""
             overnight_embed_items.append(
-                f"・`{ticker}` {name}: **{p_up:.1%}** ({q_band}){cs_str} | {e_flag}"
+                f"・`{ticker}` {name}: **{p_up:.1%}** ({q_band}){cs_str} | {e_flag}{jc_flag}"
             )
 
     turnaround_embed_items = []
@@ -361,6 +363,7 @@ def build_multi_agent_webhook_payloads(summary_data: dict[str, Any]) -> list[dic
 
     # --- Persona 2: Short-Term Sniper ---
     has_earnings_risk = any(item.get("earnings_risk") for item in top_overnight[:3])
+    has_jc_risk = any(item.get("jumping_catch_risk") for item in top_overnight[:3])
     overnight_fields = []
 
     if top_overnight:
@@ -371,24 +374,33 @@ def build_multi_agent_webhook_payloads(summary_data: dict[str, Any]) -> list[dic
             p_up = i.get("probability_up", 0.0)
             q_band = i.get("q_band") or i.get("quantile") or "Q5"
             e_flag = "⚠️決算警戒" if i.get("earnings_risk") else "✅通常"
+            jc_flag = " | ⚠️高値掴み警戒" if i.get("jumping_catch_risk") else ""
             cs_score = i.get("p_cs")
             cs_val_str = f" | CS相対: **{cs_score:.1%}**" if cs_score is not None else ""
             overnight_fields.append({
                 "name": f"{idx}. `{ticker}` {name} ({sector})",
-                "value": f"上昇確率: **{p_up:.1%}** ({q_band}){cs_val_str} | 決算リスク: **{e_flag}**",
+                "value": f"上昇確率: **{p_up:.1%}** ({q_band}){cs_val_str} | 決算: **{e_flag}**{jc_flag}",
                 "inline": False,
             })
 
+        risk_comments = []
         if has_earnings_risk:
-            risk_comment = (
-                "⚠️ **注意喚起**: ピックアップ銘柄の中に直近の決算発表警戒フラグ（`⚠️決算警戒`）が出ている銘柄があります！"
-                "決算前のボラティリティ急変を回避するため、慎重なロット配分または見送りを推奨します。"
+            risk_comments.append(
+                "⚠️ **決算注意喚起**: ピックアップ銘柄の中に直近の決算発表警戒フラグ（`⚠️決算警戒`）が出ている銘柄があります！"
+                "決算前の急変動を避けるため、慎重なロット配分または見送りを推奨します。"
             )
-        else:
-            risk_comment = (
-                "✅ 直近の決算発表リスクはクリアしています！"
-                "クリーンなテクニカル・クオンツ優位性に基づき、明朝の寄り付きギャップアップを狙える布陣です。"
+        if has_jc_risk:
+            risk_comments.append(
+                "🛡️ **執行ガード作動**: ピックアップ銘柄中に当日過熱・上ヒゲ失速による高値掴み警戒銘柄（`⚠️高値掴み警戒`）が検出されました。"
+                "クオンツ執行フィルターにより実運用エントリーは自動遮断され、高値掴みトラップを回避します。"
             )
+        if not risk_comments:
+            risk_comments.append(
+                "✅ 直近決算リスクおよび高値掴み過熱リスクをすべてクリアしています！"
+                "クリーンなクオンツ優位性に基づき、明朝の寄り付きギャップアップを狙える布陣です。"
+            )
+
+        risk_comment = "\n\n".join(risk_comments)
 
         sniper_speech = (
             f"⚡ **短期スナイパー AI (Overnight担当)**\n"
@@ -596,47 +608,64 @@ def build_alert_report_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
     date_str = summary_data.get("date") or datetime.now().strftime("%Y-%m-%d")
     top_overnight = summary_data.get("top_overnight", [])
     risky_picks = [p for p in top_overnight if p.get("earnings_risk")]
+    jc_risky_picks = [p for p in top_overnight if p.get("jumping_catch_risk")]
 
-    if risky_picks:
-        items_desc = []
-        for p in risky_picks:
-            ticker = p.get("ticker", "")
-            name = p.get("name") or ticker
-            sector = p.get("sector", "-")
-            items_desc.append(f"・`{ticker}` {name} ({sector}): 直近7日以内に決算発表予定（⚠️決算跨ぎ警戒）")
+    if risky_picks or jc_risky_picks:
+        alert_lines = []
+        fields = []
+
+        if risky_picks:
+            items_desc = []
+            for p in risky_picks:
+                ticker = p.get("ticker", "")
+                name = p.get("name") or ticker
+                sector = p.get("sector", "-")
+                items_desc.append(f"・`{ticker}` {name} ({sector}): 直近7日以内に決算発表予定（⚠️決算跨ぎ警戒）")
+            alert_lines.append("【決算発表前 警戒銘柄】\n" + "\n".join(items_desc))
+            fields.append({"name": "⚠️ 決算発表前 警戒銘柄", "value": "\n".join(items_desc), "inline": False})
+
+        if jc_risky_picks:
+            jc_desc = []
+            for p in jc_risky_picks:
+                ticker = p.get("ticker", "")
+                name = p.get("name") or ticker
+                sector = p.get("sector", "-")
+                reason = p.get("jumping_catch_reason", "過熱・失速シグナル検知")
+                jc_desc.append(f"・`{ticker}` {name} ({sector}): {reason}（⚠️高値掴み・過熱見送り）")
+            alert_lines.append("【ジャンピングキャッチ・過熱警戒銘柄（執行遮断）】\n" + "\n".join(jc_desc))
+            fields.append({"name": "🛡️ ジャンピングキャッチ遮断銘柄", "value": "\n".join(jc_desc), "inline": False})
+
+        fields.append({
+            "name": "🛡️ リスク管理指針",
+            "value": "決算跨ぎおよび日中急騰後のExhaustion（高値掴み）を自動遮断し、翌朝ギャップダウンの罠を回避します。",
+            "inline": False,
+        })
 
         content = (
-            f"🚨 **【決算・急変アラート：警戒フラグ検知 ({date_str})】**\n"
-            "以下の注目銘柄に決算発表前の警戒シグナルが出ています。急変動・地雷リスク回避のためロット抑制または見送りを推奨します！\n\n"
-            + "\n".join(items_desc)
+            f"🚨 **【決算・急変・執行ガードアラート ({date_str})】**\n"
+            "以下の注目銘柄に警戒シグナルが点灯しました。クオンツ執行フィルターにより高リスクエントリーを自動遮断・抑制します！\n\n"
+            + "\n\n".join(alert_lines)
         )
         embed = {
-            "title": f"⚠️ 直近決算警戒銘柄リスト ({date_str})",
-            "description": "決算発表直前のボラティリティ急変リスクを回避するための事前警告",
+            "title": f"⚠️ 直近リスク警戒・執行ガードリスト ({date_str})",
+            "description": "決算ボラティリティ急変＆ジャンピングキャッチ（高値掴み）防止のための事前警告",
             "color": 15158332,  # Crimson Red
-            "fields": [
-                {"name": "⚠️ 警戒銘柄", "value": "\n".join(items_desc), "inline": False},
-                {
-                    "name": "🛡️ リスク管理指針",
-                    "value": "決算跨ぎギャンブルは避け、発表後のアク抜け・コンセンサス確認を待つことを推奨します。",
-                    "inline": False,
-                },
-            ],
+            "fields": fields,
             "footer": {"text": "Stock AI Risk Guardian | 防御最優先アラート"},
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     else:
         content = (
-            f"🛡️ **【決算リスク・セーフティチェック完了 ({date_str})】**\n"
-            "本日スクリーニングされた注目銘柄に直近の決算発表地雷フラグはありません。健全な取引環境が確認されています。"
+            f"🛡️ **【リスク・セーフティチェック完了 ({date_str})】**\n"
+            "本日スクリーニングされた注目銘柄に決算地雷およびジャンピングキャッチ過熱フラグはありません。健全な取引環境が確認されています。"
         )
         embed = {
-            "title": f"✅ 決算リスク・セーフティクリア ({date_str})",
-            "description": "注目銘柄群における直近決算発表予定の有無を検証完了",
+            "title": f"✅ リスク・セーフティクリア ({date_str})",
+            "description": "注目銘柄群における決算地雷および過熱高値掴みリスクの検証完了",
             "color": 3066993,  # Emerald Green
             "fields": [
-                {"name": "🛡️ 判定結果", "value": "主要Overnight候補銘柄に直近決算地雷なし（全銘柄クリア）", "inline": False},
-                {"name": "📌 運用アドバイス", "value": "クオンツ確率・テクニカルシグナルに基づき、規律通りにエントリー可能です。", "inline": False},
+                {"name": "🛡️ 判定結果", "value": "主要Overnight候補銘柄に決算地雷・高値掴み警戒なし（全銘柄クリア）", "inline": False},
+                {"name": "📌 運用アドバイス", "value": "クオンツ確率・執行フィルターをクリアしており、規律通りにエントリー可能です。", "inline": False},
             ],
             "footer": {"text": "Stock AI Risk Guardian | 安全確認完了"},
             "timestamp": datetime.now(timezone.utc).isoformat(),

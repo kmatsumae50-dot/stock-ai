@@ -36,6 +36,7 @@ from stock_ai.data.universe import TickerInfo, load_turnaround_universe, load_un
 from stock_ai.data.yfinance_provider import fetch_daily_ohlcv
 from stock_ai.events.earnings_guard import check_earnings_risk
 from stock_ai.external.market_data import download_external_market_data_report
+from stock_ai.features.overnight import check_jumping_catch_risk
 from stock_ai.models.overnight import (
     OVERNIGHT_ARTIFACT_FILENAME,
     POOLED_OVERNIGHT_ARTIFACT_FILENAME,
@@ -299,11 +300,14 @@ def run_cloud_daily_pipeline(
 
                 raw_close = None
                 p_cs = None
+                is_jc_risk, jc_reason = False, ""
                 feat_p = settings.paths.feature_data_dir / f"{code}.parquet"
                 if feat_p.exists():
                     f_df = read_parquet(feat_p)
-                    if not f_df.empty and "close" in f_df.columns:
-                        raw_close = float(f_df["close"].iloc[-1])
+                    if not f_df.empty:
+                        if "close" in f_df.columns:
+                            raw_close = float(f_df["close"].iloc[-1])
+                        is_jc_risk, jc_reason = check_jumping_catch_risk(f_df.iloc[-1])
                     if pooled_bundle is not None and not f_df.empty:
                         try:
                             p_cols = [c for c in pooled_bundle["feature_columns"] if c in f_df.columns]
@@ -330,6 +334,9 @@ def run_cloud_daily_pipeline(
                     "earnings_risk": e_risk,
                     "earnings_date": e_date,
                     "earnings_status": "⚠️ 決算警戒" if e_risk else "✅ 通常",
+                    "jumping_catch_risk": is_jc_risk,
+                    "jumping_catch_reason": jc_reason,
+                    "jumping_catch_status": "⚠️ 高値掴み警戒（過熱見送り）" if is_jc_risk else "✅ エントリー適格",
                 })
         except Exception as exc:
             print(f"WARN: Overnight predict failed for {code}: {exc}")
@@ -350,9 +357,19 @@ def run_cloud_daily_pipeline(
     else:
         scanner_rows.sort(key=lambda x: x["probability_up"], reverse=True)
 
+    # Set rank and select top pick (highest ranking candidate without earnings or jumping catch risk)
+    top_pick_found = False
     for idx, row in enumerate(scanner_rows, 1):
         row["rank"] = idx
-        row["is_top_pick"] = (idx == 1)
+        if not top_pick_found and not row.get("earnings_risk") and not row.get("jumping_catch_risk"):
+            row["is_top_pick"] = True
+            top_pick_found = True
+        else:
+            row["is_top_pick"] = False
+
+    # Fallback to top rank if all have warnings
+    if not top_pick_found and scanner_rows:
+        scanner_rows[0]["is_top_pick"] = True
 
     # Save JSON snapshot
     saved_snapshot = save_overnight_scanner_snapshot(

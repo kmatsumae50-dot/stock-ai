@@ -8,7 +8,9 @@ from stock_ai.features.overnight import (
     CROSS_SECTIONAL_FEATURES,
     OVERNIGHT_CURATED_FEATURES,
     add_cross_sectional_overnight_features,
+    add_execution_guard_features,
     add_overnight_features,
+    check_jumping_catch_risk,
     purged_walk_forward_splits,
     select_overnight_curated_features,
 )
@@ -199,4 +201,86 @@ def test_add_cross_sectional_overnight_features():
 
     # 5. Check Sector Relative Return
     assert day1.loc["A", "sector_relative_return_1d"] > 0
+
+
+def test_check_jumping_catch_risk_triggers():
+    # 1. Exhaustion Return Surge: return_1d > +4.5%
+    row_surge = pd.Series({
+        "return_1d": 0.052,
+        "vol_adjusted_momentum_1d": 1.5,
+        "rsi_14": 55.0,
+        "pullback_from_high": 0.1,
+        "intraday_return": 0.03,
+    })
+    is_risk, reason = check_jumping_catch_risk(row_surge)
+    assert is_risk is True
+    assert "過熱暴騰警戒" in reason
+
+    # 2. Momentum Burst: vol_adjusted_momentum_1d > 2.2
+    row_momentum = pd.Series({
+        "return_1d": 0.025,
+        "vol_adjusted_momentum_1d": 2.45,
+        "rsi_14": 60.0,
+        "pullback_from_high": 0.1,
+        "intraday_return": 0.015,
+    })
+    is_risk, reason = check_jumping_catch_risk(row_momentum)
+    assert is_risk is True
+    assert "過熱モメンタム警戒" in reason
+
+    # 3. RSI Overbought Extension: rsi_14 between 65 and 75 with return_1d > 0.010
+    row_rsi = pd.Series({
+        "return_1d": 0.018,
+        "vol_adjusted_momentum_1d": 1.2,
+        "rsi_14": 69.5,
+        "pullback_from_high": 0.1,
+        "intraday_return": 0.01,
+    })
+    is_risk, reason = check_jumping_catch_risk(row_rsi)
+    assert is_risk is True
+    assert "RSI過熱追随警戒" in reason
+
+    # 4. Upper Shadow Stall: pullback_from_high >= 0.60 with intraday_return <= 0 and rsi_14 >= 55
+    row_shadow = pd.Series({
+        "return_1d": 0.005,
+        "vol_adjusted_momentum_1d": 0.8,
+        "rsi_14": 60.0,
+        "pullback_from_high": 0.72,
+        "intraday_return": -0.010,
+    })
+    is_risk, reason = check_jumping_catch_risk(row_shadow)
+    assert is_risk is True
+    assert "上ヒゲ失速警戒" in reason
+
+    # 5. Healthy Normal Candidate (Dip bounce / calm advance): should PASS
+    row_healthy = pd.Series({
+        "return_1d": 0.012,
+        "vol_adjusted_momentum_1d": 1.1,
+        "rsi_14": 52.0,
+        "pullback_from_high": 0.15,
+        "intraday_return": 0.008,
+    })
+    is_risk, reason = check_jumping_catch_risk(row_healthy)
+    assert is_risk is False
+    assert reason == ""
+
+
+def test_add_execution_guard_features():
+    df = pd.DataFrame({
+        "open": [100.0, 102.0],
+        "high": [105.0, 110.0],
+        "low": [99.0, 101.0],
+        "close": [104.0, 102.5],
+        "return_1d": [0.01, 0.048],  # Second row triggers surge
+        "vol_adjusted_momentum_1d": [1.0, 1.2],
+        "rsi_14": [50.0, 58.0],
+    })
+    res = add_execution_guard_features(df)
+
+    assert "pullback_from_high" in res.columns
+    assert "jumping_catch_risk" in res.columns
+    assert "jumping_catch_reason" in res.columns
+    assert res["jumping_catch_risk"].iloc[0] == False
+    assert res["jumping_catch_risk"].iloc[1] == True
+
 

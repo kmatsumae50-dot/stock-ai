@@ -30,6 +30,7 @@ from stock_ai.cloud.notifications import (
 from stock_ai.config import PROJECT_ROOT
 from stock_ai.data.universe import load_turnaround_universe, load_universe
 from stock_ai.events.earnings_guard import check_earnings_risk
+from stock_ai.features.overnight import check_jumping_catch_risk
 
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     try:
@@ -565,7 +566,27 @@ def analyze_single_ticker(query: str) -> dict[str, Any] | None:
 
         earnings_risk, earnings_date = check_earnings_risk(ticker)
 
-    # 4. Value Hunter Analytics
+    # 4. Jumping Catch Execution Guard Verification
+    jumping_catch_risk = False
+    jumping_catch_reason = ""
+    if cached_overnight and "jumping_catch_risk" in cached_overnight:
+        jumping_catch_risk = bool(cached_overnight.get("jumping_catch_risk", False))
+        jumping_catch_reason = str(cached_overnight.get("jumping_catch_reason", ""))
+    else:
+        feat_p = PROJECT_ROOT / f"data/features/{ticker}.parquet"
+        if feat_p.exists():
+            try:
+                from stock_ai.storage.parquet_store import read_parquet
+                f_df = read_parquet(feat_p)
+                if not f_df.empty:
+                    jumping_catch_risk, jumping_catch_reason = check_jumping_catch_risk(f_df.iloc[-1])
+            except Exception:
+                pass
+        if not jumping_catch_risk and pct_change >= 0.045:
+            jumping_catch_risk = True
+            jumping_catch_reason = f"当日日中急騰過熱 (+{pct_change:.1%}) によるExhaustion高値掴み警戒"
+
+    # 5. Value Hunter Analytics
     if cached_turnaround:
         bargain_score = float(cached_turnaround.get("bargain_score", 50.0))
         turnaround_status = cached_turnaround.get("status", "⚖️ 中立調整圏")
@@ -589,14 +610,20 @@ def analyze_single_ticker(query: str) -> dict[str, Any] | None:
         else:
             turnaround_status = "📈 高値巡航圏"
 
-    # 5. Formulate AI Analyst Dialogue Statements
+    # 6. Formulate AI Analyst Dialogue Statements
     # --- Persona 2: Sniper ---
     e_flag_str = "⚠️ 決算発表直前警戒（決算跨ぎリスクあり）" if earnings_risk else "✅ 通常（決算地雷なし）"
     cs_desc = ""
     if p_cs is not None and cs_rank is not None:
         cs_desc = f"\n全銘柄相対スコア（Cross-Sectional）: **{p_cs:.1%}**（順位: **{cs_rank}位**）"
 
-    if p_up >= 0.52:
+    if jumping_catch_risk:
+        sniper_comment = (
+            f"⚠️ **【高値掴み警戒（過熱見送り）】** {jumping_catch_reason}\n"
+            f"明朝寄り付き上昇確率は **{p_up:.1%}**（{q_band}）ですが、大引け時点の過熱度/上ヒゲ失速により翌朝ギャップダウンの罠リスクが極めて高くなっています。クオンツ執行フィルターによりエントリー対象から除外（見送り）判定です！{cs_desc}\n"
+            f"決算チェック: **{e_flag_str}**。"
+        )
+    elif p_up >= 0.52:
         sniper_comment = (
             f"明朝寄り付き上昇確率 **{p_up:.1%}**（{q_band}）。買い優位のシグナルが点灯しています！{cs_desc}\n"
             f"決算チェック: **{e_flag_str}**。"
@@ -631,6 +658,13 @@ def analyze_single_ticker(query: str) -> dict[str, Any] | None:
             "🚨 **【チーフ判断: 見送り推奨】**\n"
             "直近に決算発表が控えており、ボラティリティ急変によるギャンブル跨ぎは厳禁です。"
             "発表後の市場反応を確認してからポジションを構築しましょう。"
+        )
+    elif jumping_catch_risk:
+        chief_conclusion = (
+            "⚠️ **【チーフ判断: 高値掴み警戒・過熱見送り】**\n"
+            f"クオンツ執行フィルターが作動しました（理由: {jumping_catch_reason}）。\n"
+            "急騰直後のExhaustion局面や上ヒゲ失速銘柄に飛びつくジャンピングキャッチは、翌朝の大きなギャップダウンに直結する典型的な負けパターンです。"
+            "規律を守り、無理なエントリーを避けてキャッシュを温存します🛡️"
         )
     elif p_up >= 0.52 and p_cs is not None and p_cs >= 0.50 and bargain_score >= 65.0:
         chief_conclusion = (
@@ -686,6 +720,9 @@ def analyze_single_ticker(query: str) -> dict[str, Any] | None:
         "q_label": q_label,
         "earnings_risk": earnings_risk,
         "earnings_date": earnings_date,
+        "jumping_catch_risk": jumping_catch_risk,
+        "jumping_catch_reason": jumping_catch_reason,
+        "jumping_catch_status": "⚠️ 高値掴み警戒（過熱見送り）" if jumping_catch_risk else "✅ エントリー適格",
         "bargain_score": bargain_score,
         "turnaround_status": turnaround_status,
         "chief_conclusion": chief_conclusion,
@@ -1026,16 +1063,24 @@ def build_single_ticker_dialogue_payloads(
         f"{analysis['chief_conclusion']}\n\n"
         f"スナイパー、ハンター、各専門視点の評価詳細を提示してください。」"
     )
+    chief_fields = [
+        {"name": "⚡ 短期Overnight確率", "value": f"**{p_up:.1%}** ({q_band})", "inline": True},
+        {"name": "💎 割安反転スコア", "value": f"**{score:.1f}点** ({status})", "inline": True},
+        {"name": "📈 RSI(14) / PBR", "value": f"**{rsi:.1f}** / **{pbr_s}**", "inline": True},
+    ]
+    if analysis.get("jumping_catch_risk"):
+        chief_fields.append({
+            "name": "🛡️ 執行ガード判定",
+            "value": f"⚠️ **高値掴み警戒（過熱見送り）**\n理由: {analysis.get('jumping_catch_reason', '')}",
+            "inline": False,
+        })
+    chief_fields.append({"name": "⚖️ チーフ総合結論", "value": analysis["chief_conclusion"], "inline": False})
+
     embed_chief = {
         "title": f"📊 【銘柄分析】{name} ({ticker}) - {date_str}",
         "description": f"セクター: {sector} | 終値: **{close:,.1f}円** ({pct:+.2%})",
         "color": 3066993,  # Emerald
-        "fields": [
-            {"name": "⚡ 短期Overnight確率", "value": f"**{p_up:.1%}** ({q_band})", "inline": True},
-            {"name": "💎 割安反転スコア", "value": f"**{score:.1f}点** ({status})", "inline": True},
-            {"name": "📈 RSI(14) / PBR", "value": f"**{rsi:.1f}** / **{pbr_s}**", "inline": True},
-            {"name": "⚖️ チーフ総合結論", "value": analysis["chief_conclusion"], "inline": False},
-        ],
+        "fields": chief_fields,
         "footer": {"text": "Stock-AI Real-Time Interactive Analyst Lounge"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
@@ -1063,6 +1108,11 @@ def build_single_ticker_dialogue_payloads(
         "fields": [
             {"name": "確率バンド", "value": f"**{p_up:.1%}** ({analysis['q_label']})", "inline": True},
             {"name": "決算地雷リスク", "value": f"**{e_flag}**{e_date_info}", "inline": True},
+            {
+                "name": "執行フィルター",
+                "value": "⚠️ **高値掴み警戒（過熱除外）**" if analysis.get("jumping_catch_risk") else "✅ **エントリー適格**",
+                "inline": True,
+            },
             {"name": "スナイパー見立て", "value": analysis["sniper_comment"], "inline": False},
         ],
         "footer": {"text": "Stock-AI Short-Term Sniper Engine"},
@@ -1252,13 +1302,16 @@ def build_recommendation_dialogue_payloads(query: str = "") -> list[dict[str, An
     picked_sniper: dict[str, Any] | None = None
     sniper_cost = 0.0
     for cand in top_o:
+        if cand.get("jumping_catch_risk"):
+            continue
         _, cost = get_candidate_cost(cand)
         if budget is None or cost <= budget * 1.05:
             picked_sniper = cand
             sniper_cost = cost
             break
     if not picked_sniper and top_o:
-        picked_sniper = top_o[0]
+        safe_cands = [c for c in top_o if not c.get("jumping_catch_risk")]
+        picked_sniper = safe_cands[0] if safe_cands else top_o[0]
         _, sniper_cost = get_candidate_cost(picked_sniper)
 
     picked_hunter: dict[str, Any] | None = None
@@ -1534,8 +1587,9 @@ def build_ranking_payloads() -> list[dict[str, Any]]:
     lines_o = []
     if top_o:
         for idx, item in enumerate(top_o[:3], 1):
+            jc_flag = " ⚠️高値掴み警戒" if item.get("jumping_catch_risk") else ""
             lines_o.append(
-                f"{idx}. `{item.get('ticker')}` **{item.get('name')}**: 上昇確率 **{item.get('probability_up', 0.0):.1%}** ({item.get('q_band', 'Q5')})"
+                f"{idx}. `{item.get('ticker')}` **{item.get('name')}**: 上昇確率 **{item.get('probability_up', 0.0):.1%}** ({item.get('q_band', 'Q5')}){jc_flag}"
             )
     else:
         lines_o.append("該当なし")
