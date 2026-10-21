@@ -1,33 +1,33 @@
 {
   "metrics": {
-    "accuracy": 0.511400651465798,
-    "f1": 0.6314496314496314,
-    "auc": 0.49265081799591,
+    "accuracy": 0.5293159609120521,
+    "f1": 0.662777129521587,
+    "auc": 0.5011662832310838,
     "rows": 614
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.5003,
+      "max_p": 0.5001,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.4878,
-      "description": "実績ギャップアップ率 48.8%（陰線・下落警戒）"
+      "historical_win_rate": 0.5122,
+      "description": "実績ギャップアップ率 51.2%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.5003,
-      "max_p": 0.5039,
+      "min_p": 0.5001,
+      "max_p": 0.5022,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.5574,
-      "description": "実績ギャップアップ率 55.7%（弱気）"
+      "historical_win_rate": 0.541,
+      "description": "実績ギャップアップ率 54.1%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.5039,
-      "max_p": 0.5067,
+      "min_p": 0.5022,
+      "max_p": 0.5065,
       "label": "中立帯",
       "direction": "neutral",
       "historical_win_rate": 0.5447,
@@ -35,8 +35,8 @@
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5067,
-      "max_p": 0.5088,
+      "min_p": 0.5065,
+      "max_p": 0.5083,
       "label": "強気先行帯",
       "direction": "up",
       "historical_win_rate": 0.4836,
@@ -44,7 +44,7 @@
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5088,
+      "min_p": 0.5083,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
@@ -95,6 +95,14 @@
   "top_features": [
     {
       "feature": "close_vs_ma_5",
+      "importance": 5.0
+    },
+    {
+      "feature": "volume_change_1d",
+      "importance": 4.0
+    },
+    {
+      "feature": "usdjpy_return_1d",
       "importance": 4.0
     },
     {
@@ -102,19 +110,7 @@
       "importance": 3.0
     },
     {
-      "feature": "topix_return_1d",
-      "importance": 3.0
-    },
-    {
-      "feature": "usdjpy_return_1d",
-      "importance": 3.0
-    },
-    {
-      "feature": "volume_change_1d",
-      "importance": 2.0
-    },
-    {
-      "feature": "volume_surge_20d",
+      "feature": "volatility_20",
       "importance": 2.0
     },
     {
@@ -126,11 +122,15 @@
       "importance": 2.0
     },
     {
-      "feature": "sector_trend_score",
-      "importance": 2.0
+      "feature": "high_low_range",
+      "importance": 1.0
     },
     {
-      "feature": "high_low_range",
+      "feature": "close_position",
+      "importance": 1.0
+    },
+    {
+      "feature": "close_vs_ma_25",
       "importance": 1.0
     }
   ]

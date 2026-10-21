@@ -1,15 +1,15 @@
 {
   "metrics": {
-    "accuracy": 0.505654281098546,
-    "f1": 0.41379310344827586,
-    "auc": 0.49267577105389543,
+    "accuracy": 0.5040387722132472,
+    "f1": 0.4218455743879473,
+    "auc": 0.4943048943456109,
     "rows": 619
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4919,
+      "max_p": 0.4921,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
       "historical_win_rate": 0.5161,
@@ -17,39 +17,39 @@
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4919,
-      "max_p": 0.4956,
+      "min_p": 0.4921,
+      "max_p": 0.4957,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.4758,
-      "description": "実績ギャップアップ率 47.6%（弱気）"
+      "historical_win_rate": 0.4435,
+      "description": "実績ギャップアップ率 44.4%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4956,
-      "max_p": 0.4984,
+      "min_p": 0.4958,
+      "max_p": 0.4986,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.4472,
-      "description": "実績ギャップアップ率 44.7%（中立・推移注視）"
+      "historical_win_rate": 0.4634,
+      "description": "実績ギャップアップ率 46.3%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.4984,
-      "max_p": 0.5024,
+      "min_p": 0.4986,
+      "max_p": 0.5026,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.6129,
-      "description": "実績ギャップアップ率 61.3%（堅調）"
+      "historical_win_rate": 0.5968,
+      "description": "実績ギャップアップ率 59.7%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5025,
+      "min_p": 0.5026,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.5403,
-      "description": "実績ギャップアップ率 54.0%（最高勝率群）"
+      "historical_win_rate": 0.5645,
+      "description": "実績ギャップアップ率 56.5%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -102,10 +102,6 @@
       "importance": 4.0
     },
     {
-      "feature": "volume_change_1d",
-      "importance": 4.0
-    },
-    {
       "feature": "usdjpy_close_vs_ma_25",
       "importance": 4.0
     },
@@ -115,6 +111,10 @@
     },
     {
       "feature": "close_vs_ma_5",
+      "importance": 3.0
+    },
+    {
+      "feature": "volume_change_1d",
       "importance": 3.0
     },
     {
@@ -130,7 +130,7 @@
       "importance": 2.0
     },
     {
-      "feature": "vol_adjusted_momentum_1d",
+      "feature": "close_vs_ma_25",
       "importance": 2.0
     }
   ]
