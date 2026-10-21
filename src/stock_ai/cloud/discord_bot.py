@@ -1673,6 +1673,181 @@ def build_ranking_payloads() -> list[dict[str, Any]]:
     }]
 
 
+def build_daytrade_sniper_payloads(
+    ticker: str,
+    name: str = "",
+    query: str = "",
+) -> list[dict[str, Any]]:
+    """Build a sharp, 100% intraday-focused response for the 1-Day Intraday Sniper channel."""
+    from stock_ai.models.intraday import predict_daytrade_sniper
+
+    res = predict_daytrade_sniper(ticker, name=name)
+    if not res:
+        guidance = (
+            f"⚡ **【デイトレ特化スナイパー AI】**\n"
+            f"申し訳ありません、`{ticker}` のリアルタイム当日データを取得できませんでした。"
+        )
+        return [{"username": "⚡ デイトレ特化スナイパー AI", "content": guidance, "text": guidance}]
+
+    cur_p = res["current_price"]
+    open_p = res["open_price"]
+    high_p = res["high_price"]
+    low_p = res["low_price"]
+    p_up = res["probability_up"]
+    bps = res["expected_return_bps"]
+    judge = res["judgment"]
+    target_p = res["target_price"]
+    target_pct = res["target_pct"]
+    support_p = res["support_price"]
+    stop_p = res["stop_loss_price"]
+    stop_pct = res["stop_loss_pct"]
+    tactic = res["tactical_comment"]
+    phase_title = res["phase_title"]
+    clv = res["clv"]
+    intra_pct = res["intraday_return_pct"]
+    day_pct = res["day_return_pct"]
+    flags = res["risk_flags"]
+    code_str = res["ticker"]
+    disp_name = res["name"]
+
+    # Color: Green if BUY, Red if SELL, Gold if NEUTRAL
+    color = 3066993 if "今日上がる" in judge or "翌営業日上がる" in judge else (15158332 if "今日下がる" in judge or "翌営業日下がる" in judge else 15844367)
+    risk_str = f" | {' '.join(flags)}" if flags else ""
+
+    speech = (
+        f"⚡ **デイトレ特化スナイパー AI**\n"
+        f"「`{code_str}` **{disp_name}** の【当日デイトレ特化診断】です🎯（中長期の雑音は一切排除）\n\n"
+        f"【白黒判定】: **{judge}**{risk_str}\n"
+        f"・当日上昇確率: **{p_up:.1f}%** (期待リターン: **{bps:+.0f}bps**)\n"
+        f"・現在値: **{cur_p:,.1f} 円** (始値比: **{intra_pct:+.2f}%** / 前日比: **{day_pct:+.2f}%**)\n"
+        f"・日中レンジ: 安値 **{low_p:,.0f}円** 〜 高値 **{high_p:,.0f}円** (CLV **{clv:.0%}**)\n\n"
+        f"【本日のデイトレ目標レンジ】\n"
+        f"🚀 **上値ターゲット**: **{target_p:,.1f} 円** (`+{target_pct:.2f}%`)\n"
+        f"🛡️ **下値サポート**: **{support_p:,.1f} 円**\n"
+        f"🛑 **損切り撤退ライン**: **{stop_p:,.1f} 円** (`{stop_pct:.2f}%`)\n\n"
+        f"【当日デイトレ戦術】\n"
+        f"💡 {tactic}\n\n"
+        f"⚠️ **デイトレ原則**: 15:25までに全決済（大引け手仕舞い）。オーバーナイト持ち越し厳禁！」"
+    )
+
+    embed = {
+        "title": f"⚡ 当日デイトレ特化予想: {code_str} {disp_name}",
+        "description": f"{phase_title}\n**判定: {judge}**",
+        "color": color,
+        "fields": [
+            {
+                "name": "📈 当日上昇確率 / 期待値",
+                "value": f"確率: **{p_up:.1f}%**\n期待リターン: **{bps:+.0f} bps**",
+                "inline": True,
+            },
+            {
+                "name": "💵 株価・日中モメンタム",
+                "value": f"現在値: **{cur_p:,.1f}円**\n始値比: **{intra_pct:+.2f}%** (CLV **{clv:.0%}**)",
+                "inline": True,
+            },
+            {
+                "name": "🎯 目標利確 / 損切りライン",
+                "value": f"目標: **{target_p:,.1f}円** (`+{target_pct:.2f}%`)\n損切り: **{stop_p:,.1f}円** (`{stop_pct:.2f}%`)",
+                "inline": True,
+            },
+            {
+                "name": "⚡ デイトレ具体戦術",
+                "value": tactic,
+                "inline": False,
+            },
+            {
+                "name": "🛡️ 執行ルール",
+                "value": "15:25までに全ポジション決済（大引け手仕舞い）。当日の値幅だけを刈り取るのが鉄則。",
+                "inline": False,
+            },
+        ],
+        "footer": {"text": "Stock AI 1-Day Intraday Sniper | 当日特化型クオンツ予測"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    return [{
+        "username": "⚡ デイトレ特化スナイパー AI",
+        "content": speech,
+        "text": speech,
+        "embeds": [embed],
+    }]
+
+
+def build_daytrade_ranking_payloads() -> list[dict[str, Any]]:
+    """Build Top 5 Up and Top 5 Down ranking response for the 1-Day Intraday Sniper."""
+    from stock_ai.models.intraday import get_daily_daytrade_rankings
+
+    rankings = get_daily_daytrade_rankings(top_n=5)
+    phase_title = rankings.get("phase_title", "⚡ 本日デイトレ予想ランキング")
+    date_str = rankings.get("date", datetime.now().strftime("%Y-%m-%d"))
+
+    top_up_lines = []
+    top_up_fields = []
+    for idx, r in enumerate(rankings.get("top_up", []), 1):
+        line = (
+            f"**{idx}. `{r['ticker']}` {r['name']}** ({r.get('sector', '-')})\n"
+            f"   ・上昇確率: **{r['probability_up']:.1f}%** | 期待値: **{r['expected_return_bps']:+.0f}bps**\n"
+            f"   ・目標: **{r['target_price']:,.1f}円** (`+{r['target_pct']:.2f}%`) | 損切: **{r['stop_loss_price']:,.1f}円** (`{r['stop_loss_pct']:.2f}%`)\n"
+            f"   ・戦術: {r['tactical_comment'][:55]}..."
+        )
+        top_up_lines.append(f"{idx}. `{r['ticker']}` **{r['name']}**: 上昇確率 **{r['probability_up']:.1f}%** ({r['judgment']})")
+        top_up_fields.append(line)
+
+    top_down_lines = []
+    top_down_fields = []
+    for idx, r in enumerate(rankings.get("top_down", []), 1):
+        line = (
+            f"**{idx}. `{r['ticker']}` {r['name']}** ({r.get('sector', '-')})\n"
+            f"   ・上昇確率: **{r['probability_up']:.1f}%** (下落・陰線警戒)\n"
+            f"   ・判定: **{r['judgment']}** | 現在値: **{r['current_price']:,.1f}円**\n"
+            f"   ・警告: {r['tactical_comment'][:55]}..."
+        )
+        top_down_lines.append(f"{idx}. `{r['ticker']}` **{r['name']}**: 上昇確率 **{r['probability_up']:.1f}%** ({r['judgment']})")
+        top_down_fields.append(line)
+
+    speech = (
+        f"⚡ **デイトレ特化スナイパー AI**\n"
+        f"「東証プライム主要50銘柄の【本日デイトレ（09:00〜15:30）特化ランキング】をスキャン完了しました🎯\n\n"
+        f"🟢 **【本日上昇確率 TOP 5（買い候補）】**\n"
+        + "\n".join(top_up_lines) + "\n\n"
+        f"🔴 **【本日下落警戒 TOP 5（売り・見送り候補）】**\n"
+        + "\n".join(top_down_lines) + "\n\n"
+        f"個別銘柄の詳細（上値ターゲット・損切り価格・場中戦術）を知りたい場合は、銘柄名（例: `7012`, `フジクラ`）を送信してください！」"
+    )
+
+    embed = {
+        "title": f"⚡ 【本日デイトレ特化予想ランキング】({date_str})",
+        "description": f"{phase_title}\n東証プライム主力50銘柄から当日上昇確率・日中モメンタムを全頭スキャン",
+        "color": 15844367,  # Gold
+        "fields": [
+            {
+                "name": "🟢 本日上昇確率 TOP 5（買い・陽線候補）",
+                "value": ("\n\n".join(top_up_fields) if top_up_fields else "該当なし")[:1020],
+                "inline": False,
+            },
+            {
+                "name": "🔴 本日下落警戒 TOP 5（失速・陰線候補）",
+                "value": ("\n\n".join(top_down_fields) if top_down_fields else "該当なし")[:1020],
+                "inline": False,
+            },
+            {
+                "name": "🛡️ デイトレ執行規律",
+                "value": "15:25までに全ポジション決済（大引け手仕舞い）。買い候補はVWAP・前場押し目でエントリー、下落警戒銘柄は逆張り買い厳禁。",
+                "inline": False,
+            },
+        ],
+        "footer": {"text": "Stock AI 1-Day Intraday Sniper | 当日特化型ランキング"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    return [{
+        "username": "⚡ デイトレ特化スナイパー AI",
+        "content": speech,
+        "text": speech,
+        "embeds": [embed],
+    }]
+
+
 # ---------------------------------------------------------------------------
 # 4. Discord REST API Polling Listener Bot
 # ---------------------------------------------------------------------------
@@ -1795,6 +1970,8 @@ class DiscordPollingBot:
                 wh = self.webhooks.get("alert")
             elif "相談" in ch_name or "consultation" in ch_name:
                 wh = self.webhooks.get("consultation")
+            elif "デイトレ" in ch_name or "daytrade" in ch_name:
+                wh = self.webhooks.get("daytrade")
             else:
                 wh = None
 
@@ -1960,6 +2137,57 @@ class DiscordPollingBot:
 
         # Extract tickers with dynamic search and particle tokenization
         tickers = extract_all_tickers(cleaned)
+
+        # Determine channel context
+        ch_id = str(msg.get("channel_id", "")) if msg else ""
+        channels = getattr(self, "monitored_channels", [])
+        ch = next((c for c in channels if str(c.get("id")) == ch_id), {})
+        ch_name = ch.get("name", "")
+        is_daytrade_channel = "デイトレ" in ch_name or "daytrade" in ch_name
+        is_daytrade_query = is_daytrade_channel or any(
+            k in clean_lower
+            for k in ["デイトレ", "今日", "当日", "本日", "日中", "デイ", "daytrade", "上がる株", "下がる株", "上がる？", "下がる？"]
+        )
+
+        # -------------------------------------------------------------------
+        # Dedicated 1-Day Intraday Sniper Routing (100% Daytrade Focused)
+        # -------------------------------------------------------------------
+        if is_daytrade_query:
+            # A. Rankings query
+            ranking_keywords = [
+                "何が上がる", "なにが上がる", "ランキング", "上がる株", "下がる株",
+                "今日の予想", "今日", "top", "順位", "注目", "リスト",
+            ]
+            if (not tickers and any(k in clean_lower for k in ranking_keywords)) or clean_lower in ("ランキング", "top", "順位", "注目", "ranking"):
+                return build_daytrade_ranking_payloads()
+
+            # B. Specific tickers resolved (e.g. 7012, フジクラ, レーザーテック)
+            if tickers:
+                primary_code, primary_name = tickers[0]
+                return build_daytrade_sniper_payloads(primary_code, name=primary_name, query=cleaned)
+
+            # C. Single code fallback resolve
+            resolved = resolve_ticker(cleaned)
+            if resolved:
+                return build_daytrade_sniper_payloads(resolved[0], name=resolved[1], query=cleaned)
+
+            # D. Daytrade channel generic inquiry
+            if is_daytrade_channel:
+                if any(k in clean_lower for k in ["予想", "どう", "相場", "おすすめ"]):
+                    return build_daytrade_ranking_payloads()
+                guidance = (
+                    "⚡ **【デイトレ特化スナイパー AI】**\n\n"
+                    f"「『{cleaned[:30]}』から対象銘柄を特定できませんでした。\n\n"
+                    "💡 **入力例**:\n"
+                    "・**個別銘柄の当日診断**: `7012`, `フジクラ`, `レーザーテック`, `トヨタどう？`\n"
+                    "・**本日の全銘柄予想**: `今日なにが上がる？`, `ランキング`, `上がる株`\n\n"
+                    "中長期の雑音なしで、今日上がるか・下がるかを即座に白黒判定します！」"
+                )
+                return [{
+                    "username": "⚡ デイトレ特化スナイパー AI",
+                    "content": guidance,
+                    "text": guidance,
+                }]
 
         # Check if the query is an investment inquiry or ticker-related
         has_investment_intent = any(

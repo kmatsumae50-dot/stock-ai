@@ -280,6 +280,7 @@ def get_configured_channel_webhooks() -> dict[str, str]:
         "turnaround": ["STOCK_AI_WEBHOOK_TURNAROUND"],
         "alert": ["STOCK_AI_WEBHOOK_ALERT"],
         "consultation": ["STOCK_AI_WEBHOOK_CONSULTATION"],
+        "daytrade": ["STOCK_AI_WEBHOOK_DAYTRADE"],
     }
     for ch_key, env_keys in key_mappings.items():
         for env_k in env_keys:

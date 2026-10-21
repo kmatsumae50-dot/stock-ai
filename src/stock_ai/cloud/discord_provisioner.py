@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from stock_ai.config import PROJECT_ROOT
+
 logger = logging.getLogger(__name__)
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
@@ -198,6 +200,7 @@ class DiscordProvisioner:
         cat2 = self.get_or_create_category(guild_id, "🧠 戦略・ラボ")
         cat2_id = cat2["id"]
         ch_consult = self.get_or_create_text_channel(guild_id, "💬｜ai投資相談室", cat2_id)
+        ch_daytrade = self.get_or_create_text_channel(guild_id, "⚡｜当日デイトレ特化予想", cat2_id)
         ch_notes = self.get_or_create_text_channel(guild_id, "📝｜相場メモ・独り言", cat2_id)
 
         # Webhooks
@@ -206,6 +209,7 @@ class DiscordProvisioner:
         wh_turn = self.get_or_create_webhook(ch_turn["id"], "Stock-AI Value Hunter")
         wh_alert = self.get_or_create_webhook(ch_alert["id"], "Stock-AI Risk Guardian")
         wh_consult = self.get_or_create_webhook(ch_consult["id"], "Stock-AI Consultation Room")
+        wh_daytrade = self.get_or_create_webhook(ch_daytrade["id"], "Stock-AI Daytrade Sniper")
         wh_notes = self.get_or_create_webhook(ch_notes["id"], "Stock-AI Notes Reporter")
 
         return {
@@ -220,6 +224,7 @@ class DiscordProvisioner:
                 "turnaround": ch_turn["id"],
                 "alert": ch_alert["id"],
                 "consultation": ch_consult["id"],
+                "daytrade": ch_daytrade["id"],
                 "notes": ch_notes["id"],
             },
             "webhooks": {
@@ -228,6 +233,7 @@ class DiscordProvisioner:
                 "turnaround": wh_turn,
                 "alert": wh_alert,
                 "consultation": wh_consult,
+                "daytrade": wh_daytrade,
                 "notes": wh_notes,
             },
         }
@@ -395,6 +401,72 @@ class DiscordProvisioner:
                 ],
             }
             self._post_webhook(webhooks["consultation"], payload)
+            time.sleep(sleep_interval)
+
+        # 6. Daytrade Sniper Room
+        if "daytrade" in webhooks:
+            payload = {
+                "username": "⚡ デイトレ特化スナイパー AI",
+                "content": (
+                    "⚡ **【当日デイトレ特化予想チャンネル 開通！】**\n\n"
+                    "「お待たせしました！中長期・バリューの話題を一切排除した **【当日デイトレ特化予想チャンネル（`⚡｜当日デイトレ特化予想`）】** を開通します🎯\n\n"
+                    "ここでは、東証プライム主力50銘柄を中心に **『その日（09:00寄付き〜15:30大引け）上がるか・下がるか』だけに100%特化** してリアルタイムに診断します。\n\n"
+                    "💡 **使い方・質問例**:\n"
+                    "・**個別銘柄の当日診断**: `フジクラ`, `7012`, `キオクシア`, `レーザーテック`, `トヨタどう？`\n"
+                    "  → **当日上昇確率 %**、**明確な白黒判定（🟢今日上がる / 🔴今日下がる / ⚪レンジ様子見）**、**本日想定レンジ（上値ターゲット・損切り価格）**、**場中デイトレ戦術** を即答！\n"
+                    "・**今日上がる株・下がる株ランキング**: `今日なにが上がる？`, `ランキング`, `上がる株`, `下がる株`\n"
+                    "  → 50銘柄から **本日上昇確率 TOP 5** ＆ **下落警戒 TOP 5** を即座にスキャンして返答！\n\n"
+                    "今日勝つためのシャープな武器としてガンガン使い倒してください！」"
+                ),
+                "embeds": [
+                    {
+                        "title": "⚡ 当日デイトレ特化予想 (1-Day Intraday Sniper) 開通",
+                        "description": "09:00寄付き〜15:30大引けの『今日上がるか下がるか』だけに100%特化した最速レスポンス",
+                        "color": 15844367,  # Gold
+                        "fields": [
+                            {"name": "🎯 対象時間軸", "value": "当日 09:00 寄付き 〜 15:30 大引け（翌日持ち越しゼロ）", "inline": True},
+                            {"name": "📈 提示データ", "value": "当日上昇確率 % ＋ 🟢今日上がる / 🔴今日下がる", "inline": True},
+                            {"name": "🛡️ 執行規律", "value": "本日想定レンジ（上値目標 / 損切りライン）を完全数値化", "inline": True},
+                            {"name": "💬 入力例", "value": "`7012`, `フジクラ`, `今日なにが上がる？`, `ランキング`", "inline": False},
+                        ],
+                        "footer": {"text": "Stock AI 1-Day Intraday Sniper Engine"},
+                        "timestamp": now_ts,
+                    }
+                ],
+            }
+            self._post_webhook(webhooks["daytrade"], payload)
+
+    @staticmethod
+    def save_webhooks_to_env_file(webhooks: dict[str, str]) -> None:
+        """Update local .env file with newly provisioned webhooks."""
+        env_path = PROJECT_ROOT / ".env"
+        if not env_path.exists():
+            return
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+        new_lines: list[str] = []
+        has_daytrade = False
+        has_json = False
+        daytrade_url = webhooks.get("daytrade")
+        json_str = json.dumps(webhooks, ensure_ascii=False)
+
+        for line in lines:
+            if line.startswith("STOCK_AI_WEBHOOK_DAYTRADE="):
+                if daytrade_url:
+                    new_lines.append(f"STOCK_AI_WEBHOOK_DAYTRADE={daytrade_url}")
+                    has_daytrade = True
+            elif line.startswith("STOCK_AI_CHANNEL_WEBHOOKS="):
+                new_lines.append(f"STOCK_AI_CHANNEL_WEBHOOKS={json_str}")
+                has_json = True
+            else:
+                new_lines.append(line)
+
+        if not has_daytrade and daytrade_url:
+            new_lines.append(f"STOCK_AI_WEBHOOK_DAYTRADE={daytrade_url}")
+        if not has_json:
+            new_lines.append(f"STOCK_AI_CHANNEL_WEBHOOKS={json_str}")
+
+        env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+        logger.info("Updated .env file with daytrade webhooks.")
 
 
     @staticmethod

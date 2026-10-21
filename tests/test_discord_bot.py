@@ -319,3 +319,66 @@ def test_build_holding_exit_strategy_dialogue_payloads() -> None:
     assert "損切り" in payloads[1]["content"] or "ロスカット" in payloads[1]["content"]
     assert "保有" in payloads[2]["content"] or "ホールド" in payloads[2]["content"]
 
+
+def test_build_daytrade_sniper_and_ranking_payloads() -> None:
+    from stock_ai.cloud.discord_bot import (
+        build_daytrade_ranking_payloads,
+        build_daytrade_sniper_payloads,
+    )
+
+    # 1. Daytrade single sniper
+    payloads = build_daytrade_sniper_payloads("7012.T", name="川崎重工業")
+    assert len(payloads) == 1
+    p = payloads[0]
+    assert "デイトレ特化スナイパー" in p["username"]
+    assert "川崎重工業" in p["content"]
+    assert len(p["embeds"]) == 1
+    embed = p["embeds"][0]
+    assert "当日デイトレ特化予想" in embed["title"]
+    # Check that mid-long term value terms are NOT present
+    assert "PBR" not in embed["fields"][0]["value"]
+    assert "割安" not in embed["fields"][0]["value"]
+
+    # 2. Daytrade ranking
+    rank_payloads = build_daytrade_ranking_payloads()
+    assert len(rank_payloads) == 1
+    rp = rank_payloads[0]
+    assert "デイトレ特化スナイパー" in rp["username"]
+    assert len(rp["embeds"]) == 1
+    rembed = rp["embeds"][0]
+    assert "本日デイトレ特化予想ランキング" in rembed["title"]
+    assert len(rembed["fields"]) >= 2
+    # Ensure field values never exceed Discord 1024-char limit
+    for f in rembed["fields"]:
+        assert len(f["value"]) <= 1024
+
+
+def test_daytrade_channel_and_keyword_routing() -> None:
+    from stock_ai.cloud.discord_bot import DiscordPollingBot
+
+    with patch.object(DiscordPollingBot, "__init__", lambda self: None):
+        bot = DiscordPollingBot()
+        bot.monitored_channels = [
+            {"id": "12345", "name": "⚡｜当日デイトレ特化予想"},
+            {"id": "67890", "name": "☕｜aiアナリスト作戦会議"},
+        ]
+
+        # 1. In daytrade channel, ticker query gets Daytrade Sniper
+        res_ch = bot._handle_user_message("7012", msg={"channel_id": "12345"})
+        assert res_ch is not None
+        assert len(res_ch) == 1
+        assert "デイトレ特化スナイパー" in res_ch[0]["username"]
+
+        # 2. In generic channel, "今日" / "デイトレ" keyword triggers Daytrade Sniper
+        res_kw = bot._handle_user_message("今日の7012どう？", msg={"channel_id": "67890"})
+        assert res_kw is not None
+        assert len(res_kw) == 1
+        assert "デイトレ特化スナイパー" in res_kw[0]["username"]
+
+        # 3. Ranking query in daytrade channel
+        res_rank = bot._handle_user_message("今日なにが上がる？", msg={"channel_id": "12345"})
+        assert res_rank is not None
+        assert "デイトレ特化スナイパー" in res_rank[0]["username"]
+        assert "本日デイトレ特化予想ランキング" in res_rank[0]["embeds"][0]["title"]
+
+
