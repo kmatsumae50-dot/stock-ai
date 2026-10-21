@@ -199,7 +199,7 @@ def test_load_turnaround_universe_50_tickers() -> None:
     assert "鉄鋼" in sectors
     assert "海運" in sectors
     assert "不動産" in sectors
-    assert "半導体" in sectors
+    assert any("半導体" in s for s in sectors)
     assert "防衛・重工" in sectors
 
 

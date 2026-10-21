@@ -383,19 +383,30 @@ def run_cloud_daily_pipeline(
     else:
         scanner_rows.sort(key=lambda x: x["probability_up"], reverse=True)
 
-    # Set rank and select top pick (highest ranking candidate without earnings or jumping catch risk)
+    # Set rank and select top pick (highest ranking candidate meeting sniper criteria)
     top_pick_found = False
     for idx, row in enumerate(scanner_rows, 1):
         row["rank"] = idx
-        if not top_pick_found and not row.get("earnings_risk") and not row.get("jumping_catch_risk"):
+        is_sniper_eligible = (
+            not row.get("earnings_risk")
+            and not row.get("jumping_catch_risk")
+            and (row.get("q_band") == "Q5")
+            and (row.get("cs_rank_pct", 0.5) >= 0.85 if len(scanner_rows) >= 30 else True)
+        )
+        row["is_sniper_eligible"] = is_sniper_eligible
+        if not top_pick_found and is_sniper_eligible:
             row["is_top_pick"] = True
             top_pick_found = True
         else:
             row["is_top_pick"] = False
 
-    # Fallback to top rank if all have warnings
+    # Fallback to highest safe rank if none meet full sniper criteria
     if not top_pick_found and scanner_rows:
-        scanner_rows[0]["is_top_pick"] = True
+        safe_cands = [r for r in scanner_rows if not r.get("earnings_risk") and not r.get("jumping_catch_risk")]
+        if safe_cands:
+            safe_cands[0]["is_top_pick"] = True
+        else:
+            scanner_rows[0]["is_top_pick"] = True
 
     # Save JSON snapshot
     saved_snapshot = save_overnight_scanner_snapshot(

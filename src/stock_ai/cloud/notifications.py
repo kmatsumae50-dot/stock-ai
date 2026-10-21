@@ -148,12 +148,14 @@ def get_current_pipeline_summary(
     paper_metrics: dict[str, Any] = {}
     top_turnaround: list[dict[str, Any]] = []
 
+    all_rankings: list[dict[str, Any]] = []
     s_file = Path(snapshot_path)
     if s_file.exists():
         try:
             s_data = json.loads(s_file.read_text(encoding="utf-8"))
             date_str = s_data.get("date") or date_str
-            top_overnight = s_data.get("rankings", [])[:5]
+            all_rankings = s_data.get("rankings", [])
+            top_overnight = all_rankings[:5]
         except Exception:
             pass
 
@@ -204,6 +206,7 @@ def get_current_pipeline_summary(
     return {
         "date": date_str,
         "top_overnight": top_overnight,
+        "all_rankings": all_rankings,
         "paper_trader": paper_metrics,
         "top_turnaround": top_turnaround,
     }
@@ -307,26 +310,60 @@ def build_multi_agent_webhook_payloads(summary_data: dict[str, Any]) -> list[dic
     win = paper_metrics.get("win_rate", 0.0)
     sh = paper_metrics.get("sharpe_ratio", 0.0)
     max_dd = paper_metrics.get("max_drawdown", 0.0)
-    pos = paper_metrics.get("next_positions") or "本日エントリーなし (キャッシュ待機判定)"
+    dual_pos = paper_metrics.get("dual_shift_positions")
+    pos = dual_pos if dual_pos else (paper_metrics.get("next_positions") or "本日エントリーなし (キャッシュ待機判定)")
+
+    # 3大厳選推奨の算出
+    top_sniper_on = next(
+        (r for r in top_overnight if r.get("is_sniper_eligible") or r.get("is_top_pick")),
+        None,
+    )
+    if top_sniper_on:
+        on_rec = f"🌙 **今夜のOvernight推奨**: `{top_sniper_on.get('ticker')}` **{top_sniper_on.get('name')}** ({top_sniper_on.get('q_band', 'Q5')} / CS優位度 **{top_sniper_on.get('p_cs', 0.5):.1%}** / 執行ガード適格 ✅)"
+    else:
+        on_rec = "🌙 **今夜のOvernight推奨**: キャッシュ待機（厳選スナイパー条件未達）"
+
+    search_pool = summary_data.get("all_rankings") or top_overnight
+    intraday_cands = sorted(
+        [r for r in search_pool if r.get("pred_intraday_return") is not None],
+        key=lambda x: x.get("pred_intraday_return", 0.0),
+        reverse=True,
+    )
+    top_intra = intraday_cands[0] if intraday_cands else None
+    if top_intra and (top_intra.get("pred_intraday_return", 0.0) >= 0.0045):
+        intra_ret_bps = top_intra.get("pred_intraday_return", 0.0) * 10000.0
+        intra_rec = f"☀️ **明日のIntraday推奨**: `{top_intra.get('ticker')}` **{top_intra.get('name')}** (日中期待値: **{intra_ret_bps:+.0f}bps** / 寄前確定エントリー)"
+    elif top_intra:
+        intra_ret_bps = top_intra.get("pred_intraday_return", 0.0) * 10000.0
+        intra_rec = f"☀️ **明日のIntraday推奨**: キャッシュ待機（最高値候補: `{top_intra.get('ticker')}` {top_intra.get('name')} {intra_ret_bps:+.0f}bps / 45bpsハードル未達のため厳選見送り 🛡️）"
+    else:
+        intra_rec = "☀️ **明日のIntraday推奨**: キャッシュ待機"
+
+    if turnaround_picks:
+        t_top = turnaround_picks[0]
+        turn_rec = f"💎 **激安回復株推奨**: `{t_top.get('ticker')}` **{t_top.get('name')}** (割安スコア: **{t_top.get('bargain_score', 0):.1f}点** / 52週高値比: **{t_top.get('drawdown_252d', 0):+.1%}** — {t_top.get('status', '')})"
+    else:
+        turn_rec = "💎 **激安回復株推奨**: 該当なし"
 
     # --- Persona 1: Chief Fund Manager ---
     is_cash_wait = (
-        "本日エントリーなし" in pos
-        or "キャッシュ待機" in pos
+        "キャッシュ待機 | ☀️ 日中Intraday: キャッシュ待機" in pos
+        or ("本日エントリーなし" in pos and "☀️" not in pos)
         or not pos
         or pos.strip() == "なし"
     )
     if is_cash_wait:
         entry_decision = (
             "🛡️ **【本日の売買判定: キャッシュ待機】**\n"
-            "本日は優位性の高いQ5シグナル条件を満たす銘柄がないため、**キャッシュ待機（ノーポジ）** で資産を守ります。"
+            "本日は優位性の高いスナイパー条件を満たす銘柄がないため、**キャッシュ待機（ノーポジ）** で資産を守ります。"
             "無理なエントリーは避け、勝率の高い好機を待ちましょう。"
         )
     else:
         entry_decision = (
             f"🎯 **【本日の売買判定: 実戦エントリー】**\n"
-            f"シグナル点灯！明朝の寄り付きに向けて **【{pos}】** で勝負します！"
-            "リスク管理を徹底しつつ、規律あるトレードで利益を狙いに行きます。"
+            f"高確信度スナイパーシグナル点灯！\n"
+            f"**{pos}**\n"
+            "リスク管理・高値掴み遮断を徹底しつつ、20bps摩擦コストに負けない規律あるトレードで利益を狙います。"
         )
 
     chief_speech = (
@@ -334,6 +371,10 @@ def build_multi_agent_webhook_payloads(summary_data: dict[str, Any]) -> list[dic
         f"「皆さん、本日もお疲れ様です。{date_str} の作戦ブリーフィングを開始します。\n\n"
         f"当ファンド（Overnight × Intraday 2毛作 Compound Fund）の現在の総資産は **{eq:,.0f} 円**（通算リターン: **{ret:+.1%}** / 勝率: **{win:.1%}** / Sharpe: **{sh:.2f}** / MaxDD: **{max_dd:.1%}**）で力強く推移しています。\n\n"
         f"{entry_decision}\n\n"
+        f"【最新50銘柄 3大厳選推奨】\n"
+        f"・{on_rec}\n"
+        f"・{intra_rec}\n"
+        f"・{turn_rec}\n\n"
         f"それではスナイパー、短期Overnight＆日中寄前スキャンの精査結果を報告してください。」"
     )
 
@@ -360,6 +401,11 @@ def build_multi_agent_webhook_payloads(summary_data: dict[str, Any]) -> list[dic
             {
                 "name": "⚖️ 本日の売買判定",
                 "value": f"**{pos}**",
+                "inline": False,
+            },
+            {
+                "name": "🎯 最新50銘柄 3大厳選推奨",
+                "value": f"{on_rec}\n{intra_rec}\n{turn_rec}",
                 "inline": False,
             },
         ],

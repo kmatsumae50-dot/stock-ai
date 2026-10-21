@@ -228,6 +228,14 @@ def collect_overnight_universe_predictions(
 
     full_df = pd.concat(records, ignore_index=True)
     full_df["date"] = pd.to_datetime(full_df["date"])
+
+    # Ensure cross-sectional validity by excluding partial/midday dates where universe coverage is incomplete
+    if len(universe) >= 5:
+        min_coverage = max(1, int(len(universe) * 0.70))
+        date_counts = full_df.groupby("date")["ticker"].count()
+        valid_dates = date_counts[date_counts >= min_coverage].index
+        full_df = full_df[full_df["date"].isin(valid_dates)].copy()
+
     if "p_cs" in full_df.columns:
         full_df["cs_rank"] = full_df.groupby("date")["p_cs"].rank(pct=True).fillna(0.5)
     dates = sorted(full_df["date"].unique())
@@ -261,19 +269,22 @@ def simulate_overnight_strategy(
                 long_picks = q5s.head(5)["ticker"].tolist()
 
         elif strategy_name == "elite_top2_long":
-            # High Conviction Long: Dual confirmation + Execution Guard
+            # High Conviction Long: Dual confirmation + Execution Guard + Selective Sniper Threshold
             # 1. Individual Model AUC >= 0.50 (edge over coin flip)
             # 2. Individual Quantile == Q5 with validation win_rate >= 0.50
-            # 3. Cross-Sectional Confirmation: p_cs >= daily median p_cs (when pooled model available)
+            # 3. Cross-Sectional Selective Sniper:
+            #    When universe >= 30, strictly require top 15% (cs_cutoff = quantile(0.85)) to avoid over-trading,
+            #    otherwise require median (quantile(0.50)).
             # 4. Earnings Guard: Filter out earnings risk tickers
             # 5. Anti-Jumping-Catch Execution Guard: Filter out overbought/exhaustion traps
             has_cs = "p_cs" in day_slice.columns
-            med_cs = day_slice["p_cs"].median() if has_cs else 0.5
+            cs_pct = 0.85 if len(day_slice) >= 30 else 0.50
+            cs_cutoff = day_slice["p_cs"].quantile(cs_pct) if has_cs else 0.50
             eligible = day_slice[
                 (day_slice["auc"] >= 0.50)
                 & (day_slice["quantile"] == "Q5")
                 & (day_slice["win_rate"] >= 0.50)
-                & ((day_slice["p_cs"] >= med_cs) if has_cs else True)
+                & ((day_slice["p_cs"] >= cs_cutoff) if has_cs else True)
             ]
             if "earnings_risk" in eligible.columns:
                 eligible = eligible[~eligible["earnings_risk"].fillna(False).astype(bool)]
@@ -285,14 +296,15 @@ def simulate_overnight_strategy(
                 long_picks = elites.head(2)["ticker"].tolist()
 
         elif strategy_name == "long_short_spread":
-            # Long: Strategy B with Earnings Guard and Jumping Catch Guard
+            # Long: Strategy B with Earnings Guard, Jumping Catch Guard, and Selective Sniper Threshold
             has_cs = "p_cs" in day_slice.columns
-            med_cs = day_slice["p_cs"].median() if has_cs else 0.5
+            cs_pct = 0.85 if len(day_slice) >= 30 else 0.50
+            cs_cutoff = day_slice["p_cs"].quantile(cs_pct) if has_cs else 0.50
             eligible = day_slice[
                 (day_slice["auc"] >= 0.50)
                 & (day_slice["quantile"] == "Q5")
                 & (day_slice["win_rate"] >= 0.50)
-                & ((day_slice["p_cs"] >= med_cs) if has_cs else True)
+                & ((day_slice["p_cs"] >= cs_cutoff) if has_cs else True)
             ]
             if "earnings_risk" in eligible.columns:
                 eligible = eligible[~eligible["earnings_risk"].fillna(False).astype(bool)]
@@ -303,11 +315,16 @@ def simulate_overnight_strategy(
             if not elites.empty:
                 long_picks = elites.head(2)["ticker"].tolist()
 
-            # Short: Q1 with auc >= 0.50, and p_cs <= median, up to 2, p_cs asc
+            # Short: Q1 with auc >= 0.50, and p_cs <= bottom 15% (or median), up to 2, p_cs asc
+            short_cutoff = (
+                day_slice["p_cs"].quantile(0.15)
+                if (has_cs and len(day_slice) >= 30)
+                else (day_slice["p_cs"].median() if has_cs else 0.50)
+            )
             q1s = day_slice[
                 (day_slice["auc"] >= 0.50)
                 & (day_slice["quantile"] == "Q1")
-                & ((day_slice["p_cs"] <= med_cs) if has_cs else True)
+                & ((day_slice["p_cs"] <= short_cutoff) if has_cs else True)
             ].sort_values(sort_col, ascending=True)
             if not q1s.empty:
                 short_picks = q1s.head(2)["ticker"].tolist()
@@ -465,7 +482,7 @@ def simulate_intraday_strategy(
     strategy_name: str = "intraday_top1_long",
     cost: float = 0.0020,
     initial_capital: float = 1_000_000.0,
-    hurdle_bps: float = 30.0,
+    hurdle_bps: float = 45.0,
 ) -> dict[str, Any]:
     """Simulate morning 07:30 pre-market intraday (Open[t] -> Close[t]) strategy with strict cost deduction."""
     equity = initial_capital
@@ -479,7 +496,10 @@ def simulate_intraday_strategy(
 
         picks: list[str] = []
         if "pred_intraday_ret" in day_slice.columns:
-            cands = day_slice[day_slice["pred_intraday_ret"] >= hurdle].sort_values("pred_intraday_ret", ascending=False)
+            cond = day_slice["pred_intraday_ret"] >= hurdle
+            if "p_intraday_cs" in day_slice.columns:
+                cond = cond & (day_slice["p_intraday_cs"] >= 0.50)
+            cands = day_slice[cond].sort_values("pred_intraday_ret", ascending=False)
             if not cands.empty:
                 for _, c in cands.iterrows():
                     # Intraday earnings guard
@@ -735,7 +755,7 @@ def run_full_overnight_portfolio_backtest(
             strategy_name="intraday_top1_long",
             cost=cost_val,
             initial_capital=initial_capital,
-            hurdle_bps=30.0,
+            hurdle_bps=45.0,
         )
         results_by_cost[cost_key]["intraday_top1_long"] = intra_res
 
