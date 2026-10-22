@@ -1096,9 +1096,9 @@ def build_single_ticker_dialogue_payloads(
         f"スナイパー、ハンター、各専門視点の評価詳細を提示してください。」"
     )
     chief_fields = [
-        {"name": "⚡ 短期Overnight確率", "value": f"**{p_up:.1%}** ({q_band})", "inline": True},
-        {"name": "💎 割安反転スコア", "value": f"**{score:.1f}点** ({status})", "inline": True},
-        {"name": "📈 RSI(14) / PBR", "value": f"**{rsi:.1f}** / **{pbr_s}**", "inline": True},
+        {"name": "⚡ 短期Overnight確率", "value": f"**{p_up:.1%}** ({q_band})", "inline": False},
+        {"name": "💎 割安反転スコア", "value": f"**{score:.1f}点** ({status})", "inline": False},
+        {"name": "📈 RSI(14) / PBR", "value": f"**{rsi:.1f}** / **{pbr_s}**", "inline": False},
     ]
     if analysis.get("p_intraday_cs") is not None:
         p_intra = analysis["p_intraday_cs"]
@@ -1107,7 +1107,7 @@ def build_single_ticker_dialogue_payloads(
         chief_fields.append({
             "name": "☀️ 日中Intraday予測",
             "value": f"**{p_intra:.1%}** ({intra_q} / **{ret_bps:+.0f} bps**)",
-            "inline": True,
+            "inline": False,
         })
     if analysis.get("jumping_catch_risk"):
         chief_fields.append({
@@ -1147,12 +1147,12 @@ def build_single_ticker_dialogue_payloads(
         "description": "翌朝寄り付き（Close-to-Open）の上昇ギャップ狙い目度",
         "color": 15844367,  # Gold
         "fields": [
-            {"name": "確率バンド", "value": f"**{p_up:.1%}** ({analysis['q_label']})", "inline": True},
-            {"name": "決算地雷リスク", "value": f"**{e_flag}**{e_date_info}", "inline": True},
+            {"name": "確率バンド", "value": f"**{p_up:.1%}** ({analysis['q_label']})", "inline": False},
+            {"name": "決算地雷リスク", "value": f"**{e_flag}**{e_date_info}", "inline": False},
             {
                 "name": "執行フィルター",
                 "value": "⚠️ **高値掴み警戒（過熱除外）**" if analysis.get("jumping_catch_risk") else "✅ **エントリー適格**",
-                "inline": True,
+                "inline": False,
             },
             {"name": "スナイパー見立て", "value": analysis["sniper_comment"], "inline": False},
         ],
@@ -1179,8 +1179,8 @@ def build_single_ticker_dialogue_payloads(
         "description": "東証プライム基準における底打ち・下値反転ポテンシャル",
         "color": 10181046,  # Purple
         "fields": [
-            {"name": "割安スコア", "value": f"**{score:.1f} / 100点**", "inline": True},
-            {"name": "52週高値比下落率", "value": f"**{analysis['drawdown_52w']:+.1%}**", "inline": True},
+            {"name": "割安スコア", "value": f"**{score:.1f} / 100点**", "inline": False},
+            {"name": "52週高値比下落率", "value": f"**{analysis['drawdown_52w']:+.1%}**", "inline": False},
             {"name": "バリューハンター見立て", "value": analysis["hunter_comment"], "inline": False},
         ],
         "footer": {"text": "Stock-AI Value Hunter Engine"},
@@ -1600,12 +1600,12 @@ def build_help_payload() -> dict[str, Any]:
         "description": "自然言語での質問や銘柄コードをそのままチャットに入力してください。",
         "color": 3447003,
         "fields": [
-            {"name": "⚔️ 銘柄比較相談", "value": "`トヨタと日産どっち？`, `ソニー 任天堂 比較`", "inline": True},
-            {"name": "🎯 おすすめ・資金相談", "value": "`30万円で買うなら？`, `今おすすめの株`", "inline": True},
-            {"name": "🧭 相場観・売買規律", "value": "`今の相場どう？`, `損切りの基準は？`", "inline": True},
-            {"name": "🔍 単一銘柄分析", "value": "`7203`, `トヨタ`, `任天堂買い時？`", "inline": True},
-            {"name": "🏆 ランキング速報", "value": "`ランキング`, `top`, `順位`", "inline": True},
-            {"name": "ℹ️ ヘルプ", "value": "`ヘルプ`, `help`, `使い方`", "inline": True},
+            {"name": "⚔️ 銘柄比較相談", "value": "`トヨタと日産どっち？`, `ソニー 任天堂 比較`", "inline": False},
+            {"name": "🎯 おすすめ・資金相談", "value": "`30万円で買うなら？`, `今おすすめの株`", "inline": False},
+            {"name": "🧭 相場観・売買規律", "value": "`今の相場どう？`, `損切りの基準は？`", "inline": False},
+            {"name": "🔍 単一銘柄分析", "value": "`7203`, `トヨタ`, `任天堂買い時？`", "inline": False},
+            {"name": "🏆 ランキング速報", "value": "`ランキング`, `top`, `順位`", "inline": False},
+            {"name": "ℹ️ ヘルプ", "value": "`ヘルプ`, `help`, `使い方`", "inline": False},
         ],
         "footer": {"text": "Stock-AI Autonomous Investment Consultation Room"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1713,55 +1713,49 @@ def build_daytrade_sniper_payloads(
     # Color: Green if BUY, Red if SELL, Gold if NEUTRAL
     color = 3066993 if "今日上がる" in judge or "翌営業日上がる" in judge else (15158332 if "今日下がる" in judge or "翌営業日下がる" in judge else 15844367)
     risk_str = f" | {' '.join(flags)}" if flags else ""
+    judge_icon = "🟢" if "上がる" in judge else ("🔴" if "下がる" in judge else "⚪")
 
     speech = (
-        f"⚡ **デイトレ特化スナイパー AI**\n"
-        f"「`{code_str}` **{disp_name}** の【当日デイトレ特化診断】です🎯（中長期の雑音は一切排除）\n\n"
-        f"【白黒判定】: **{judge}**{risk_str}\n"
-        f"・当日上昇確率: **{p_up:.1f}%** (期待リターン: **{bps:+.0f}bps**)\n"
-        f"・現在値: **{cur_p:,.1f} 円** (始値比: **{intra_pct:+.2f}%** / 前日比: **{day_pct:+.2f}%**)\n"
-        f"・日中レンジ: 安値 **{low_p:,.0f}円** 〜 高値 **{high_p:,.0f}円** (CLV **{clv:.0%}**)\n\n"
-        f"【本日のデイトレ目標レンジ】\n"
-        f"🚀 **上値ターゲット**: **{target_p:,.1f} 円** (`+{target_pct:.2f}%`)\n"
-        f"🛡️ **下値サポート**: **{support_p:,.1f} 円**\n"
-        f"🛑 **損切り撤退ライン**: **{stop_p:,.1f} 円** (`{stop_pct:.2f}%`)\n\n"
-        f"【当日デイトレ戦術】\n"
-        f"💡 {tactic}\n\n"
-        f"⚠️ **デイトレ原則**: 15:25までに全決済（大引け手仕舞い）。オーバーナイト持ち越し厳禁！」"
+        f"{judge_icon} **【{judge}】{code_str} {disp_name}**{risk_str}\n"
+        f"📈 上昇確率: **`{p_up:.1f}%`** （期待値 **`{bps:+.0f}bps`**）\n\n"
+        f"> 💰 **現在値**: **`{cur_p:,.1f}円`** （始値比 `{intra_pct:+.2f}%` ／ 前日比 `{day_pct:+.2f}%`）\n"
+        f"> 🎯 **上値目標**: **`{target_p:,.1f}円`** (`+{target_pct:.2f}%`)\n"
+        f"> 🛡️ **損切撤退**: **`{stop_p:,.1f}円`** (`{stop_pct:.2f}%`)\n\n"
+        f"💡 **戦術**: {tactic}\n"
+        f"⚠️ **規律**: 15:25までに全決済（大引け手仕舞い）。オーバーナイト持ち越し厳禁。"
     )
 
     embed = {
         "title": f"⚡ 当日デイトレ特化予想: {code_str} {disp_name}",
-        "description": f"{phase_title}\n**判定: {judge}**",
+        "description": f"**判定: {judge}** ({phase_title})",
         "color": color,
         "fields": [
             {
-                "name": "📈 当日上昇確率 / 期待値",
-                "value": f"確率: **{p_up:.1f}%**\n期待リターン: **{bps:+.0f} bps**",
-                "inline": True,
+                "name": f"{judge_icon} 当日判定 & 確率",
+                "value": f"判定: **{judge}**\n上昇確率: **`{p_up:.1f}%`** | 期待値: **`{bps:+.0f}bps`**",
+                "inline": False,
             },
             {
-                "name": "💵 株価・日中モメンタム",
-                "value": f"現在値: **{cur_p:,.1f}円**\n始値比: **{intra_pct:+.2f}%** (CLV **{clv:.0%}**)",
-                "inline": True,
+                "name": "🎯 価格ライン（目標 / 損切）",
+                "value": (
+                    f"> 💰 **現在値**: **`{cur_p:,.1f}円`** (始値比 `{intra_pct:+.2f}%`)\n"
+                    f"> 🎯 **上値目標**: **`{target_p:,.1f}円`** (`+{target_pct:.2f}%`)\n"
+                    f"> 🛡️ **損切撤退**: **`{stop_p:,.1f}円`** (`{stop_pct:.2f}%`)"
+                ),
+                "inline": False,
             },
             {
-                "name": "🎯 目標利確 / 損切りライン",
-                "value": f"目標: **{target_p:,.1f}円** (`+{target_pct:.2f}%`)\n損切り: **{stop_p:,.1f}円** (`{stop_pct:.2f}%`)",
-                "inline": True,
-            },
-            {
-                "name": "⚡ デイトレ具体戦術",
+                "name": "💡 当日デイトレ戦術",
                 "value": tactic,
                 "inline": False,
             },
             {
                 "name": "🛡️ 執行ルール",
-                "value": "15:25までに全ポジション決済（大引け手仕舞い）。当日の値幅だけを刈り取るのが鉄則。",
+                "value": "15:25までに全ポジション決済（大引け手仕舞い）。日中値幅だけを刈り取るのが鉄則。",
                 "inline": False,
             },
         ],
-        "footer": {"text": "Stock AI 1-Day Intraday Sniper | 当日特化型クオンツ予測"},
+        "footer": {"text": "Stock AI 1-Day Intraday Sniper | モバイル最速レスポンス"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -1781,62 +1775,54 @@ def build_daytrade_ranking_payloads() -> list[dict[str, Any]]:
     phase_title = rankings.get("phase_title", "⚡ 本日デイトレ予想ランキング")
     date_str = rankings.get("date", datetime.now().strftime("%Y-%m-%d"))
 
-    top_up_lines = []
-    top_up_fields = []
-    for idx, r in enumerate(rankings.get("top_up", []), 1):
-        line = (
-            f"**{idx}. `{r['ticker']}` {r['name']}** ({r.get('sector', '-')})\n"
-            f"   ・上昇確率: **{r['probability_up']:.1f}%** | 期待値: **{r['expected_return_bps']:+.0f}bps**\n"
-            f"   ・目標: **{r['target_price']:,.1f}円** (`+{r['target_pct']:.2f}%`) | 損切: **{r['stop_loss_price']:,.1f}円** (`{r['stop_loss_pct']:.2f}%`)\n"
-            f"   ・戦術: {r['tactical_comment'][:55]}..."
+    top_up_list = []
+    num_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+    for idx, r in enumerate(rankings.get("top_up", []), 0):
+        emoji = num_emojis[idx] if idx < len(num_emojis) else f"{idx+1}."
+        top_up_list.append(
+            f"{emoji} **`{r['ticker']}` {r['name']}** 【**`{r['probability_up']:.1f}%`** / `{r['expected_return_bps']:+.0f}bps`】\n"
+            f"> 🎯 目標 **`{r['target_price']:,.1f}円`** (`+{r['target_pct']:.1f}%`) ／ 🛡️ 損切 **`{r['stop_loss_price']:,.1f}円`**"
         )
-        top_up_lines.append(f"{idx}. `{r['ticker']}` **{r['name']}**: 上昇確率 **{r['probability_up']:.1f}%** ({r['judgment']})")
-        top_up_fields.append(line)
 
-    top_down_lines = []
-    top_down_fields = []
-    for idx, r in enumerate(rankings.get("top_down", []), 1):
-        line = (
-            f"**{idx}. `{r['ticker']}` {r['name']}** ({r.get('sector', '-')})\n"
-            f"   ・上昇確率: **{r['probability_up']:.1f}%** (下落・陰線警戒)\n"
-            f"   ・判定: **{r['judgment']}** | 現在値: **{r['current_price']:,.1f}円**\n"
-            f"   ・警告: {r['tactical_comment'][:55]}..."
+    top_down_list = []
+    for idx, r in enumerate(rankings.get("top_down", []), 0):
+        emoji = num_emojis[idx] if idx < len(num_emojis) else f"{idx+1}."
+        top_down_list.append(
+            f"{emoji} **`{r['ticker']}` {r['name']}** 【**`{r['probability_up']:.1f}%`** / 陰線警戒 ⚠️】\n"
+            f"> 💰 現在値 **`{r['current_price']:,.1f}円`** ／ 判定: **{r['judgment']}**"
         )
-        top_down_lines.append(f"{idx}. `{r['ticker']}` **{r['name']}**: 上昇確率 **{r['probability_up']:.1f}%** ({r['judgment']})")
-        top_down_fields.append(line)
 
     speech = (
-        f"⚡ **デイトレ特化スナイパー AI**\n"
-        f"「東証プライム主要50銘柄の【本日デイトレ（09:00〜15:30）特化ランキング】をスキャン完了しました🎯\n\n"
-        f"🟢 **【本日上昇確率 TOP 5（買い候補）】**\n"
-        + "\n".join(top_up_lines) + "\n\n"
-        f"🔴 **【本日下落警戒 TOP 5（売り・見送り候補）】**\n"
-        + "\n".join(top_down_lines) + "\n\n"
-        f"個別銘柄の詳細（上値ターゲット・損切り価格・場中戦術）を知りたい場合は、銘柄名（例: `7012`, `フジクラ`）を送信してください！」"
+        f"⚡ **【本日デイトレ特化予想ランキング】({date_str})**\n\n"
+        f"🟢 **本日上昇確率 TOP 5（買い候補）**\n"
+        + ("\n".join(top_up_list) if top_up_list else "該当なし") + "\n\n"
+        f"🔴 **本日下落警戒 TOP 5（売り・見送り）**\n"
+        + ("\n".join(top_down_list) if top_down_list else "該当なし") + "\n\n"
+        f"💡 個別銘柄の詳細はコードまたは社名（例: `7012`, `フジクラ`）を送信してください！"
     )
 
     embed = {
         "title": f"⚡ 【本日デイトレ特化予想ランキング】({date_str})",
-        "description": f"{phase_title}\n東証プライム主力50銘柄から当日上昇確率・日中モメンタムを全頭スキャン",
+        "description": f"**東証プライム主力50銘柄 全頭スキャン** ({phase_title})",
         "color": 15844367,  # Gold
         "fields": [
             {
-                "name": "🟢 本日上昇確率 TOP 5（買い・陽線候補）",
-                "value": ("\n\n".join(top_up_fields) if top_up_fields else "該当なし")[:1020],
+                "name": "🟢 本日上昇確率 TOP 5（買い候補）",
+                "value": ("\n".join(top_up_list) if top_up_list else "該当なし")[:1020],
                 "inline": False,
             },
             {
-                "name": "🔴 本日下落警戒 TOP 5（失速・陰線候補）",
-                "value": ("\n\n".join(top_down_fields) if top_down_fields else "該当なし")[:1020],
+                "name": "🔴 本日下落警戒 TOP 5（見送り候補）",
+                "value": ("\n".join(top_down_list) if top_down_list else "該当なし")[:1020],
                 "inline": False,
             },
             {
                 "name": "🛡️ デイトレ執行規律",
-                "value": "15:25までに全ポジション決済（大引け手仕舞い）。買い候補はVWAP・前場押し目でエントリー、下落警戒銘柄は逆張り買い厳禁。",
+                "value": "15:25までに全決済（大引け手仕舞い）。買い候補は押し目順張り、下落警戒銘柄は逆張り厳禁。",
                 "inline": False,
             },
         ],
-        "footer": {"text": "Stock AI 1-Day Intraday Sniper | 当日特化型ランキング"},
+        "footer": {"text": "Stock AI 1-Day Intraday Sniper | モバイル最適化"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 

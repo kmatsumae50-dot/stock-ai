@@ -888,26 +888,38 @@ def build_buy_feedback_payload(buy_res: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass
 
-    status_tag = "新規ポジション" if status == "NEW" else "買い増し"
+    status_tag = "新規" if status == "NEW" else "買い増し"
     content = (
-        f"✅ **【買付記帳完了】** `{ticker}` **{name}**\n"
-        f"・約定内容: **{shares:,}株 @{price:,.1f}円** ({status_tag})\n"
-        f"・現在保有: **合計 {total_shares:,}株** (平均取得単価: **{avg_price:,.1f}円**)"
+        f"✅ **【買付記帳完了】`{ticker}` {name}**\n"
+        f"🛒 約定: **`{shares:,}株 @{price:,.1f}円`** ({status_tag}) ➔ 保有計 **`{total_shares:,}株`**（平均 **`{avg_price:,.1f}円`**）\n\n"
+        f"> 🌙 Overnight確率: **`{p_up_str}`**\n"
+        f"> ⚡ デイトレ判定: **`{intra_decision}`**\n"
+        f"> 🎯 上値ターゲット: **`{target_price:,.1f}円`** (`+3.5%`)\n"
+        f"> 🛡️ 推奨損切ライン: **`{stop_loss:,.1f}円`** (`-3.5%`)"
     )
 
     embed = {
-        "title": f"🛒 買付記帳完了 & AIクオンツ診断 (`{ticker}` {name})",
-        "description": "取引ノートへの記帳が完了しました。最新AIモデルによる今後の見通しをお届けします。",
+        "title": f"🛒 買付記帳完了: {name} (`{ticker}`)",
+        "description": f"約定: **`{shares:,}株 @{price:,.1f}円`** | 保有計: **`{total_shares:,}株`**",
         "color": 3066993,  # Emerald Green
         "fields": [
-            {"name": "📊 買付データ", "value": f"株数: **{shares:,}株**\n約定単価: **{price:,.1f}円**\n約定代金: **{shares * price:,.0f}円**", "inline": True},
-            {"name": "📦 更新後ポジション", "value": f"保有株数: **{total_shares:,}株**\n平均取得単価: **{avg_price:,.1f}円**", "inline": True},
-            {"name": "🌙 Overnight上昇確率", "value": f"**{p_up_str}**", "inline": True},
-            {"name": "⚡ デイトレ・日中判定", "value": f"**{intra_decision}**", "inline": True},
-            {"name": "🎯 想定上値ターゲット", "value": f"**{target_price:,.1f}円** (+3.5%)", "inline": True},
-            {"name": "🛡️ 推奨損切りライン", "value": f"**{stop_loss:,.1f}円** (-3.5%)", "inline": True},
+            {
+                "name": "📦 更新後ポジション",
+                "value": f"> 保有株数: **`{total_shares:,}株`**\n> 平均取得単価: **`{avg_price:,.1f}円`**\n> 投下元本: **`{total_shares * avg_price:,.0f}円`**",
+                "inline": False,
+            },
+            {
+                "name": "🤖 最新AIクオンツ見立て",
+                "value": (
+                    f"> 🌙 Overnight確率: **`{p_up_str}`**\n"
+                    f"> ⚡ デイトレ判定: **`{intra_decision}`**\n"
+                    f"> 🎯 上値ターゲット: **`{target_price:,.1f}円`** (`+3.5%`)\n"
+                    f"> 🛡️ 推奨損切りライン: **`{stop_loss:,.1f}円`** (`-3.5%`)"
+                ),
+                "inline": False,
+            },
         ],
-        "footer": {"text": "Stock AI Personal Portfolio Ledger | 自動記帳＆AIフィードバック"},
+        "footer": {"text": "Stock AI Personal Portfolio Ledger | モバイル最適化"},
         "timestamp": now_ts,
     }
 
@@ -936,25 +948,32 @@ def build_sell_feedback_payload(sell_res: dict[str, Any]) -> dict[str, Any]:
     pnl_icon = "🎉" if realized_pnl >= 0 else "🛑"
     color = 15844367 if realized_pnl >= 0 else 15158332
 
+    close_tag = "全株決済完了" if is_full_close else f"一部売却（残: {remaining_shares:,}株）"
+
     content = (
-        f"💰 **【決済記帳完了】** `{ticker}` **{name}**\n"
-        f"・今回の確定損益: **{pnl_icon} {pnl_sign}{realized_pnl:,.0f} 円 ({realized_pnl_pct:+.1%})**\n"
-        f"・累計確定収支: **{total_realized:+,.0f} 円**"
+        f"💰 **【決済記帳完了】`{ticker}` {name}**\n"
+        f"📉 売却: **`{sold_shares:,}株 @{price:,.1f}円`** ({close_tag})\n\n"
+        f"> ⚖️ 今回確定損益: **{pnl_icon} `{pnl_sign}{realized_pnl:,.0f} 円` (`{realized_pnl_pct:+.1%}`)**\n"
+        f"> 🏆 累計確定収支: **`{total_realized:+,.0f} 円`**"
     )
 
-    close_status = "全株決済完了（ポジションクローズ）" if is_full_close else f"一部売却（残保有: {remaining_shares:,}株）"
-
     embed = {
-        "title": f"💰 決済記帳完了 (`{ticker}` {name})",
-        "description": "売買台帳に決済を記帳し、確定損益を反映しました。",
+        "title": f"💰 決済記帳完了: {name} (`{ticker}`)",
+        "description": f"売却: **`{sold_shares:,}株 @{price:,.1f}円`** | 状態: **{close_tag}**",
         "color": color,
         "fields": [
-            {"name": "📉 売却約定内容", "value": f"売却株数: **{sold_shares:,}株**\n売却単価: **{price:,.1f}円**\n受渡代金: **{sold_shares * price:,.0f}円**", "inline": True},
-            {"name": "⚖️ 今回の実現損益", "value": f"**{pnl_sign}{realized_pnl:,.0f} 円**\n({realized_pnl_pct:+.2%})", "inline": True},
-            {"name": "📊 ポジション状態", "value": f"**{close_status}**", "inline": True},
-            {"name": "🏆 通算累計実現損益", "value": f"**{total_realized:+,.0f} 円**", "inline": False},
+            {
+                "name": "⚖️ 今回の確定損益",
+                "value": f"> 実現損益: **`{pnl_sign}{realized_pnl:,.0f} 円`** (`{realized_pnl_pct:+.2%}`)\n> 受渡代金: **`{sold_shares * price:,.0f}円`**",
+                "inline": False,
+            },
+            {
+                "name": "🏆 通算累計実現損益",
+                "value": f"> 通算確定収支: **`{total_realized:+,.0f} 円`**",
+                "inline": False,
+            },
         ],
-        "footer": {"text": "Stock AI Personal Portfolio Ledger | 実現損益確定"},
+        "footer": {"text": "Stock AI Personal Portfolio Ledger | モバイル最適化"},
         "timestamp": now_ts,
     }
 
@@ -985,39 +1004,57 @@ def build_portfolio_overview_payload(db_path: Path | str | None = None) -> dict[
     u_sign = "+" if total_unrealized >= 0 else ""
     c_sign = "+" if total_comb >= 0 else ""
 
+    # Mobile-first list
     if pos_count == 0:
         pos_desc = "現在保有中の銘柄はありません。（全額キャッシュ待機中）"
+        holdings_lines = ["（保有ポジションなし・キャッシュ100%待機）"]
     else:
-        lines = []
+        holdings_lines = []
+        embed_lines = []
         for p in positions:
             p_sign = "+" if p["unrealized_pnl"] >= 0 else ""
-            lines.append(
-                f"・`{p['ticker']}` **{p['name']}**: {p['shares']:,}株 (取得 {p['avg_price']:,.0f}円 → 現在 **{p['current_price']:,.0f}円**) "
-                f"| 評価額: **{p['market_value']:,.0f}円** ({p_sign}{p['unrealized_pnl']:,.0f}円 / {p['unrealized_pnl_pct']:+.1%})"
+            h_line = (
+                f"・`{p['ticker']}` **{p['name']}** ({p['shares']:,}株)\n"
+                f"  取得 `{p['avg_price']:,.0f}円` ➔ 現在 `{p['current_price']:,.0f}円` (**`{p_sign}{p['unrealized_pnl']:,.0f}円` / `{p['unrealized_pnl_pct']:+.1%}`**)"
             )
-        pos_desc = "\n".join(lines)
+            holdings_lines.append(h_line)
+            embed_lines.append(
+                f"> **`{p['ticker']}` {p['name']}** ({p['shares']:,}株)\n"
+                f"> 取得 `{p['avg_price']:,.0f}円` ➔ 現在 `{p['current_price']:,.0f}円` (**`{p_sign}{p['unrealized_pnl']:,.0f}円` / `{p['unrealized_pnl_pct']:+.1%}`**)"
+            )
+        pos_desc = "\n\n".join(embed_lines)
 
     content = (
-        f"📊 **【マイ取引ノート 総合ポートフォリオ収支】**\n"
-        f"・現在の保有株評価額: **{total_market:,.0f} 円** (含み損益: **{u_sign}{total_unrealized:,.0f} 円 / {total_unrealized_pct:+.1%}**)\n"
-        f"・トータル総合収支: **{c_sign}{total_comb:,.0f} 円** (確定損益: {total_realized:+,.0f}円)\n"
-        f"・通算勝率: **{win_rate:.1%}** ({summary['win_trades_count']}勝 {summary['loss_trades_count']}敗) | Profit Factor: **{pf:.2f}**"
+        f"💼 **総合ポートフォリオ収支**: **`{c_sign}{total_comb:,.0f}円`**\n"
+        f"（確定: `{total_realized:+,.0f}円` ／ 含み: `{u_sign}{total_unrealized:,.0f}円`）\n"
+        f"📊 勝率: `{win_rate:.1%}` ({summary['win_trades_count']}勝{summary['loss_trades_count']}敗) ｜ PF: `{pf:.2f}`\n\n"
+        f"**【保有ポジション】** ({pos_count}銘柄)\n"
+        + "\n".join(holdings_lines)
     )
 
     embed = {
         "title": "📊 マイポートフォリオ 総合収支レポート",
-        "description": "ローカル売買台帳に記録された実取引データに基づく総合運用状況です。",
+        "description": f"トータル総合収支: **`{c_sign}{total_comb:,.0f} 円`**",
         "color": 3447003,  # Blue
         "fields": [
-            {"name": "💰 資産状況", "value": f"評価額合計: **{total_market:,.0f} 円**\n投下元本計: **{total_book:,.0f} 円**", "inline": True},
-            {"name": "📈 現在の含み損益", "value": f"**{u_sign}{total_unrealized:,.0f} 円**\n({total_unrealized_pct:+.2%})", "inline": True},
-            {"name": "🏆 累計確定損益", "value": f"**{total_realized:+,.0f} 円**", "inline": True},
-            {"name": "✨ トータル総合収支", "value": f"**{c_sign}{total_comb:,.0f} 円**\n(確定 + 含み)", "inline": True},
-            {"name": "🎯 トレード勝率", "value": f"**{win_rate:.1%}** ({summary['win_trades_count']}勝 {summary['loss_trades_count']}敗)", "inline": True},
-            {"name": "⚖️ Profit Factor", "value": f"**{pf:.2f}**", "inline": True},
-            {"name": f"📦 現在の保有銘柄 ({pos_count}銘柄)", "value": pos_desc, "inline": False},
+            {
+                "name": "💼 収支サマリー",
+                "value": (
+                    f"> 総合収支: **`{c_sign}{total_comb:,.0f} 円`**\n"
+                    f"> 含み損益: **`{u_sign}{total_unrealized:,.0f} 円`** (`{total_unrealized_pct:+.1%}`)\n"
+                    f"> 確定損益: **`{total_realized:+,.0f} 円`**\n"
+                    f"> 評価額計: **`{total_market:,.0f} 円`** (投下: `{total_book:,.0f} 円`)\n"
+                    f"> 通算勝率: **`{win_rate:.1%}`** | PF: **`{pf:.2f}`**"
+                ),
+                "inline": False,
+            },
+            {
+                "name": f"📦 現在の保有銘柄 ({pos_count}銘柄)",
+                "value": pos_desc[:1020],
+                "inline": False,
+            },
         ],
-        "footer": {"text": "Stock AI Personal Portfolio Manager"},
+        "footer": {"text": "Stock AI Personal Portfolio Manager | モバイル最適化"},
         "timestamp": now_ts,
     }
 
@@ -1055,28 +1092,37 @@ def build_risk_diagnosis_payload(diagnosis: dict[str, Any]) -> dict[str, Any]:
         lbl = item["status_label"]
         pnl = item["unrealized_pnl"]
         pnl_pct = item["unrealized_pnl_pct"]
-        pnl_str = f"{pnl:+,.0f}円 ({pnl_pct:+.1%})"
-        reasons_str = "\n".join(f"・{r}" for r in item["reasons"])
+        pnl_str = f"{pnl:+,.0f}円 / {pnl_pct:+.1%}"
+        reasons_str = "、".join(item["reasons"]) if item.get("reasons") else "特記事項なし"
         adv = item["action_advice"]
+        shares = item.get("shares", 100)
+        curr = item.get("current_price", 0.0)
+        avg = item.get("avg_price", curr)
+
+        icon = "🔴" if "急落" in lbl or "警戒" in lbl else ("🟡" if "注意" in lbl or "利確" in lbl else "🟢")
 
         fields.append({
-            "name": f"{lbl} | `{t}` {n}",
-            "value": f"含み損益: **{pnl_str}** (現在値: {item['current_price']:,.0f}円)\n{reasons_str}\n👉 **推奨戦術**: {adv}",
+            "name": f"{icon} **{n}** (`{t}`) — {shares:,}株",
+            "value": (
+                f"> 💰 取得 `{avg:,.0f}円` ➔ 現在 `{curr:,.0f}円` (**`{pnl_str}`**)\n"
+                f"> 🤖 判定: **{lbl}** ({reasons_str})\n"
+                f"> 💡 **推奨**: {adv}"
+            ),
             "inline": False,
         })
 
     color = 15158332 if reds > 0 else (15844367 if yellows > 0 else 3066993)
-    header_status = f"🔴 急落警戒 {reds}件 | 🟡 利確検討 {yellows}件 | 🟢 順調 {greens}件"
+    header_status = f"🔴 警戒 {reds} ｜ 🟡 注意 {yellows} ｜ 🟢 順調 {greens}"
 
     content = (
         f"🚨 **【保有株リアルタイム危険度診断】**\n"
-        f"診断結果: **{header_status}**\n"
-        f"{'⚠️ 急落警戒または決算注意の保有銘柄があります！詳細を確認してください。' if reds > 0 else '健全なポートフォリオ状況が維持されています。'}"
+        f"📊 **状況**: **{header_status}**\n"
+        f"💡 {'⚠️ 急落警戒または決算注意の保有銘柄があります。早めの手仕舞いを検討してください。' if reds > 0 else '健全なポートフォリオ状況が維持されています。'}"
     )
 
     embed = {
-        "title": "🛡️ 保有株リスク＆急落警戒診断レポート",
-        "description": "明朝のAI Overnight予測、直前決算カレンダー、テクニカル過熱天井を一括スクリーニングしました。",
+        "title": "🛡️ 保有ポジション＆AIリスク診断",
+        "description": "翌朝AI Overnight予測、直前決算、テクニカル過熱天井を一括スクリーニング",
         "color": color,
         "fields": fields,
         "footer": {"text": "Stock AI Risk Guardian | 保有銘柄セーフティガード"},

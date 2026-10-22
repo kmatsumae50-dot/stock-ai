@@ -356,59 +356,46 @@ def build_multi_agent_webhook_payloads(summary_data: dict[str, Any]) -> list[dic
         or not pos
         or pos.strip() == "なし"
     )
+    main_pick_name = ""
+    if top_overnight:
+        main_pick_name = top_overnight[0].get("name") or top_overnight[0].get("ticker", "")
+    elif paper_metrics.get("next_picks"):
+        main_pick_name = paper_metrics["next_picks"][0]
+
     if is_cash_wait:
-        entry_decision = (
-            "🛡️ **【本日の売買判定: キャッシュ待機】**\n"
-            "本日は優位性の高いスナイパー条件を満たす銘柄がないため、**キャッシュ待機（ノーポジ）** で資産を守ります。"
-            "無理なエントリーは避け、勝率の高い好機を待ちましょう。"
-        )
+        decision_line = "🛡️ **【判定: キャッシュ待機】** 優位性シグナル未達のためノーポジで資産防衛"
     else:
-        entry_decision = (
-            f"🎯 **【本日の売買判定: 実戦エントリー】**\n"
-            f"高確信度スナイパーシグナル点灯！\n"
-            f"**{pos}**\n"
-            "リスク管理・高値掴み遮断を徹底しつつ、20bps摩擦コストに負けない規律あるトレードで利益を狙います。"
-        )
+        decision_line = f"🟢 **【判定: 実戦エントリー】** {pos}"
+
+    pick_hint = f" ｜ 本命: **{main_pick_name}**" if main_pick_name and main_pick_name not in pos else ""
 
     chief_speech = (
-        f"🎩 **チーフ・ファンドマネージャー AI**\n"
-        f"「皆さん、本日もお疲れ様です。{date_str} の作戦ブリーフィングを開始します。\n\n"
-        f"当ファンド（Overnight × Intraday 2毛作 Compound Fund）の現在の総資産は **{eq:,.0f} 円**（通算リターン: **{ret:+.1%}** / 勝率: **{win:.1%}** / Sharpe: **{sh:.2f}** / MaxDD: **{max_dd:.1%}**）で力強く推移しています。\n\n"
-        f"{entry_decision}\n\n"
-        f"【最新50銘柄 3大厳選推奨】\n"
-        f"・{on_rec}\n"
-        f"・{intra_rec}\n"
-        f"・{turn_rec}\n\n"
-        f"それではスナイパー、短期Overnight＆日中寄前スキャンの精査結果を報告してください。」"
+        f"🎩 **チーフ・ファンドマネージャー AI** ({date_str})\n"
+        f"{decision_line}\n"
+        f"> 💰 総資産: **`{eq:,.0f} 円`** ({ret:+.1%}) ｜ 勝率: `{(win*100):.1f}%` ｜ Sharpe: `{sh:.2f}`{pick_hint}\n"
+        f"💡 **作戦**: 2毛作（夜間Overnight＋日中デイトレ）で摩擦20bpsを制する規律ある執行。"
     )
 
     embed_chief = {
         "title": f"💼 仮想100万円ファンド (2毛作) 本日の運用状況 ({date_str})",
         "description": "Overnight (夜) × Intraday (昼) 2毛作 Compound Fund 運用推移",
-        "color": 3066993,  # 0x2ecc71 (Emerald Green)
+        "color": 3066993,  # Emerald Green
         "fields": [
             {
-                "name": "💵 総資産 / 累積リターン",
-                "value": f"**{eq:,.0f} 円** ({ret:+.1%})",
-                "inline": True,
-            },
-            {
-                "name": "🎯 勝率 / Sharpe",
-                "value": f"**{win:.1%}** / **{sh:.2f}**",
-                "inline": True,
-            },
-            {
-                "name": "🛡️ 最大ドローダウン",
-                "value": f"**{max_dd:.1%}**",
-                "inline": True,
-            },
-            {
-                "name": "⚖️ 本日の売買判定",
-                "value": f"**{pos}**",
+                "name": "💵 総資産 / 運用成績",
+                "value": (
+                    f"> 💰 総資産: **`{eq:,.0f} 円`** ({ret:+.1%})\n"
+                    f"> 📊 勝率: **`{(win*100):.1f}%`** ｜ Sharpe: **`{sh:.2f}`** ｜ MaxDD: **`{max_dd:.1%}`**"
+                ),
                 "inline": False,
             },
             {
-                "name": "🎯 最新50銘柄 3大厳選推奨",
+                "name": "⚖️ 本日の売買判定",
+                "value": f"> **{pos}**",
+                "inline": False,
+            },
+            {
+                "name": "🎯 本日の厳選3大本命（1画面サマリー）",
                 "value": f"{on_rec}\n{intra_rec}\n{turn_rec}",
                 "inline": False,
             },
@@ -425,10 +412,7 @@ def build_multi_agent_webhook_payloads(summary_data: dict[str, Any]) -> list[dic
     }
 
     # --- Persona 2: Short-Term Sniper ---
-    has_earnings_risk = any(item.get("earnings_risk") for item in top_overnight[:3])
-    has_jc_risk = any(item.get("jumping_catch_risk") for item in top_overnight[:3])
     overnight_fields = []
-
     if top_overnight:
         for idx, i in enumerate(top_overnight[:3], 1):
             ticker = i.get("ticker", "")
@@ -437,7 +421,7 @@ def build_multi_agent_webhook_payloads(summary_data: dict[str, Any]) -> list[dic
             p_up = i.get("probability_up", 0.0)
             q_band = i.get("q_band") or i.get("quantile") or "Q5"
             e_flag = "⚠️決算警戒" if i.get("earnings_risk") else "✅通常"
-            jc_flag = " | ⚠️高値掴み警戒" if i.get("jumping_catch_risk") else ""
+            jc_flag = " ｜ ⚠️高値掴み警戒" if i.get("jumping_catch_risk") else ""
             cs_score = i.get("p_cs")
             cs_val_str = f" [CS: {cs_score:.1%}]" if cs_score is not None else ""
             p_intra = i.get("p_intraday_cs")
@@ -445,57 +429,44 @@ def build_multi_agent_webhook_payloads(summary_data: dict[str, Any]) -> list[dic
             intra_str = ""
             if p_intra is not None:
                 ret_bps = (pred_ret or 0.0) * 10000.0
-                intra_str = f" | ☀️日中: **{p_intra:.1%}** ({ret_bps:+.0f}bps)"
+                intra_str = f"\n> ☀️ 日中期待値: **`{p_intra:.1%}`** ({ret_bps:+.0f}bps)"
 
             overnight_fields.append({
-                "name": f"{idx}. `{ticker}` {name} ({sector})",
-                "value": f"🌙夜間: **{p_up:.1%}** ({q_band}){cs_val_str}{intra_str} | 決算: **{e_flag}**{jc_flag}",
+                "name": f"{idx}️⃣ **{name}** (`{ticker}`) — {sector}",
+                "value": (
+                    f"> 🌙 **夜間上昇確率**: **`{p_up:.1%}`** ({q_band}){cs_val_str}\n"
+                    f"> 🛡️ **リスク判定**: {e_flag}{jc_flag}{intra_str}"
+                ),
                 "inline": False,
             })
 
-        risk_comments = []
-        if has_earnings_risk:
-            risk_comments.append(
-                "⚠️ **決算注意喚起**: ピックアップ銘柄の中に直近の決算発表警戒フラグ（`⚠️決算警戒`）が出ている銘柄があります！"
-                "決算前の急変動を避けるため、慎重なロット配分または見送りを推奨します。"
-            )
-        if has_jc_risk:
-            risk_comments.append(
-                "🛡️ **執行ガード作動**: ピックアップ銘柄中に当日過熱・上ヒゲ失速による高値掴み警戒銘柄（`⚠️高値掴み警戒`）が検出されました。"
-                "クオンツ執行フィルターにより実運用エントリーは自動遮断され、高値掴みトラップを回避します。"
-            )
-        if not risk_comments:
-            risk_comments.append(
-                "✅ 直近決算リスクおよび高値掴み過熱リスクをすべてクリアしています！"
-                "クリーンなクオンツ優位性に基づき、明朝の寄り付きギャップアップを狙える布陣です。"
-            )
-
-        risk_comment = "\n\n".join(risk_comments)
-
+        top1_sniper = top_overnight[0]
+        t1_name = top1_sniper.get("name") or top1_sniper.get("ticker", "")
+        t1_p = top1_sniper.get("probability_up", 0.0)
+        t1_risk = "⚠️決算警戒" if top1_sniper.get("earnings_risk") else ("⚠️高値掴み警戒" if top1_sniper.get("jumping_catch_risk") else "✅通常")
         sniper_speech = (
             f"⚡ **短期スナイパー AI (Overnight担当)**\n"
-            f"「了解です、ボス！短期Overnightスキャンの結果を報告します🎯\n\n"
-            f"日経225ユニバースの中から、明朝の寄り付き上昇確率が高い上位3銘柄をロックオンしました。\n\n"
-            f"{risk_comment}\n\n"
-            f"短期チームの報告は以上です。バリューハンター、中長期の割安銘柄の動向はどうですか？」"
+            f"🎯 **【Overnight速報】**: 翌朝ギャップアップ本命をロックオン\n"
+            f"> 📈 本命: **{t1_name}** (`{t1_p:.1%}`) ｜ リスク判定: **{t1_risk}**\n"
+            f"💡 **戦術**: 大引け成行エントリー ➔ 翌朝寄り付き（09:00）成行手仕舞い利確。"
         )
     else:
         overnight_fields.append({
             "name": "該当銘柄なし",
-            "value": "本日のスクリーニング基準を満たす銘柄はありませんでした。",
+            "value": "> 本日のスクリーニング基準を満たす銘柄はありませんでした。",
             "inline": False,
         })
         sniper_speech = (
-            "⚡ **短期スナイパー AI (Overnight担当)**\n"
-            "「了解です、ボス！本日のスクリーニングでは基準を突破する確度の高い強気銘柄は見つかりませんでした。\n"
-            "無駄撃ちは避け、次の寄り付き好機まで照準を研ぎ澄ませて待機します！\n\n"
-            "バリューハンター、中長期のお宝株の状況を教えてください！」"
+            f"⚡ **短期スナイパー AI (Overnight担当)**\n"
+            f"🛡️ **【Overnight速報】**: 本日は基準未達のため全銘柄見送り\n"
+            f"> 📊 判定: 厳選スナイパー条件を満たす高勝率銘柄なし\n"
+            f"💡 **戦術**: 無駄撃ちを避け、次の好機まで照準を研ぎ澄ませてキャッシュ待機。"
         )
 
     embed_sniper = {
         "title": f"🏆 Overnight Q5 翌朝ギャップアップ期待 Top 3 ({date_str})",
         "description": "東証大引け後〜翌朝寄り付き（Close-to-Open）の高確率上昇候補",
-        "color": 15844367,  # 0xf1c40f (Gold)
+        "color": 15844367,  # Gold
         "fields": overnight_fields,
         "footer": {"text": "Stock AI Short-Term Sniper | Overnight Quantitative Model"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -520,50 +491,42 @@ def build_multi_agent_webhook_payloads(summary_data: dict[str, Any]) -> list[dic
             score = i.get("bargain_score", 0.0)
             dd = i.get("drawdown_252d", 0.0)
             turnaround_fields.append({
-                "name": f"{idx}. `{ticker}` {name} ({sector})",
-                "value": f"割安スコア: **{score:.1f}点** (52週高値比: {dd:+.1%}, PBR: {pbr_s})\nステータス: **{status}**",
+                "name": f"{idx}️⃣ **{name}** (`{ticker}`) — {sector}",
+                "value": (
+                    f"> 💎 **割安スコア**: **`{score:.1f}点`** ｜ PBR: **`{pbr_s}`**\n"
+                    f"> 📉 **52週高値比**: **`{dd:+.1%}`** ｜ ステータス: **{status}**"
+                ),
                 "inline": False,
             })
 
-        high_score_picks = [p for p in turnaround_picks[:3] if p.get("bargain_score", 0.0) >= 70.0]
-        if high_score_picks:
-            first_high = high_score_picks[0]
-            h_name = first_high.get("name") or first_high.get("ticker", "")
-            score_comment = (
-                f"💎 **お宝発見**: 激安スコア70点超えの超割安銘柄（**{h_name}**: スコア {first_high.get('bargain_score', 0.0):.1f}点）が点灯しています！\n"
-                f"52週高値から大幅に売り叩かれ、PBR面でも下値余地が限定的な極上リバウンド候補です。"
-            )
-        else:
-            top1 = turnaround_picks[0]
-            t1_name = top1.get("name") or top1.get("ticker", "")
-            score_comment = (
-                f"東証プライム主要銘柄の中から、売られすぎ水準からの底打ち回復が期待できる銘柄（**{t1_name}** など）をピックアップしました！\n"
-                f"中長期の種まきとして魅力的な水準に位置しています。"
-            )
-
+        t_top = turnaround_picks[0]
+        t_top_name = t_top.get("name") or t_top.get("ticker", "")
+        t_score = t_top.get("bargain_score", 0.0)
+        t_dd = t_top.get("drawdown_252d", 0.0)
+        t_status = t_top.get("status", "")
         hunter_speech = (
             f"💎 **バリューハンター AI (中長期・激安株担当)**\n"
-            f"「スナイパーさん、お疲れ様です！短期が様子見でも動意づいていても、中長期の『お宝激安株』の仕込みチャンスは見逃せませんよ💎✨\n\n"
-            f"{score_comment}\n\n"
-            f"短期の機動力と中長期のバリュー投資、両輪を意識して明日も賢く相場を攻略していきましょう！」"
+            f"💎 **【お宝株速報】**: 売られすぎ水準からの底打ち回復候補を発見\n"
+            f"> 📊 本命: **{t_top_name}** (割安スコア **`{t_score:.1f}点`** / 高値比 `{t_dd:+.1%}`)\n"
+            f"💡 **戦術**: {t_status}。下値支持線を背に中長期リバウンドを狙う打診買い。"
         )
     else:
         turnaround_fields.append({
             "name": "該当銘柄なし",
-            "value": "現在基準を満たす割安回復銘柄はありません。",
+            "value": "> 現在基準を満たす割安回復銘柄はありません。",
             "inline": False,
         })
         hunter_speech = (
-            "💎 **バリューハンター AI (中長期・激安株担当)**\n"
-            "「スナイパーさん、お疲れ様です！本日は特筆すべき極端な割安反転シグナルは一服しています。\n"
-            "焦って飛びつかず、優良銘柄が大きく下押しした瞬間を狙い撃ちできるよう監視を継続します！\n\n"
-            "短期・中長期ともに油断なく、明日も万全の体制で臨みましょう！」"
+            f"💎 **バリューハンター AI (中長期・激安株担当)**\n"
+            f"🛡️ **【お宝株速報】**: 本日は基準を満たす極端な割安反転シグナルなし\n"
+            f"> 📊 判定: プライム主要銘柄に目立った売られすぎ銘柄なし\n"
+            f"💡 **戦術**: 焦って飛びつかず、優良銘柄が大きく下押しした好機を待機。"
         )
 
     embed_hunter = {
         "title": f"💎 Value & Turnaround 激安回復お宝株 Top 3 ({date_str})",
         "description": "東証プライム主要銘柄から下落率・PBR・反転スコアで厳選",
-        "color": 10181046,  # 0x9b59b6 (Amethyst Purple)
+        "color": 10181046,  # Amethyst Purple
         "fields": turnaround_fields,
         "footer": {"text": "Stock AI Value Hunter | Bottom-Fishing & Rebound Model"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -595,22 +558,31 @@ def build_fund_report_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
 
     content = (
         f"💰 **【仮想100万円ファンド 日次運用レポート ({date_str})】**\n"
-        f"・総資産: **{eq:,.0f} 円** ({ret:+.1%})\n"
-        f"・勝率: **{win:.1%}** | Sharpe: **{sh:.2f}** | MaxDD: **{max_dd:.1%}**\n"
-        f"・本日エントリー判定: {pos_desc}"
+        f"> 💵 総資産: **`{eq:,.0f} 円`** ({ret:+.1%})\n"
+        f"> 🎯 勝率: **`{win:.1%}`** ｜ Sharpe: **`{sh:.2f}`** ｜ MaxDD: **`{max_dd:.1%}`**\n"
+        f"> ⚖️ 本日エントリー判定: {pos_desc}"
     )
 
     embed = {
         "title": f"💰 仮想100万円ファンド ポートフォリオ運用詳細 ({date_str})",
-        "description": "実運用水準20bps摩擦コスト反映済 Overnight エリートTop2ロング戦略シミュレーション（1銘柄上限50%・リークゼロ）",
+        "description": "実運用水準20bps摩擦コスト反映済 Overnight エリートTop2ロング戦略シミュレーション",
         "color": 3066993,  # Emerald Green
         "fields": [
-            {"name": "💵 総資産", "value": f"**{eq:,.0f} 円**", "inline": True},
-            {"name": "📈 通算損益", "value": f"**{ret:+.1%}** ({eq - 1_000_000:+,.0f} 円)", "inline": True},
-            {"name": "🎯 勝率", "value": f"**{win:.1%}**", "inline": True},
-            {"name": "📊 Sharpe Ratio", "value": f"**{sh:.2f}**", "inline": True},
-            {"name": "🛡️ 最大ドローダウン", "value": f"**{max_dd:.1%}**", "inline": True},
-            {"name": "⚖️ 本日ポジション判定", "value": pos_desc, "inline": False},
+            {
+                "name": "💵 総資産 / 通算損益",
+                "value": f"> **{eq:,.0f} 円** ({ret:+.1%} / {eq - 1_000_000:+,.0f} 円)",
+                "inline": False,
+            },
+            {
+                "name": "🎯 パフォーマンス指標",
+                "value": f"> 勝率: **{win:.1%}** ｜ Sharpe: **{sh:.2f}** ｜ MaxDD: **{max_dd:.1%}**",
+                "inline": False,
+            },
+            {
+                "name": "⚖️ 本日ポジション判定",
+                "value": f"> {pos_desc}",
+                "inline": False,
+            },
         ],
         "footer": {"text": "Stock AI Overnight Paper Trader | 仮想資金100万円実証"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -639,17 +611,20 @@ def build_turnaround_report_payload(summary_data: dict[str, Any]) -> dict[str, A
             score = item.get("bargain_score", 0.0)
             dd = item.get("drawdown_252d", 0.0)
             status = item.get("status", "")
-            text_lines.append(f"{idx}. `{ticker}` {name} ({sector}): **{score:.1f}点** (高値比 {dd:+.1%}, PBR {pbr_s}) — {status}")
+            text_lines.append(f"> {idx}️⃣ `{ticker}` **{name}** ({sector}): **`{score:.1f}点`** (高値比 `{dd:+.1%}`, PBR `{pbr_s}`) — {status}")
             fields.append({
-                "name": f"{idx}. `{ticker}` {name} ({sector}) — {score:.1f}点",
-                "value": f"52週高値比: **{dd:+.1%}** | PBR: **{pbr_s}**\n判定: **{status}**",
+                "name": f"{idx}️⃣ **{name}** (`{ticker}`) — {sector}",
+                "value": (
+                    f"> 💎 **割安スコア**: **`{score:.1f}点`** ｜ PBR: **`{pbr_s}`**\n"
+                    f"> 📉 **52週高値比**: **`{dd:+.1%}`** ｜ ステータス: **{status}**"
+                ),
                 "inline": False,
             })
     else:
-        text_lines.append("本日該当銘柄なし")
+        text_lines.append("> 本日該当銘柄なし")
         fields.append({
             "name": "該当銘柄なし",
-            "value": "基準を満たす極端な割安反転シグナルはありません。",
+            "value": "> 基準を満たす極端な割安反転シグナルはありません。",
             "inline": False,
         })
 
@@ -690,7 +665,7 @@ def build_alert_report_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
                 ticker = p.get("ticker", "")
                 name = p.get("name") or ticker
                 sector = p.get("sector", "-")
-                items_desc.append(f"・`{ticker}` {name} ({sector}): 直近7日以内に決算発表予定（⚠️決算跨ぎ警戒）")
+                items_desc.append(f"> ⚠️ `{ticker}` **{name}** ({sector}): 直近7日以内決算発表予定（決算跨ぎ警戒）")
             alert_lines.append("【決算発表前 警戒銘柄】\n" + "\n".join(items_desc))
             fields.append({"name": "⚠️ 決算発表前 警戒銘柄", "value": "\n".join(items_desc), "inline": False})
 
@@ -701,19 +676,19 @@ def build_alert_report_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
                 name = p.get("name") or ticker
                 sector = p.get("sector", "-")
                 reason = p.get("jumping_catch_reason", "過熱・失速シグナル検知")
-                jc_desc.append(f"・`{ticker}` {name} ({sector}): {reason}（⚠️高値掴み・過熱見送り）")
-            alert_lines.append("【ジャンピングキャッチ・過熱警戒銘柄（執行遮断）】\n" + "\n".join(jc_desc))
+                jc_desc.append(f"> 🛡️ `{ticker}` **{name}** ({sector}): {reason}（高値掴み・過熱見送り）")
+            alert_lines.append("【ジャンピングキャッチ過熱警戒（執行遮断）】\n" + "\n".join(jc_desc))
             fields.append({"name": "🛡️ ジャンピングキャッチ遮断銘柄", "value": "\n".join(jc_desc), "inline": False})
 
         fields.append({
             "name": "🛡️ リスク管理指針",
-            "value": "決算跨ぎおよび日中急騰後のExhaustion（高値掴み）を自動遮断し、翌朝ギャップダウンの罠を回避します。",
+            "value": "> 決算跨ぎおよび日中急騰後のExhaustion（高値掴み）を自動遮断し、翌朝ギャップダウンを回避。",
             "inline": False,
         })
 
         content = (
             f"🚨 **【決算・急変・執行ガードアラート ({date_str})】**\n"
-            "以下の注目銘柄に警戒シグナルが点灯しました。クオンツ執行フィルターにより高リスクエントリーを自動遮断・抑制します！\n\n"
+            "以下の注目銘柄に警戒シグナルが点灯しました。クオンツ執行フィルターにより自動遮断・抑制します！\n\n"
             + "\n\n".join(alert_lines)
         )
         embed = {
@@ -727,15 +702,15 @@ def build_alert_report_payload(summary_data: dict[str, Any]) -> dict[str, Any]:
     else:
         content = (
             f"🛡️ **【リスク・セーフティチェック完了 ({date_str})】**\n"
-            "本日スクリーニングされた注目銘柄に決算地雷およびジャンピングキャッチ過熱フラグはありません。健全な取引環境が確認されています。"
+            "> 本日スクリーニングされた注目銘柄に決算地雷および過熱フラグはありません。健全な取引環境です。"
         )
         embed = {
             "title": f"✅ リスク・セーフティクリア ({date_str})",
             "description": "注目銘柄群における決算地雷および過熱高値掴みリスクの検証完了",
             "color": 3066993,  # Emerald Green
             "fields": [
-                {"name": "🛡️ 判定結果", "value": "主要Overnight候補銘柄に決算地雷・高値掴み警戒なし（全銘柄クリア）", "inline": False},
-                {"name": "📌 運用アドバイス", "value": "クオンツ確率・執行フィルターをクリアしており、規律通りにエントリー可能です。", "inline": False},
+                {"name": "🛡️ 判定結果", "value": "> 主要Overnight候補銘柄に決算地雷・高値掴み警戒なし（全銘柄クリア）", "inline": False},
+                {"name": "📌 運用アドバイス", "value": "> クオンツ確率・執行フィルターをクリアしており、規律通りエントリー可能です。", "inline": False},
             ],
             "footer": {"text": "Stock AI Risk Guardian | 安全確認完了"},
             "timestamp": datetime.now(timezone.utc).isoformat(),
