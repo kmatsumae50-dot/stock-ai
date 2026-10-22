@@ -53,6 +53,8 @@ reports/**/*.patch
 data/**/*.csv
 data/**/*.json
 data/**/*.parquet
+data/**/*.db
+*.db
 data/raw/
 data/processed/
 data/features/

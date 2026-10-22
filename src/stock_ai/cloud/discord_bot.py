@@ -1898,7 +1898,14 @@ class DiscordPollingBot:
             except urllib.error.HTTPError as err:
                 err_body = err.read().decode("utf-8", errors="replace")
                 if err.code == 429 and attempt < retries - 1:
-                    time.sleep(2.0)
+                    sleep_time = 2.0
+                    try:
+                        err_json = json.loads(err_body)
+                        sleep_time = float(err_json.get("retry_after", 2.0)) + 0.5
+                    except Exception:
+                        pass
+                    logger.info("Discord rate limit on %s %s. Sleeping %.2fs...", method, endpoint, sleep_time)
+                    time.sleep(sleep_time)
                     continue
                 logger.warning("Discord API %s %s error %s: %s", method, endpoint, err.code, err_body)
                 return {}
@@ -1939,15 +1946,18 @@ class DiscordPollingBot:
 
     def init_channels(self) -> None:
         """Discover all server text channels, bind webhooks, and record current latest message IDs."""
-        guilds = self._api_request("/users/@me/guilds")
-        if not guilds:
-            logger.warning("Bot is not joined to any guild.")
-            return
-
-        guild_id = str(guilds[0]["id"])
-        channels = self._api_request(f"/guilds/{guild_id}/channels")
-        if not isinstance(channels, list):
-            logger.warning("Could not list channels for guild %s", guild_id)
+        for attempt in range(5):
+            guilds = self._api_request("/users/@me/guilds")
+            if not guilds:
+                time.sleep(2.0)
+                continue
+            guild_id = str(guilds[0]["id"])
+            channels = self._api_request(f"/guilds/{guild_id}/channels")
+            if isinstance(channels, list) and channels:
+                break
+            time.sleep(2.0)
+        else:
+            logger.warning("Could not list channels for guild after retries.")
             return
 
         # Target channels: ALL text channels (type 0) in the server
@@ -1972,6 +1982,8 @@ class DiscordPollingBot:
                 wh = self.webhooks.get("consultation")
             elif "デイトレ" in ch_name or "daytrade" in ch_name:
                 wh = self.webhooks.get("daytrade")
+            elif "取引ノート" in ch_name or "資産管理" in ch_name or "portfolio" in ch_name:
+                wh = self.webhooks.get("portfolio")
             else:
                 wh = None
 
@@ -2143,11 +2155,42 @@ class DiscordPollingBot:
         channels = getattr(self, "monitored_channels", [])
         ch = next((c for c in channels if str(c.get("id")) == ch_id), {})
         ch_name = ch.get("name", "")
+        is_portfolio_channel = "取引ノート" in ch_name or "資産管理" in ch_name or "portfolio" in ch_name
         is_daytrade_channel = "デイトレ" in ch_name or "daytrade" in ch_name
         is_daytrade_query = is_daytrade_channel or any(
             k in clean_lower
             for k in ["デイトレ", "今日", "当日", "本日", "日中", "デイ", "daytrade", "上がる株", "下がる株", "上がる？", "下がる？"]
         )
+
+        # -------------------------------------------------------------------
+        # Dedicated Personal Portfolio & Trading Ledger Routing
+        # -------------------------------------------------------------------
+        try:
+            from stock_ai.storage.user_portfolio_store import handle_user_portfolio_message
+            portfolio_replies = handle_user_portfolio_message(cleaned)
+            if portfolio_replies:
+                return portfolio_replies
+        except Exception as pf_err:
+            logger.warning("Error processing portfolio message '%s': %s", cleaned[:30], pf_err)
+
+        if is_portfolio_channel:
+            # If in portfolio channel but message was not parsed as trade/balance/diagnosis
+            guide = (
+                "📊 **【マイ取引ノート＆資産管理コンシェルジュ AI】**\n\n"
+                f"「『{cleaned[:30]}』を受信しました。\n\n"
+                "💡 **使い方ガイド**:\n"
+                "・**買い記帳**: `川重 100株 5000円で買った`, `トヨタ 200株 2750円 買い`, `フジクラ 100株 @4800 購入`\n"
+                "・**売り記帳**: `トヨタ 100株 2850円で売った`, `7012 100株 5500円 利確`, `川重 全株 5100円で損切り`\n"
+                "・**収支確認**: `収支`, `ポートフォリオ`, `保有株`, `履歴`\n"
+                "・**暴落・危険度診断**: `今日大丈夫？`, `診断`, `リスク`\n"
+                "・**直前の取引取消**: `最後の取引を取り消し`, `取り消し`\n\n"
+                "メモ感覚で書き込んでいただければ、自動で記帳＆AIフィードバックいたします！」"
+            )
+            return [{
+                "username": "📊 マイ資産管理コンシェルジュ AI",
+                "content": guide,
+                "text": guide,
+            }]
 
         # -------------------------------------------------------------------
         # Dedicated 1-Day Intraday Sniper Routing (100% Daytrade Focused)

@@ -281,6 +281,7 @@ def get_configured_channel_webhooks() -> dict[str, str]:
         "alert": ["STOCK_AI_WEBHOOK_ALERT"],
         "consultation": ["STOCK_AI_WEBHOOK_CONSULTATION"],
         "daytrade": ["STOCK_AI_WEBHOOK_DAYTRADE"],
+        "portfolio": ["STOCK_AI_WEBHOOK_PORTFOLIO"],
     }
     for ch_key, env_keys in key_mappings.items():
         for env_k in env_keys:
@@ -870,6 +871,42 @@ def send_daily_summary_webhook(
             channels_delivered.append("daytrade")
         except Exception as dt_exc:
             logger.warning(f"Failed delivering daytrade rankings: {dt_exc}")
+
+    # 6. Dedicated Room: Portfolio Ledger & Risk Guardian (📊｜マイ取引ノート＆資産管理)
+    portfolio_url = configured.get("portfolio")
+    if portfolio_url and portfolio_url != main_url:
+        if total_sent > 0 and sleep_interval > 0:
+            time.sleep(sleep_interval)
+        try:
+            from stock_ai.storage.user_portfolio_store import (
+                build_portfolio_overview_payload,
+                build_risk_diagnosis_payload,
+                diagnose_portfolio_risk,
+            )
+            p_overview = build_portfolio_overview_payload()
+            code = _post_single_webhook_payload(portfolio_url, p_overview)
+            if code is not None:
+                last_code = code
+                total_sent += 1
+
+            diag = diagnose_portfolio_risk(summary_data=summary_data)
+            if diag.get("status") != "EMPTY" and (diag.get("risk_counts", {}).get("red", 0) > 0 or diag.get("risk_counts", {}).get("yellow", 0) > 0):
+                time.sleep(sleep_interval)
+                p_risk = build_risk_diagnosis_payload(diag)
+                c_risk = _post_single_webhook_payload(portfolio_url, p_risk)
+                if c_risk is not None:
+                    last_code = c_risk
+                    total_sent += 1
+
+                # If serious red risk detected, also broadcast to alert channel
+                if diag.get("risk_counts", {}).get("red", 0) > 0 and alert_url and alert_url != portfolio_url:
+                    time.sleep(sleep_interval)
+                    _post_single_webhook_payload(alert_url, p_risk)
+                    total_sent += 1
+
+            channels_delivered.append("portfolio")
+        except Exception as pf_exc:
+            logger.warning(f"Failed delivering portfolio reports: {pf_exc}")
 
     return {
         "status": "SUCCESS",

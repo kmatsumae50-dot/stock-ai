@@ -201,6 +201,7 @@ class DiscordProvisioner:
         cat2_id = cat2["id"]
         ch_consult = self.get_or_create_text_channel(guild_id, "💬｜ai投資相談室", cat2_id)
         ch_daytrade = self.get_or_create_text_channel(guild_id, "⚡｜当日デイトレ特化予想", cat2_id)
+        ch_portfolio = self.get_or_create_text_channel(guild_id, "📊｜マイ取引ノート＆資産管理", cat2_id)
         ch_notes = self.get_or_create_text_channel(guild_id, "📝｜相場メモ・独り言", cat2_id)
 
         # Webhooks
@@ -210,6 +211,7 @@ class DiscordProvisioner:
         wh_alert = self.get_or_create_webhook(ch_alert["id"], "Stock-AI Risk Guardian")
         wh_consult = self.get_or_create_webhook(ch_consult["id"], "Stock-AI Consultation Room")
         wh_daytrade = self.get_or_create_webhook(ch_daytrade["id"], "Stock-AI Daytrade Sniper")
+        wh_portfolio = self.get_or_create_webhook(ch_portfolio["id"], "Stock-AI Portfolio Ledger")
         wh_notes = self.get_or_create_webhook(ch_notes["id"], "Stock-AI Notes Reporter")
 
         return {
@@ -225,6 +227,7 @@ class DiscordProvisioner:
                 "alert": ch_alert["id"],
                 "consultation": ch_consult["id"],
                 "daytrade": ch_daytrade["id"],
+                "portfolio": ch_portfolio["id"],
                 "notes": ch_notes["id"],
             },
             "webhooks": {
@@ -234,6 +237,7 @@ class DiscordProvisioner:
                 "alert": wh_alert,
                 "consultation": wh_consult,
                 "daytrade": wh_daytrade,
+                "portfolio": wh_portfolio,
                 "notes": wh_notes,
             },
         }
@@ -435,6 +439,45 @@ class DiscordProvisioner:
                 ],
             }
             self._post_webhook(webhooks["daytrade"], payload)
+            time.sleep(sleep_interval)
+
+        # 7. Portfolio Ledger & Asset Manager Room (📊｜マイ取引ノート＆資産管理)
+        if "portfolio" in webhooks:
+            payload = {
+                "username": "📊 マイ資産管理コンシェルジュ AI",
+                "content": (
+                    "📊 **【マイ取引ノート＆個人資産管理チャンネル 開通！】**\n\n"
+                    "「ご自身の実際の日本株トレードを、メモ感覚で自然に記録・管理できる専用チャンネルを開通しました📝✨\n\n"
+                    "難しいコマンドや形式は一切不要！『川重 100株 5000円で買った』『トヨタ 100株 2850円で売った』とつぶやくだけで、自動で取得単価・保有株数・実現損益を計算して台帳に記帳します。\n\n"
+                    "さらに、記帳した直後に **最新AIクオンツ予測（明朝Overnight上昇確率・日中デイトレ判定・想定上値ターゲット・推奨損切りライン）** をその場で即答フィードバック！\n"
+                    "保有中の銘柄に暴落や決算の危険が迫った時は **『⚠️AIガードマン急落アラート』** で即座に警告を発令します🛡️\n\n"
+                    "💡 **入力例（コピペですぐ試せます）**:\n"
+                    "・**買い記帳**: `川重 100株 5000円で買った`, `トヨタ 200株 2750円 買い`, `フジクラ 100株 @4800 購入`\n"
+                    "・**売り記帳**: `トヨタ 100株 2850円で売った`, `7012 100株 5500円 利確`, `川重 全株 5100円で損切り`\n"
+                    "・**収支・資産確認**: `収支`, `ポートフォリオ`, `保有株`, `履歴`\n"
+                    "・**保有株の危険度診断**: `今日大丈夫？`, `診断`, `リスク`\n"
+                    "・**書き間違いの取消**: `最後の取引を取り消し`, `取り消し`\n\n"
+                    "今日からのリアルトレードの相棒として、ぜひお気軽にご活用ください！」"
+                ),
+                "embeds": [
+                    {
+                        "title": "📊 マイ取引ノート＆個人資産管理 使い方ガイド",
+                        "description": "自然な日本語で話しかけるだけで、全自動で台帳記帳・損益計算・AIリスク診断を実施",
+                        "color": 3066993,  # Emerald Green
+                        "fields": [
+                            {"name": "🛒 買い記帳", "value": "`川重 100株 5000円で買った`\n（即座にAI予測＆ターゲット価格を返信）", "inline": True},
+                            {"name": "💰 売り記帳", "value": "`トヨタ 100株 2850円 利確`\n（今回の確定損益と累計確定損益を即答）", "inline": True},
+                            {"name": "📈 総合収支照会", "value": "`収支` または `保有株`\n（現在の評価額・含み損益・通算勝率を表示）", "inline": True},
+                            {"name": "🛡️ 暴落・急落診断", "value": "`今日大丈夫？` または `診断`\n（保有株の下落確率・決算地雷・過熱度を一括診断）", "inline": True},
+                            {"name": "↩️ 直前取消", "value": "`最後の取引を取り消し`\n（直前の入力を安全にロールバック）", "inline": True},
+                            {"name": "🔒 データの安全性", "value": "専用ローカルDB（SQLite）に永続保存され、外部漏洩なし", "inline": True},
+                        ],
+                        "footer": {"text": "Stock AI Personal Portfolio & Risk Guardian Engine"},
+                        "timestamp": now_ts,
+                    }
+                ],
+            }
+            self._post_webhook(webhooks["portfolio"], payload)
 
     @staticmethod
     def save_webhooks_to_env_file(webhooks: dict[str, str]) -> None:
@@ -445,8 +488,10 @@ class DiscordProvisioner:
         lines = env_path.read_text(encoding="utf-8").splitlines()
         new_lines: list[str] = []
         has_daytrade = False
+        has_portfolio = False
         has_json = False
         daytrade_url = webhooks.get("daytrade")
+        portfolio_url = webhooks.get("portfolio")
         json_str = json.dumps(webhooks, ensure_ascii=False)
 
         for line in lines:
@@ -454,6 +499,10 @@ class DiscordProvisioner:
                 if daytrade_url:
                     new_lines.append(f"STOCK_AI_WEBHOOK_DAYTRADE={daytrade_url}")
                     has_daytrade = True
+            elif line.startswith("STOCK_AI_WEBHOOK_PORTFOLIO="):
+                if portfolio_url:
+                    new_lines.append(f"STOCK_AI_WEBHOOK_PORTFOLIO={portfolio_url}")
+                    has_portfolio = True
             elif line.startswith("STOCK_AI_CHANNEL_WEBHOOKS="):
                 new_lines.append(f"STOCK_AI_CHANNEL_WEBHOOKS={json_str}")
                 has_json = True
@@ -462,11 +511,13 @@ class DiscordProvisioner:
 
         if not has_daytrade and daytrade_url:
             new_lines.append(f"STOCK_AI_WEBHOOK_DAYTRADE={daytrade_url}")
+        if not has_portfolio and portfolio_url:
+            new_lines.append(f"STOCK_AI_WEBHOOK_PORTFOLIO={portfolio_url}")
         if not has_json:
             new_lines.append(f"STOCK_AI_CHANNEL_WEBHOOKS={json_str}")
 
         env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-        logger.info("Updated .env file with daytrade webhooks.")
+        logger.info("Updated .env file with daytrade & portfolio webhooks.")
 
 
     @staticmethod
