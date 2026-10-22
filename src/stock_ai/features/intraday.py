@@ -12,6 +12,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from stock_ai.features.overnight import is_banking_finance_ticker, is_semicon_cable_ticker
+
 logger = logging.getLogger(__name__)
 
 INTRADAY_BASE_FEATURES = [
@@ -34,6 +36,17 @@ INTRADAY_BASE_FEATURES = [
     "gap_down_oversold",
     "gap_up_exhausted",
     "rebound_potential",
+    # 4大マクロ・外部市場ショック (07:30 JST pre-market確定)
+    "overnight_sox_shock",
+    "overnight_nvda_shock",
+    "overnight_tnx_shock",
+    "overnight_vix_shock",
+    # セクター属性別マクロ感応度 (Sector-Macro Intraday Sensitivity)
+    "semicon_sox_shock",
+    "semicon_nvda_shock",
+    "finance_tnx_shock",
+    "vix_risk_off_shock",
+    "semicon_intraday_gap_divergence",
 ]
 
 INTRADAY_CROSS_SECTIONAL_FEATURES = [
@@ -43,6 +56,7 @@ INTRADAY_CROSS_SECTIONAL_FEATURES = [
     "cs_rank_prior_clv",
     "cs_rank_rebound",
     "sector_rel_gap",
+    "cs_rank_macro_intraday",
 ]
 
 ALL_INTRADAY_FEATURES = INTRADAY_BASE_FEATURES + INTRADAY_CROSS_SECTIONAL_FEATURES
@@ -88,12 +102,41 @@ def add_intraday_premarket_features(df: pd.DataFrame) -> pd.DataFrame:
     result["prior_vol_surge_5d"] = result["volume_surge_5d"].shift(1).fillna(1.0) if "volume_surge_5d" in result.columns else 1.0
     result["prior_sector_rel_ret"] = result["sector_relative_return"].shift(1).fillna(0.0) if "sector_relative_return" in result.columns else 0.0
 
-    # 3. Overnight US and FX Shocks
-    # In features parquet, tesla_return_1d / usdjpy_return_1d represent the prior night's US/FX session
-    result["overnight_us_shock"] = result["tesla_return_1d"].fillna(0.0) if "tesla_return_1d" in result.columns else 0.0
-    result["overnight_fx_shock"] = result["usdjpy_return_1d"].fillna(0.0) if "usdjpy_return_1d" in result.columns else 0.0
-    result["expected_gap"] = 0.60 * result["overnight_us_shock"] + 0.40 * result["overnight_fx_shock"]
+    # 3. Overnight US, FX and 4 Major Macro Shocks (07:30 JST pre-market finalized)
+    t_val = str(result["ticker"].iloc[0]) if "ticker" in result.columns and len(result) > 0 else ""
+    s_val = str(result["sector"].iloc[0]) if "sector" in result.columns and len(result) > 0 else ""
+    is_semi = is_semicon_cable_ticker(t_val, s_val)
+    is_fin = is_banking_finance_ticker(t_val, s_val)
+
+    result["overnight_us_shock"] = pd.to_numeric(result["tesla_return_1d"], errors="coerce").fillna(0.0) if "tesla_return_1d" in result.columns else 0.0
+    result["overnight_fx_shock"] = pd.to_numeric(result["usdjpy_return_1d"], errors="coerce").fillna(0.0) if "usdjpy_return_1d" in result.columns else 0.0
+
+    sox_s = pd.to_numeric(result["sox_return_1d"], errors="coerce").fillna(0.0) if "sox_return_1d" in result.columns else pd.Series(0.0, index=result.index)
+    nvda_s = pd.to_numeric(result["nvda_return_1d"], errors="coerce").fillna(0.0) if "nvda_return_1d" in result.columns else pd.Series(0.0, index=result.index)
+    tnx_s = pd.to_numeric(result["tnx_return_1d"], errors="coerce").fillna(0.0) if "tnx_return_1d" in result.columns else pd.Series(0.0, index=result.index)
+    vix_s = pd.to_numeric(result["vix_return_1d"], errors="coerce").fillna(0.0) if "vix_return_1d" in result.columns else pd.Series(0.0, index=result.index)
+
+    result["overnight_sox_shock"] = sox_s
+    result["overnight_nvda_shock"] = nvda_s
+    result["overnight_tnx_shock"] = tnx_s
+    result["overnight_vix_shock"] = vix_s
+
+    result["semicon_sox_shock"] = sox_s if is_semi else pd.Series(0.0, index=result.index)
+    result["semicon_nvda_shock"] = nvda_s if is_semi else pd.Series(0.0, index=result.index)
+    result["finance_tnx_shock"] = tnx_s if is_fin else pd.Series(0.0, index=result.index)
+    result["vix_risk_off_shock"] = (vix_s > 0.08).astype(float)
+
+    if is_semi:
+        result["expected_gap"] = 0.50 * sox_s + 0.30 * nvda_s + 0.20 * result["overnight_fx_shock"]
+    elif is_fin:
+        result["expected_gap"] = 0.40 * tnx_s + 0.60 * result["overnight_fx_shock"]
+    else:
+        result["expected_gap"] = 0.60 * result["overnight_us_shock"] + 0.40 * result["overnight_fx_shock"]
+
     result["gap_divergence"] = result["overnight_gap"] - result["expected_gap"]
+    result["semicon_intraday_gap_divergence"] = (
+        (result["overnight_gap"] - (0.60 * sox_s + 0.40 * nvda_s)) if is_semi else pd.Series(0.0, index=result.index)
+    )
 
     # 4. Non-Linear Reversal & Exhaustion Interactions
     result["gap_down_oversold"] = np.where(
@@ -147,5 +190,11 @@ def add_cross_sectional_intraday_features(pooled_df: pd.DataFrame) -> pd.DataFra
         result["sector_rel_gap"] = result["overnight_gap"] - sector_gap
     else:
         result["sector_rel_gap"] = 0.0
+
+    # Macro sensitivity cross-sectional rank
+    if "semicon_sox_shock" in result.columns:
+        result["cs_rank_macro_intraday"] = result.groupby("date")["semicon_sox_shock"].rank(pct=True).fillna(0.5)
+    else:
+        result["cs_rank_macro_intraday"] = 0.5
 
     return result

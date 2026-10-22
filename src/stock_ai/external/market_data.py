@@ -64,6 +64,10 @@ class ExternalMarketContext:
     honda_trend: str
     summary: str
     metrics: dict[str, float | None]
+    sox_trend: str = "Unavailable"
+    nvda_trend: str = "Unavailable"
+    tnx_trend: str = "Unavailable"
+    vix_trend: str = "Unavailable"
 
 
 CORE_MARKET_SPECS = (
@@ -77,13 +81,19 @@ CORE_MARKET_SPECS = (
         is_foreign=False,
     ),
 )
+MACRO_MARKET_SPECS = (
+    ExternalMarketSpec(symbol="^SOX", prefix="sox", name="SOX Semiconductor", group="macro", is_foreign=True),
+    ExternalMarketSpec(symbol="NVDA", prefix="nvda", name="NVIDIA", group="macro", is_foreign=True),
+    ExternalMarketSpec(symbol="^TNX", prefix="tnx", name="US 10Y Yield", group="macro", is_foreign=True),
+    ExternalMarketSpec(symbol="^VIX", prefix="vix", name="VIX Volatility Index", group="macro", is_foreign=True),
+)
 AUTO_SECTOR_SPECS = (
     ExternalMarketSpec(symbol="7267.T", prefix="honda", name="Honda", group="auto_sector", is_foreign=False),
     ExternalMarketSpec(symbol="7201.T", prefix="nissan", name="Nissan", group="auto_sector", is_foreign=False),
     ExternalMarketSpec(symbol="TSLA", prefix="tesla", name="Tesla", group="auto_sector", is_foreign=True),
     ExternalMarketSpec(symbol="1211.HK", prefix="byd", name="BYD", group="auto_sector", is_foreign=True),
 )
-DEFAULT_EXTERNAL_MARKETS = (*CORE_MARKET_SPECS, *AUTO_SECTOR_SPECS)
+DEFAULT_EXTERNAL_MARKETS = (*CORE_MARKET_SPECS, *MACRO_MARKET_SPECS, *AUTO_SECTOR_SPECS)
 EXTERNAL_DATA_SUBDIR = "external"
 MIN_EXTERNAL_ROWS = 100
 
@@ -467,6 +477,14 @@ def build_external_market_context(data: pd.DataFrame) -> ExternalMarketContext:
         "n225_trend_direction": _value(latest, "n225_trend_direction"),
         "topix_return_1d": _value(latest, "topix_return_1d"),
         "topix_trend_direction": _value(latest, "topix_trend_direction"),
+        "sox_return_1d": _value(latest, "sox_return_1d"),
+        "sox_trend_direction": _value(latest, "sox_trend_direction"),
+        "nvda_return_1d": _value(latest, "nvda_return_1d"),
+        "nvda_trend_direction": _value(latest, "nvda_trend_direction"),
+        "tnx_return_1d": _value(latest, "tnx_return_1d"),
+        "tnx_trend_direction": _value(latest, "tnx_trend_direction"),
+        "vix_return_1d": _value(latest, "vix_return_1d"),
+        "vix_trend_direction": _value(latest, "vix_trend_direction"),
         "honda_return_1d": _value(latest, "honda_return_1d"),
         "honda_trend_direction": _value(latest, "honda_trend_direction"),
         "nissan_return_1d": _value(latest, "nissan_return_1d"),
@@ -486,6 +504,10 @@ def build_external_market_context(data: pd.DataFrame) -> ExternalMarketContext:
     auto_sector_trend = _auto_sector_trend(metrics)
     tesla_trend = _single_trend(metrics.get("tesla_trend_direction"))
     honda_trend = _single_trend(metrics.get("honda_trend_direction"))
+    sox_trend = _single_trend(metrics.get("sox_trend_direction"))
+    nvda_trend = _single_trend(metrics.get("nvda_trend_direction"))
+    tnx_trend = _single_trend(metrics.get("tnx_trend_direction"))
+    vix_trend = _single_trend(metrics.get("vix_trend_direction"))
     summary = _market_summary(
         usdjpy_status=usdjpy_status,
         market_trend=market_trend,
@@ -500,6 +522,10 @@ def build_external_market_context(data: pd.DataFrame) -> ExternalMarketContext:
         honda_trend=honda_trend,
         summary=summary,
         metrics=metrics,
+        sox_trend=sox_trend,
+        nvda_trend=nvda_trend,
+        tnx_trend=tnx_trend,
+        vix_trend=vix_trend,
     )
 
 

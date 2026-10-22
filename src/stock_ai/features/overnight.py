@@ -1,7 +1,32 @@
 from __future__ import annotations
 
+from typing import Any
 import numpy as np
 import pandas as pd
+
+SEMICON_AI_CABLE_TICKERS = {
+    "8035.T", "6857.T", "6723.T", "6146.T", "6920.T", "6526.T",
+    "5803.T", "5801.T", "5802.T", "6762.T", "6501.T",
+}
+BANKING_FINANCE_TICKERS = {
+    "8306.T", "8316.T", "8411.T", "8766.T", "8750.T", "8591.T",
+}
+
+
+def is_semicon_cable_ticker(ticker: str | None, sector: str | None = None) -> bool:
+    if ticker and ticker in SEMICON_AI_CABLE_TICKERS:
+        return True
+    if sector and any(s in sector for s in ("Semiconductors", "Non-Ferrous Metals", "半導体", "電線")):
+        return True
+    return False
+
+
+def is_banking_finance_ticker(ticker: str | None, sector: str | None = None) -> bool:
+    if ticker and ticker in BANKING_FINANCE_TICKERS:
+        return True
+    if sector and any(s in sector for s in ("Banking", "Insurance", "Finance", "銀行", "保険", "金融")):
+        return True
+    return False
 
 
 OVERNIGHT_CURATED_FEATURES = [
@@ -50,6 +75,20 @@ OVERNIGHT_CURATED_FEATURES = [
     "tesla_return_1d",
     "tesla_trend_direction",
     "byd_return_1d",
+    # 8. 4大マクロ・外部市場指標 (SOX, NVDA, TNX, VIX: shift-1確定値)
+    "sox_return_1d",
+    "nvda_return_1d",
+    "tnx_return_1d",
+    "vix_return_1d",
+    # 9. セクター別マクロ感応度・相対特徴量 (Sector-Macro Sensitivity)
+    "semicon_sox_beta_return",
+    "semicon_nvda_beta_return",
+    "macro_sox_relative_return",
+    "macro_nvda_relative_return",
+    "finance_tnx_sensitivity",
+    "macro_tnx_rate_shock",
+    "vix_spike_flag",
+    "vix_stress_score",
 ]
 
 
@@ -121,6 +160,42 @@ def add_overnight_features(data: pd.DataFrame) -> pd.DataFrame:
     else:
         result["sector_relative_strength"] = 0.0
 
+    # 7. 4大マクロ指標とセクター別感応度特徴量 (SOX, NVDA, TNX, VIX: shift-1確定値)
+    t_val = str(result["ticker"].iloc[0]) if "ticker" in result.columns and len(result) > 0 else ""
+    s_val = str(result["sector"].iloc[0]) if "sector" in result.columns and len(result) > 0 else ""
+    is_semi = is_semicon_cable_ticker(t_val, s_val)
+    is_fin = is_banking_finance_ticker(t_val, s_val)
+
+    sox_ret = pd.to_numeric(result["sox_return_1d"], errors="coerce").fillna(0.0) if "sox_return_1d" in result.columns else pd.Series(0.0, index=result.index)
+    nvda_ret = pd.to_numeric(result["nvda_return_1d"], errors="coerce").fillna(0.0) if "nvda_return_1d" in result.columns else pd.Series(0.0, index=result.index)
+    tnx_ret = pd.to_numeric(result["tnx_return_1d"], errors="coerce").fillna(0.0) if "tnx_return_1d" in result.columns else pd.Series(0.0, index=result.index)
+    vix_ret = pd.to_numeric(result["vix_return_1d"], errors="coerce").fillna(0.0) if "vix_return_1d" in result.columns else pd.Series(0.0, index=result.index)
+    vix_cl = pd.to_numeric(result["vix_close"], errors="coerce").fillna(20.0) if "vix_close" in result.columns else pd.Series(20.0, index=result.index)
+    n225_ret = pd.to_numeric(result["n225_return_1d"], errors="coerce").fillna(0.0) if "n225_return_1d" in result.columns else pd.Series(0.0, index=result.index)
+
+    if "sox_return_1d" not in result.columns:
+        result["sox_return_1d"] = sox_ret
+    if "nvda_return_1d" not in result.columns:
+        result["nvda_return_1d"] = nvda_ret
+    if "tnx_return_1d" not in result.columns:
+        result["tnx_return_1d"] = tnx_ret
+    if "vix_return_1d" not in result.columns:
+        result["vix_return_1d"] = vix_ret
+
+    # 半導体セクター感応度（半導体・電線ならSOX/NVDAリターン、他なら0.0）
+    result["semicon_sox_beta_return"] = (sox_ret if is_semi else pd.Series(0.0, index=result.index)).clip(-0.15, 0.15)
+    result["semicon_nvda_beta_return"] = (nvda_ret if is_semi else pd.Series(0.0, index=result.index)).clip(-0.20, 0.20)
+    result["macro_sox_relative_return"] = (sox_ret - n225_ret).clip(-0.10, 0.10)
+    result["macro_nvda_relative_return"] = (nvda_ret - n225_ret).clip(-0.15, 0.15)
+
+    # 銀行・金融セクター感応度（金利変動に対する感応度）
+    result["finance_tnx_sensitivity"] = (tnx_ret if is_fin else pd.Series(0.0, index=result.index)).clip(-0.15, 0.15)
+    result["macro_tnx_rate_shock"] = tnx_ret.clip(-0.15, 0.15)
+
+    # VIXリスクオフ・警戒フラグ（VIX急騰または25以上の高ボラ帯）
+    result["vix_spike_flag"] = ((vix_ret > 0.08) | (vix_cl > 25.0)).astype(float)
+    result["vix_stress_score"] = (vix_ret / 0.10).clip(-3.0, 3.0)
+
     return result
 
 
@@ -132,6 +207,7 @@ CROSS_SECTIONAL_FEATURES = [
     "cs_zscore_return_1d",
     "cs_zscore_return_5d",
     "sector_relative_return_1d",
+    "cs_rank_macro_sensitivity",
 ]
 
 
@@ -218,6 +294,12 @@ def add_cross_sectional_overnight_features(pooled_df: pd.DataFrame) -> pd.DataFr
             (result["next_open_return"] > daily_med_next).astype(float),
             np.nan,
         )
+
+    # 5. Macro Sensitivity Cross-Sectional Rank
+    if "semicon_sox_beta_return" in result.columns:
+        result["cs_rank_macro_sensitivity"] = grouped["semicon_sox_beta_return"].rank(pct=True).fillna(0.5)
+    else:
+        result["cs_rank_macro_sensitivity"] = 0.5
 
     return result
 

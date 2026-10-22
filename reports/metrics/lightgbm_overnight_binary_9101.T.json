@@ -1,55 +1,55 @@
 {
   "metrics": {
-    "accuracy": 0.45395799676898224,
-    "f1": 0.0,
-    "auc": 0.5271325991282192,
+    "accuracy": 0.4701130856219709,
+    "f1": 0.14136125654450263,
+    "auc": 0.5211575312177558,
     "rows": 619
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4733,
+      "max_p": 0.4653,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.5484,
-      "description": "実績ギャップアップ率 54.8%（陰線・下落警戒）"
+      "historical_win_rate": 0.5645,
+      "description": "実績ギャップアップ率 56.5%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4733,
-      "max_p": 0.4757,
+      "min_p": 0.4655,
+      "max_p": 0.4718,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.5565,
-      "description": "実績ギャップアップ率 55.6%（弱気）"
+      "historical_win_rate": 0.5081,
+      "description": "実績ギャップアップ率 50.8%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4757,
-      "max_p": 0.4807,
+      "min_p": 0.4719,
+      "max_p": 0.4791,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5122,
-      "description": "実績ギャップアップ率 51.2%（中立・推移注視）"
+      "historical_win_rate": 0.5528,
+      "description": "実績ギャップアップ率 55.3%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.4807,
-      "max_p": 0.4823,
+      "min_p": 0.4791,
+      "max_p": 0.4875,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5081,
-      "description": "実績ギャップアップ率 50.8%（堅調）"
+      "historical_win_rate": 0.5242,
+      "description": "実績ギャップアップ率 52.4%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.4823,
+      "min_p": 0.4877,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.5887,
-      "description": "実績ギャップアップ率 58.9%（最高勝率群）"
+      "historical_win_rate": 0.5645,
+      "description": "実績ギャップアップ率 56.5%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -90,48 +90,60 @@
     "usdjpy_trend_direction",
     "tesla_return_1d",
     "tesla_trend_direction",
-    "byd_return_1d"
+    "byd_return_1d",
+    "sox_return_1d",
+    "nvda_return_1d",
+    "tnx_return_1d",
+    "vix_return_1d",
+    "semicon_sox_beta_return",
+    "semicon_nvda_beta_return",
+    "macro_sox_relative_return",
+    "macro_nvda_relative_return",
+    "finance_tnx_sensitivity",
+    "macro_tnx_rate_shock",
+    "vix_spike_flag",
+    "vix_stress_score"
   ],
   "top_features": [
     {
-      "feature": "usdjpy_return_1d",
-      "importance": 3.0
+      "feature": "intraday_range_ratio",
+      "importance": 9.0
     },
     {
-      "feature": "high_low_range",
-      "importance": 2.0
+      "feature": "sector_volatility",
+      "importance": 8.0
     },
     {
-      "feature": "vol_adjusted_momentum_5d",
-      "importance": 2.0
+      "feature": "tesla_return_1d",
+      "importance": 8.0
     },
     {
-      "feature": "volume_change_1d",
-      "importance": 2.0
+      "feature": "nvda_return_1d",
+      "importance": 8.0
+    },
+    {
+      "feature": "vol_adjusted_momentum_1d",
+      "importance": 6.0
+    },
+    {
+      "feature": "volume_surge_20d",
+      "importance": 6.0
     },
     {
       "feature": "volume_surge_5d",
-      "importance": 2.0
+      "importance": 5.0
     },
     {
-      "feature": "macd_hist",
-      "importance": 2.0
+      "feature": "sox_return_1d",
+      "importance": 5.0
     },
     {
-      "feature": "volatility_20",
-      "importance": 2.0
-    },
-    {
-      "feature": "byd_return_1d",
-      "importance": 2.0
-    },
-    {
-      "feature": "close_location_value",
-      "importance": 1.0
+      "feature": "tnx_return_1d",
+      "importance": 5.0
     },
     {
       "feature": "return_1d",
-      "importance": 1.0
+      "importance": 4.0
     }
   ]
 }

@@ -320,7 +320,9 @@ def build_multi_agent_webhook_payloads(summary_data: dict[str, Any]) -> list[dic
         None,
     )
     if top_sniper_on:
-        on_rec = f"🌙 **今夜のOvernight推奨**: `{top_sniper_on.get('ticker')}` **{top_sniper_on.get('name')}** ({top_sniper_on.get('q_band', 'Q5')} / CS優位度 **{top_sniper_on.get('p_cs', 0.5):.1%}** / 執行ガード適格 ✅)"
+        p_cs_val = top_sniper_on.get("p_cs")
+        cs_str = f" / CS優位度 **{p_cs_val:.1%}**" if p_cs_val is not None else ""
+        on_rec = f"🌙 **今夜のOvernight推奨**: `{top_sniper_on.get('ticker')}` **{top_sniper_on.get('name')}** ({top_sniper_on.get('q_band', 'Q5')}{cs_str} / 執行ガード適格 ✅)"
     else:
         on_rec = "🌙 **今夜のOvernight推奨**: キャッシュ待機（厳選スナイパー条件未達）"
 
@@ -786,10 +788,10 @@ def send_daily_summary_webhook(
         else:
             configured = dict(channel_webhooks)
             configured["main"] = normalize_webhook_url(webhook_url)
+    elif channel_webhooks is not None:
+        configured = dict(channel_webhooks)
     else:
         configured = get_configured_channel_webhooks()
-        if channel_webhooks:
-            configured.update(channel_webhooks)
 
     main_url = configured.get("main")
     if not main_url and not any(configured.values()):
@@ -851,6 +853,23 @@ def send_daily_summary_webhook(
             last_code = code
             total_sent += 1
             channels_delivered.append("alert")
+
+    # 5. Dedicated Room: Daytrade Sniper (⚡｜当日デイトレ特化予想)
+    daytrade_url = configured.get("daytrade")
+    if daytrade_url and daytrade_url != main_url:
+        if total_sent > 0 and sleep_interval > 0:
+            time.sleep(sleep_interval)
+        try:
+            from stock_ai.cloud.discord_bot import build_daytrade_ranking_payloads
+            dt_payloads = build_daytrade_ranking_payloads()
+            for p_dt in dt_payloads:
+                code = _post_single_webhook_payload(daytrade_url, p_dt)
+                if code is not None:
+                    last_code = code
+                    total_sent += 1
+            channels_delivered.append("daytrade")
+        except Exception as dt_exc:
+            logger.warning(f"Failed delivering daytrade rankings: {dt_exc}")
 
     return {
         "status": "SUCCESS",
