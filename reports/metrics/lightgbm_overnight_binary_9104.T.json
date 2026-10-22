@@ -1,8 +1,8 @@
 {
   "metrics": {
-    "accuracy": 0.4555735056542811,
+    "accuracy": 0.45718901453957994,
     "f1": 0.0,
-    "auc": 0.5238335753519793,
+    "auc": 0.5277637556789501,
     "rows": 619
   },
   "quantile_cutoffs": [
@@ -18,38 +18,38 @@
     {
       "quantile": "Q2",
       "min_p": 0.4772,
-      "max_p": 0.4791,
+      "max_p": 0.4794,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.4194,
-      "description": "実績ギャップアップ率 41.9%（弱気）"
+      "historical_win_rate": 0.5323,
+      "description": "実績ギャップアップ率 53.2%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4793,
-      "max_p": 0.4813,
+      "min_p": 0.4794,
+      "max_p": 0.4805,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5447,
-      "description": "実績ギャップアップ率 54.5%（中立・推移注視）"
+      "historical_win_rate": 0.4878,
+      "description": "実績ギャップアップ率 48.8%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.4813,
-      "max_p": 0.4858,
+      "min_p": 0.4805,
+      "max_p": 0.4862,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5484,
-      "description": "実績ギャップアップ率 54.8%（堅調）"
+      "historical_win_rate": 0.5726,
+      "description": "実績ギャップアップ率 57.3%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.4858,
+      "min_p": 0.4862,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.5887,
-      "description": "実績ギャップアップ率 58.9%（最高勝率群）"
+      "historical_win_rate": 0.5161,
+      "description": "実績ギャップアップ率 51.6%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -95,14 +95,22 @@
   "top_features": [
     {
       "feature": "topix_return_1d",
+      "importance": 4.0
+    },
+    {
+      "feature": "high_low_range",
       "importance": 3.0
     },
     {
-      "feature": "usdjpy_close_vs_ma_25",
+      "feature": "volatility_20",
       "importance": 3.0
     },
     {
-      "feature": "volume_change_1d",
+      "feature": "vol_adjusted_momentum_1d",
+      "importance": 2.0
+    },
+    {
+      "feature": "volume_surge_5d",
       "importance": 2.0
     },
     {
@@ -110,19 +118,11 @@
       "importance": 2.0
     },
     {
-      "feature": "rsi_14",
-      "importance": 2.0
-    },
-    {
-      "feature": "macd_hist",
-      "importance": 2.0
-    },
-    {
-      "feature": "volatility_20",
-      "importance": 2.0
-    },
-    {
       "feature": "bb_percent_b",
+      "importance": 2.0
+    },
+    {
+      "feature": "sector_trend_score",
       "importance": 2.0
     },
     {
@@ -130,8 +130,8 @@
       "importance": 2.0
     },
     {
-      "feature": "return_1d",
-      "importance": 1.0
+      "feature": "usdjpy_close_vs_ma_25",
+      "importance": 2.0
     }
   ]
 }

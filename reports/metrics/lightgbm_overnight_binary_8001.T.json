@@ -2,54 +2,54 @@
   "metrics": {
     "accuracy": 0.5282714054927302,
     "f1": 0.6913319238900634,
-    "auc": 0.5186156843031294,
+    "auc": 0.5059957689246366,
     "rows": 619
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.517,
+      "max_p": 0.5135,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.5,
-      "description": "実績ギャップアップ率 50.0%（陰線・下落警戒）"
+      "historical_win_rate": 0.5323,
+      "description": "実績ギャップアップ率 53.2%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.517,
-      "max_p": 0.517,
+      "min_p": 0.5137,
+      "max_p": 0.5203,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.5565,
-      "description": "実績ギャップアップ率 55.6%（弱気）"
+      "historical_win_rate": 0.5806,
+      "description": "実績ギャップアップ率 58.1%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.517,
-      "max_p": 0.521,
+      "min_p": 0.5203,
+      "max_p": 0.5214,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5285,
-      "description": "実績ギャップアップ率 52.8%（中立・推移注視）"
+      "historical_win_rate": 0.4878,
+      "description": "実績ギャップアップ率 48.8%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.521,
-      "max_p": 0.5242,
+      "min_p": 0.5214,
+      "max_p": 0.5226,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5645,
-      "description": "実績ギャップアップ率 56.5%（堅調）"
+      "historical_win_rate": 0.5242,
+      "description": "実績ギャップアップ率 52.4%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5242,
+      "min_p": 0.5226,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.5645,
-      "description": "実績ギャップアップ率 56.5%（最高勝率群）"
+      "historical_win_rate": 0.5887,
+      "description": "実績ギャップアップ率 58.9%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -94,23 +94,19 @@
   ],
   "top_features": [
     {
+      "feature": "volume_change_1d",
+      "importance": 3.0
+    },
+    {
+      "feature": "close_location_value",
+      "importance": 2.0
+    },
+    {
       "feature": "return_1d",
       "importance": 2.0
     },
     {
-      "feature": "close_vs_ma_5",
-      "importance": 2.0
-    },
-    {
-      "feature": "close_vs_ma_25",
-      "importance": 2.0
-    },
-    {
       "feature": "vol_adjusted_momentum_1d",
-      "importance": 2.0
-    },
-    {
-      "feature": "volume_change_1d",
       "importance": 2.0
     },
     {
@@ -126,11 +122,15 @@
       "importance": 2.0
     },
     {
-      "feature": "usdjpy_return_1d",
+      "feature": "topix_return_1d",
       "importance": 2.0
     },
     {
       "feature": "usdjpy_close_vs_ma_25",
+      "importance": 2.0
+    },
+    {
+      "feature": "byd_return_1d",
       "importance": 2.0
     }
   ]

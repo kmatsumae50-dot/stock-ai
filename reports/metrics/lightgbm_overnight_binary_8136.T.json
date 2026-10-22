@@ -1,15 +1,15 @@
 {
   "metrics": {
-    "accuracy": 0.48220064724919093,
+    "accuracy": 0.48381877022653724,
     "f1": 0.0,
-    "auc": 0.45790687919463086,
+    "auc": 0.45835648609261803,
     "rows": 618
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4823,
+      "max_p": 0.4825,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
       "historical_win_rate": 0.5484,
@@ -17,8 +17,8 @@
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4823,
-      "max_p": 0.4846,
+      "min_p": 0.4825,
+      "max_p": 0.4848,
       "label": "弱気帯",
       "direction": "down",
       "historical_win_rate": 0.5528,
@@ -26,8 +26,8 @@
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4846,
-      "max_p": 0.4894,
+      "min_p": 0.4848,
+      "max_p": 0.4896,
       "label": "中立帯",
       "direction": "neutral",
       "historical_win_rate": 0.5447,
@@ -35,8 +35,8 @@
     },
     {
       "quantile": "Q4",
-      "min_p": 0.4894,
-      "max_p": 0.4922,
+      "min_p": 0.4896,
+      "max_p": 0.4923,
       "label": "強気先行帯",
       "direction": "up",
       "historical_win_rate": 0.439,
@@ -44,7 +44,7 @@
     },
     {
       "quantile": "Q5",
-      "min_p": 0.4922,
+      "min_p": 0.4923,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
