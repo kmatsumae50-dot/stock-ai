@@ -142,3 +142,89 @@ def test_simulate_intraday_and_dual_shift() -> None:
     # Compound: (1 + 0.008) * (1 + 0.013) - 1 = 0.021104
     d0 = dual_res["trade_logs"][0]
     assert np.isclose(d0["net_return"], (1 + on_res["trade_logs"][0]["net_return"]) * (1 + intra_res["trade_logs"][0]["net_return"]) - 1.0)
+
+
+def test_simulate_intraday_waveform() -> None:
+    """Test 6-pattern waveform classification, 09:00-15:30 timeline simulation, and actionable zones."""
+    from stock_ai.models.intraday import (
+        WAVEFORM_PATTERNS,
+        simulate_intraday_waveform,
+    )
+
+    # 1. Trend Breakout
+    wf_breakout = simulate_intraday_waveform(
+        cur_p=2000.0,
+        open_p=2000.0,
+        high_p=2020.0,
+        low_p=1995.0,
+        prev_c=1980.0,
+        prob_up=60.0,
+        expected_bps=45.0,
+        vol_20=0.02,
+        phase="premarket",
+        clv=0.8,
+        pullback_pct=0.1,
+        risk_flags=[],
+    )
+    assert wf_breakout["waveform_key"] == "trend_breakout"
+    assert "独歩高" in wf_breakout["waveform_title"]
+    assert len(wf_breakout["timeline_items"]) == 5
+    assert wf_breakout["target_final_price"] > 2000.0
+    assert wf_breakout["stop_loss_price"] < 2000.0
+
+    # 2. Yoriten Fade
+    wf_yoriten = simulate_intraday_waveform(
+        cur_p=2000.0,
+        open_p=2020.0,
+        high_p=2030.0,
+        low_p=1990.0,
+        prev_c=2000.0,
+        prob_up=40.0,
+        expected_bps=-20.0,
+        vol_20=0.02,
+        phase="intraday_live",
+        clv=0.25,
+        pullback_pct=0.75,
+        risk_flags=["⚠️ 寄り天・上ヒゲ失速警戒"],
+    )
+    assert wf_yoriten["waveform_key"] == "yoriten_fade"
+    assert "寄り天" in wf_yoriten["waveform_title"]
+    assert "買い厳禁" in wf_yoriten["best_entry_zone"]
+    assert len(wf_yoriten["timeline_items"]) == 4  # Live intraday items
+
+    # 3. GD V-shape Rebound
+    wf_gd_v = simulate_intraday_waveform(
+        cur_p=1990.0,
+        open_p=1970.0,
+        high_p=1995.0,
+        low_p=1965.0,
+        prev_c=2000.0,
+        prob_up=52.0,
+        expected_bps=15.0,
+        vol_20=0.02,
+        phase="intraday_live",
+        clv=0.80,
+        pullback_pct=0.15,
+        risk_flags=[],
+    )
+    assert wf_gd_v["waveform_key"] == "gd_v_shape"
+    assert "V字反発" in wf_gd_v["waveform_title"]
+
+    # 4. Box Range
+    wf_box = simulate_intraday_waveform(
+        cur_p=2000.0,
+        open_p=2000.0,
+        high_p=2005.0,
+        low_p=1995.0,
+        prev_c=2000.0,
+        prob_up=50.0,
+        expected_bps=0.0,
+        vol_20=0.015,
+        phase="premarket",
+        clv=0.5,
+        pullback_pct=0.5,
+        risk_flags=[],
+    )
+    assert wf_box["waveform_key"] == "box_range"
+    assert "ボックス揉み合い" in wf_box["waveform_title"]
+

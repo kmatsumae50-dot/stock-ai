@@ -438,6 +438,382 @@ def predict_daytrade_sniper(
     low_p = quote["low"]
     prev_c = quote["previous_close"]
 
+def format_price_yen(val: float) -> str:
+    """Format yen price with commas, using integer if >= 1000 or rounded to 1 decimal."""
+    if val >= 1000.0:
+        return f"{round(val):,}円"
+    return f"{val:,.1f}円"
+
+
+WAVEFORM_PATTERNS: dict[str, dict[str, Any]] = {
+    "gu_rebound_high": {
+        "title": "🚀【GU朝押し ➔ 後場高値引け型】",
+        "description": "高く寄り付き、朝イチの利確こなして1日じり高",
+        "direction": "UP",
+    },
+    "gd_v_shape": {
+        "title": "📈【GDスタート ➔ 窓埋めV字反発型】",
+        "description": "安く寄り付き、寄り底から前場・後場にかけて陽線浮上",
+        "direction": "UP",
+    },
+    "trend_breakout": {
+        "title": "🔥【寄り付き突破 ➔ 終日トレンド独歩高型】",
+        "description": "押し目を作らず大口買いで上値を追う展開",
+        "direction": "UP",
+    },
+    "yoriten_fade": {
+        "title": "⚠️【寄り天（朝イチ高値）➔ 後場ダラ下げ失速型】",
+        "description": "朝9時台が天井で、飛びつくと終日含み損になる警戒波形",
+        "direction": "DOWN",
+    },
+    "gd_downtrend": {
+        "title": "📉【GD寄り付き ➔ 戻り売り一段安型】",
+        "description": "反発が鈍く、後場にかけて安値を掘り下げる陰線波形",
+        "direction": "DOWN",
+    },
+    "box_range": {
+        "title": "⚖️【上下往来 ➔ ボックス揉み合い型】",
+        "description": "方向感に欠け、高値追い厳禁のレンジ波形",
+        "direction": "NEUTRAL",
+    },
+}
+
+
+def simulate_intraday_waveform(
+    cur_p: float,
+    open_p: float,
+    high_p: float,
+    low_p: float,
+    prev_c: float,
+    prob_up: float,
+    expected_bps: float,
+    vol_20: float,
+    phase: str,
+    clv: float,
+    pullback_pct: float,
+    risk_flags: list[str],
+    now_dt: datetime | None = None,
+) -> dict[str, Any]:
+    """Simulate which of the 6 intraday waveform patterns the stock will draw today,
+
+    and project realistic 09:00 - 15:30 time-slot price bounds and actionable trading zones.
+    """
+    hl_range = max(1e-6, high_p - low_p)
+    intra_ret_pct = ((cur_p - open_p) / open_p) * 100.0 if open_p > 0 else 0.0
+    day_ret_pct = ((cur_p - prev_c) / prev_c) * 100.0 if prev_c > 0 else 0.0
+    gap_pct = ((open_p - prev_c) / prev_c) * 100.0 if prev_c > 0 else 0.0
+    vol_pct = max(0.015, vol_20)
+
+    # 1. Determine Waveform Pattern Type
+    if phase == "intraday_live":
+        # Live intraday price action takes precedence
+        if any("寄り天" in f for f in risk_flags) or (high_p >= open_p * 1.006 and pullback_pct >= 0.40) or (intra_ret_pct > 0.8 and pullback_pct >= 0.40):
+            waveform_key = "yoriten_fade"
+        elif open_p < prev_c and cur_p >= open_p and clv >= 0.55:
+            waveform_key = "gd_v_shape"
+        elif clv <= 0.30 and intra_ret_pct < -0.6:
+            waveform_key = "gd_downtrend"
+        elif open_p >= prev_c and clv >= 0.80 and intra_ret_pct >= 0.8:
+            waveform_key = "trend_breakout"
+        elif open_p >= prev_c and clv >= 0.55:
+            waveform_key = "gu_rebound_high"
+        elif prob_up >= 55.0 and clv >= 0.50:
+            waveform_key = "gu_rebound_high"
+        elif prob_up <= 44.0:
+            waveform_key = "gd_downtrend"
+        else:
+            waveform_key = "box_range"
+    else:
+        # Pre-market or post-market quant forecast
+        has_risk = any("警戒" in f for f in risk_flags)
+        if has_risk or (prob_up < 48.0 and expected_bps <= -15.0 and gap_pct >= 0.0):
+            waveform_key = "yoriten_fade"
+        elif prob_up >= 58.0 and expected_bps >= 35.0:
+            waveform_key = "trend_breakout"
+        elif prob_up >= 52.0 and gap_pct >= -0.2:
+            waveform_key = "gu_rebound_high"
+        elif prob_up >= 48.0 and gap_pct < -0.2:
+            waveform_key = "gd_v_shape"
+        elif prob_up <= 45.0:
+            waveform_key = "gd_downtrend"
+        else:
+            waveform_key = "box_range"
+
+    wf_meta = WAVEFORM_PATTERNS[waveform_key]
+    wf_title = wf_meta["title"]
+    wf_desc = wf_meta["description"]
+
+    # 2. Simulate 09:00 - 15:30 Concrete Price Trajectories
+    base_ref = prev_c if phase != "intraday_live" else cur_p
+
+    if waveform_key == "gu_rebound_high":
+        # 高く寄り付き、朝イチの利確こなして1日じり高
+        open_lo = round(prev_c * (1.0 + max(0.003, gap_pct / 100.0)), 1)
+        open_hi = round(prev_c * (1.0 + max(0.008, gap_pct / 100.0 + 0.005)), 1)
+        dip_lo = round(prev_c * (1.0 - vol_pct * 0.15), 1)
+        dip_hi = round(prev_c * (1.0 + vol_pct * 0.20), 1)
+        morn_lo = round(prev_c * (1.0 + vol_pct * 0.35), 1)
+        morn_hi = round(prev_c * (1.0 + vol_pct * 0.70), 1)
+        aft_lo = round(prev_c * (1.0 + vol_pct * 0.55), 1)
+        aft_hi = round(prev_c * (1.0 + vol_pct * 0.95), 1)
+        close_lo = round(prev_c * (1.0 + vol_pct * 0.80), 1)
+        close_hi = round(prev_c * (1.0 + vol_pct * 1.30), 1)
+
+        t_open = f"{format_price_yen(open_lo)} 〜 {format_price_yen(open_hi)}（前日比 +{((open_lo/prev_c)-1)*100:.1f}% GU予想）"
+        t_early = f"利確売りを吸収し {format_price_yen(dip_lo)}〜{format_price_yen(dip_hi)} で下ヒゲ押し目形成"
+        t_morning = f"押し目完了から反発、{format_price_yen(morn_lo)}〜{format_price_yen(morn_hi)} 突破へじり高"
+        t_afternoon = f"大口の買い支えが入り {format_price_yen(aft_lo)}〜{format_price_yen(aft_hi)} の高値圏維持"
+        t_close = f"日中最高値圏 {format_price_yen(close_lo)}〜{format_price_yen(close_hi)} での高値引け着地予想"
+
+        buy_zone = f"{format_price_yen(dip_lo)} 〜 {format_price_yen(dip_hi)}"
+        target_1 = morn_hi
+        target_1_pct = round(((target_1 - cur_p) / cur_p) * 100.0, 1)
+        target_final = close_hi
+        target_final_pct = round(((target_final - cur_p) / cur_p) * 100.0, 1)
+        stop_loss = round(min(cur_p * (1.0 - max(0.012, vol_pct * 0.50)), prev_c * (1.0 - vol_pct * 0.40)), 1)
+        stop_loss_pct = round(((stop_loss - cur_p) / cur_p) * 100.0, 1)
+
+    elif waveform_key == "gd_v_shape":
+        # 安く寄り付き、寄り底から前場・後場にかけて陽線浮上
+        open_lo = round(prev_c * (1.0 - max(0.008, abs(gap_pct) / 100.0)), 1)
+        open_hi = round(prev_c * (1.0 - max(0.003, abs(gap_pct) / 100.0 * 0.5)), 1)
+        dip_lo = round(prev_c * (1.0 - vol_pct * 0.65), 1)
+        dip_hi = round(prev_c * (1.0 - vol_pct * 0.25), 1)
+        morn_lo = round(prev_c * (1.0 - vol_pct * 0.10), 1)
+        morn_hi = round(prev_c * (1.0 + vol_pct * 0.30), 1)
+        aft_lo = round(prev_c * (1.0 + vol_pct * 0.20), 1)
+        aft_hi = round(prev_c * (1.0 + vol_pct * 0.65), 1)
+        close_lo = round(prev_c * (1.0 + vol_pct * 0.40), 1)
+        close_hi = round(prev_c * (1.0 + vol_pct * 0.90), 1)
+
+        t_open = f"{format_price_yen(open_lo)} 〜 {format_price_yen(open_hi)}（前日比 -{abs((open_hi/prev_c)-1)*100:.1f}% GDスタート）"
+        t_early = f"{format_price_yen(dip_lo)}〜{format_price_yen(dip_hi)} で寄り底を確認し、急速な買い戻し発動"
+        t_morning = f"前日終値（{format_price_yen(prev_c)}）の窓埋めを完了し、{format_price_yen(morn_lo)}〜{format_price_yen(morn_hi)} へ浮上"
+        t_afternoon = f"買い優勢が継続、{format_price_yen(aft_lo)}〜{format_price_yen(aft_hi)} でプラス圏定着"
+        t_close = f"後場高値水準 {format_price_yen(close_lo)}〜{format_price_yen(close_hi)} で陽線着地予想"
+
+        buy_zone = f"{format_price_yen(dip_lo)} 〜 {format_price_yen(dip_hi)}"
+        target_1 = morn_hi
+        target_1_pct = round(((target_1 - cur_p) / cur_p) * 100.0, 1)
+        target_final = close_hi
+        target_final_pct = round(((target_final - cur_p) / cur_p) * 100.0, 1)
+        stop_loss = round(min(cur_p * (1.0 - max(0.012, vol_pct * 0.50)), dip_lo * 0.995), 1)
+        stop_loss_pct = round(((stop_loss - cur_p) / cur_p) * 100.0, 1)
+
+    elif waveform_key == "trend_breakout":
+        # 押し目を作らず大口買いで上値を追う展開
+        open_lo = round(prev_c * (1.0 + max(0.005, gap_pct / 100.0)), 1)
+        open_hi = round(prev_c * (1.0 + max(0.012, gap_pct / 100.0 + 0.006)), 1)
+        dip_lo = round(prev_c * (1.0 + vol_pct * 0.30), 1)
+        dip_hi = round(prev_c * (1.0 + vol_pct * 0.65), 1)
+        morn_lo = round(prev_c * (1.0 + vol_pct * 0.70), 1)
+        morn_hi = round(prev_c * (1.0 + vol_pct * 1.20), 1)
+        aft_lo = round(prev_c * (1.0 + vol_pct * 1.10), 1)
+        aft_hi = round(prev_c * (1.0 + vol_pct * 1.65), 1)
+        close_lo = round(prev_c * (1.0 + vol_pct * 1.40), 1)
+        close_hi = round(prev_c * (1.0 + vol_pct * 2.00), 1)
+
+        t_open = f"{format_price_yen(open_lo)} 〜 {format_price_yen(open_hi)}（前日比 +{((open_lo/prev_c)-1)*100:.1f}% 強気スタート）"
+        t_early = f"押し目を待たずに {format_price_yen(dip_lo)}〜{format_price_yen(dip_hi)} を一気にブレイク突破"
+        t_morning = f"大口の買い上がりが加速、{format_price_yen(morn_lo)}〜{format_price_yen(morn_hi)} へ一段高"
+        t_afternoon = f"売り方の踏み上げを巻き込み {format_price_yen(aft_lo)}〜{format_price_yen(aft_hi)} へ独歩高"
+        t_close = f"当日最高値 {format_price_yen(close_lo)}〜{format_price_yen(close_hi)} での大陽線引け予想"
+
+        buy_zone = f"{format_price_yen(open_lo)} 〜 {format_price_yen(dip_lo)}"
+        target_1 = morn_hi
+        target_1_pct = round(((target_1 - cur_p) / cur_p) * 100.0, 1)
+        target_final = close_hi
+        target_final_pct = round(((target_final - cur_p) / cur_p) * 100.0, 1)
+        stop_loss = round(min(cur_p * (1.0 - max(0.010, vol_pct * 0.40)), open_lo * 0.995), 1)
+        stop_loss_pct = round(((stop_loss - cur_p) / cur_p) * 100.0, 1)
+
+    elif waveform_key == "yoriten_fade":
+        # 朝9時台が天井で、飛びつくと終日含み損になる警戒波形
+        open_lo = round(prev_c * (1.0 + max(0.004, gap_pct / 100.0)), 1)
+        open_hi = round(prev_c * (1.0 + max(0.012, gap_pct / 100.0 + 0.005)), 1)
+        peak_lo = round(prev_c * (1.0 + vol_pct * 0.30), 1)
+        peak_hi = round(prev_c * (1.0 + vol_pct * 0.65), 1)
+        morn_lo = round(prev_c * (1.0 - vol_pct * 0.25), 1)
+        morn_hi = round(prev_c * (1.0 + vol_pct * 0.05), 1)
+        aft_lo = round(prev_c * (1.0 - vol_pct * 0.65), 1)
+        aft_hi = round(prev_c * (1.0 - vol_pct * 0.20), 1)
+        close_lo = round(prev_c * (1.0 - vol_pct * 0.95), 1)
+        close_hi = round(prev_c * (1.0 - vol_pct * 0.50), 1)
+
+        t_open = f"{format_price_yen(open_lo)} 〜 {format_price_yen(open_hi)}（前日比 +{((open_lo/prev_c)-1)*100:.1f}% 高寄り見かけ）"
+        t_early = f"{format_price_yen(peak_lo)}〜{format_price_yen(peak_hi)} で朝イチ高値をつけ、大量利確売りに押され失速"
+        t_morning = f"始値割れから前日終値割れへ沈下、{format_price_yen(morn_lo)}〜{format_price_yen(morn_hi)} へ失速"
+        t_afternoon = f"買い支えが入らず戻り売り優勢、{format_price_yen(aft_lo)}〜{format_price_yen(aft_hi)} へ下値切り下げ"
+        t_close = f"安値圏 {format_price_yen(close_lo)}〜{format_price_yen(close_hi)} での陰線着地警戒"
+
+        buy_zone = f"⚠️ 買い厳禁（戻り売りゾーン: {format_price_yen(peak_lo)} 〜 {format_price_yen(peak_hi)}）"
+        target_1 = morn_lo
+        target_1_pct = round(((target_1 - cur_p) / cur_p) * 100.0, 1)
+        target_final = close_lo
+        target_final_pct = round(((target_final - cur_p) / cur_p) * 100.0, 1)
+        stop_loss = round(max(cur_p * 1.012, peak_hi * 1.004), 1)
+        stop_loss_pct = round(((stop_loss - cur_p) / cur_p) * 100.0, 1)
+
+    elif waveform_key == "gd_downtrend":
+        # 反発が鈍く、後場にかけて安値を掘り下げる陰線波形
+        open_lo = round(prev_c * (1.0 - max(0.012, abs(gap_pct) / 100.0)), 1)
+        open_hi = round(prev_c * (1.0 - max(0.004, abs(gap_pct) / 100.0 * 0.5)), 1)
+        dip_lo = round(prev_c * (1.0 - vol_pct * 0.65), 1)
+        dip_hi = round(prev_c * (1.0 - vol_pct * 0.25), 1)
+        morn_lo = round(prev_c * (1.0 - vol_pct * 0.95), 1)
+        morn_hi = round(prev_c * (1.0 - vol_pct * 0.50), 1)
+        aft_lo = round(prev_c * (1.0 - vol_pct * 1.30), 1)
+        aft_hi = round(prev_c * (1.0 - vol_pct * 0.80), 1)
+        close_lo = round(prev_c * (1.0 - vol_pct * 1.60), 1)
+        close_hi = round(prev_c * (1.0 - vol_pct * 1.10), 1)
+
+        t_open = f"{format_price_yen(open_lo)} 〜 {format_price_yen(open_hi)}（前日比 -{abs((open_hi/prev_c)-1)*100:.1f}% GD寄り付き）"
+        t_early = f"自律反発が極めて弱く {format_price_yen(dip_lo)}〜{format_price_yen(dip_hi)} で下値模索"
+        t_morning = f"前場安値を下回り {format_price_yen(morn_lo)}〜{format_price_yen(morn_hi)} へ一段安"
+        t_afternoon = f"戻り待ちの投げ売りが重なり {format_price_yen(aft_lo)}〜{format_price_yen(aft_hi)} へ下落加速"
+        t_close = f"最安値圏 {format_price_yen(close_lo)}〜{format_price_yen(close_hi)} での大陰線警戒"
+
+        buy_zone = "⚠️ 買いエントリー完全見送り（逆張り厳禁）"
+        target_1 = morn_lo
+        target_1_pct = round(((target_1 - cur_p) / cur_p) * 100.0, 1)
+        target_final = close_lo
+        target_final_pct = round(((target_final - cur_p) / cur_p) * 100.0, 1)
+        stop_loss = round(max(cur_p * 1.015, open_hi), 1)
+        stop_loss_pct = round(((stop_loss - cur_p) / cur_p) * 100.0, 1)
+
+    else:  # box_range
+        # 方向感に欠け、高値追い厳禁のレンジ波形
+        open_lo = round(prev_c * 0.998, 1)
+        open_hi = round(prev_c * 1.004, 1)
+        box_lo = round(prev_c * (1.0 - vol_pct * 0.40), 1)
+        box_hi = round(prev_c * (1.0 + vol_pct * 0.40), 1)
+        morn_lo = round(prev_c * (1.0 - vol_pct * 0.25), 1)
+        morn_hi = round(prev_c * (1.0 + vol_pct * 0.25), 1)
+        aft_lo = round(prev_c * (1.0 - vol_pct * 0.30), 1)
+        aft_hi = round(prev_c * (1.0 + vol_pct * 0.30), 1)
+        close_lo = round(prev_c * 0.996, 1)
+        close_hi = round(prev_c * 1.004, 1)
+
+        t_open = f"{format_price_yen(open_lo)} 〜 {format_price_yen(open_hi)}（前日比 ±0.2% 前日並み）"
+        t_early = f"{format_price_yen(box_lo)}〜{format_price_yen(box_hi)} のレンジ上限・下限を確認"
+        t_morning = f"{format_price_yen(morn_lo)}〜{format_price_yen(morn_hi)} のボックス中央値で揉み合い"
+        t_afternoon = f"出来高細り {format_price_yen(aft_lo)}〜{format_price_yen(aft_hi)} の膠着状態"
+        t_close = f"前日終値近辺 {format_price_yen(close_lo)}〜{format_price_yen(close_hi)} で着地予想"
+
+        buy_zone = f"{format_price_yen(box_lo)} 付近（レンジ下限打診）"
+        target_1 = max(round(cur_p * 1.008, 1), box_hi)
+        target_1_pct = round(((target_1 - cur_p) / cur_p) * 100.0, 1)
+        target_final = max(round(cur_p * 1.015, 1), round(box_hi * 1.002, 1))
+        target_final_pct = round(((target_final - cur_p) / cur_p) * 100.0, 1)
+        stop_loss = round(min(cur_p * 0.992, box_lo * 0.994), 1)
+        stop_loss_pct = round(((stop_loss - cur_p) / cur_p) * 100.0, 1)
+
+    # 3. Format Intraday Live Dynamic Trajectory when market is actively trading
+    if phase == "intraday_live":
+        t_actual = f"始値 {format_price_yen(open_p)} ➔ 安値 {format_price_yen(low_p)} / 高値 {format_price_yen(high_p)} ➔ 現在値 {format_price_yen(cur_p)}（始値比 {intra_ret_pct:+.2f}%）"
+        timeline_items = [
+            ("🕒【09:00〜現在 実績】", t_actual),
+            ("🕚【10:00〜11:30 前場】", t_morning),
+            ("🕜【12:30〜14:30 後場】", t_afternoon),
+            ("🏁【15:00〜15:30 大引け】", t_close),
+        ]
+    else:
+        timeline_items = [
+            ("🌅【09:00 寄付き予想】", t_open),
+            ("⚡【09:00〜09:45 初動】", t_early),
+            ("🕚【10:00〜11:30 前場】", t_morning),
+            ("🕜【12:30〜14:30 後場】", t_afternoon),
+            ("🏁【15:00〜15:30 大引け】", t_close),
+        ]
+
+    return {
+        "waveform_key": waveform_key,
+        "waveform_title": wf_title,
+        "waveform_description": wf_desc,
+        "direction": wf_meta["direction"],
+        "timeline_items": timeline_items,
+        "best_entry_zone": buy_zone,
+        "target_1_price": target_1,
+        "target_1_pct": target_1_pct,
+        "target_final_price": target_final,
+        "target_final_pct": target_final_pct,
+        "stop_loss_price": stop_loss,
+        "stop_loss_pct": stop_loss_pct,
+    }
+
+
+def predict_daytrade_sniper(
+    ticker: str,
+    settings: Settings | None = None,
+    now_dt: datetime | None = None,
+    name: str = "",
+) -> dict[str, Any] | None:
+    """Predict strictly 'How will the price trajectory and waveform behave TODAY (09:00 - 15:30)'.
+
+    Integrates:
+    1. 07:30 JST pre-market pooled intraday model (lightgbm_intraday_pooled_cs)
+    2. Real-time intraday quote (yfinance Open, High, Low, Current CLV, Momentum)
+    3. 6-pattern waveform classification and 09:00-15:30 concrete price trajectory simulation
+    """
+    if settings is None:
+        settings = load_settings()
+
+    phase, phase_title = determine_market_phase(now_dt)
+    base_pred = predict_intraday_for_ticker(ticker, settings=settings)
+    if not base_pred:
+        return None
+
+    base_prob = float(base_pred.get("p_intraday_cs", 0.50))
+    base_bps = float(base_pred.get("expected_return_bps", 0.0))
+    q_band = str(base_pred.get("quantile", "Q3"))
+
+    # Load technical features for volatility and fallback
+    f_path = settings.paths.feature_data_dir / f"{ticker}.parquet"
+    vol_20 = 0.022
+    features_df = None
+    if f_path.exists():
+        try:
+            features_df = read_parquet(f_path)
+            if not features_df.empty and "volatility_20" in features_df.columns:
+                v_val = float(features_df["volatility_20"].iloc[-1])
+                if not np.isnan(v_val) and v_val > 0.005:
+                    vol_20 = v_val
+        except Exception:
+            pass
+
+    # Real-time quote or fallback to features parquet
+    quote = fetch_realtime_intraday_quote(ticker)
+    if quote is None and features_df is not None and not features_df.empty:
+        last_row = features_df.iloc[-1]
+        c = float(last_row.get("close", 1000.0))
+        o = float(last_row.get("open", c))
+        h = float(last_row.get("high", max(c, o)))
+        l_p = float(last_row.get("low", min(c, o)))
+        pc = float(features_df["close"].iloc[-2]) if len(features_df) >= 2 else o
+        quote = {
+            "last_price": c,
+            "open": o,
+            "high": h,
+            "low": l_p,
+            "previous_close": pc,
+            "source": "parquet_fallback",
+        }
+    elif quote is None:
+        quote = {
+            "last_price": 1000.0,
+            "open": 1000.0,
+            "high": 1000.0,
+            "low": 1000.0,
+            "previous_close": 1000.0,
+            "source": "default_mock",
+        }
+
+    cur_p = quote["last_price"]
+    open_p = quote["open"]
+    high_p = quote["high"]
+    low_p = quote["low"]
+    prev_c = quote["previous_close"]
+
     day_ret_pct = ((cur_p - prev_c) / prev_c) * 100.0 if prev_c > 0 else 0.0
     intra_ret_pct = ((cur_p - open_p) / open_p) * 100.0 if open_p > 0 else 0.0
     hl_range = max(1e-6, high_p - low_p)
@@ -454,65 +830,28 @@ def predict_daytrade_sniper(
         risk_flags.append("⚠️ 直近決算リスク")
 
     if phase == "intraday_live":
-        # Live momentum fusion
         if clv >= 0.70 and intra_ret_pct > 0:
             mom_adj = +0.10
-            tactic = (
-                f"高値圏を維持（CLV {clv:.0%}、始値比 {intra_ret_pct:+.1f}%）。大引けにかけて踏み上げ高値引けが期待できる強いチャート形状。"
-                "高値ブレイクに乗るかVWAP近辺の押し目で順張りエントリー推奨。"
-            )
         elif intra_ret_pct > 1.2 and pullback_pct >= 0.50:
             mom_adj = -0.15
             risk_flags.append("⚠️ 寄り天・上ヒゲ失速警戒")
-            tactic = (
-                f"⚠️ 寄り天・上ヒゲ失速パターンを検知！寄付き急騰後に戻り売りに押され（上ヒゲ押し戻し {pullback_pct:.0%}）、安値方向への失速リスク大。"
-                "買いエントリーは厳禁、見送り推奨。"
-            )
         elif intra_ret_pct < -0.8 and clv >= 0.60:
             mom_adj = +0.07
-            tactic = (
-                f"前場安値（{low_p:,.0f}円）から底打ち反転中（安値から回復 CLV {clv:.0%}）。後場のリバウンド押し目買いが機能しており、"
-                f"前場安値（{low_p:,.0f}円）を背にしたデイトレ逆張り買いが有効。"
-            )
         elif intra_ret_pct < -0.8 and clv <= 0.30:
             mom_adj = -0.12
             risk_flags.append("⚠️ 安値引け警戒")
-            tactic = (
-                f"安値圏を這う下落トレンド（CLV {clv:.0%}、始値比 {intra_ret_pct:+.1f}%）。買い圧力が弱く後場一段安の恐れあり。"
-                "安易なナンピン買いは危険、見送り推奨。"
-            )
         else:
             mom_adj = 0.0
-            tactic = (
-                f"日中レンジ揉み合い（現在値 {cur_p:,.0f}円、始値比 {intra_ret_pct:+.1f}%）。上下の方向感に乏しいため、"
-                "明確なブレイクアウトまたはレンジ下限での反発確認まで待機推奨。"
-            )
         eff_prob = float(np.clip(base_prob + mom_adj, 0.05, 0.95))
         eff_bps = base_bps + (mom_adj * 10000.0 * 0.4)
     elif phase == "premarket":
         eff_prob = base_prob
         eff_bps = base_bps
-        if q_band in ("Q4", "Q5") and base_bps >= 25.0:
-            tactic = (
-                f"寄前モデル強気ゾーン（{q_band} / 期待値 {base_bps:+.0f}bps）。寄付きから大引けにかけて陽線上昇が期待できる高確信ゾーン。"
-                "前場初動の押し目でエントリー推奨。"
-            )
-        elif q_band in ("Q1", "Q2") or base_bps <= -25.0:
+        if q_band in ("Q1", "Q2") or base_bps <= -25.0:
             risk_flags.append("⚠️ 寄り天・陰線警戒")
-            tactic = (
-                f"寄り天・陰線警戒ゾーン（{q_band} / 期待値 {base_bps:+.0f}bps）。寄付き後の利確売り・戻り売りに押されやすく、ロングエントリーは見送り推奨。"
-            )
-        else:
-            tactic = (
-                f"中立推移ゾーン（{q_band} / 期待値 {base_bps:+.0f}bps）。上下方向感が定まらないため無理なエントリーは避け、明確なトレンド発生を待つのが賢明。"
-            )
     else:  # post_market
         eff_prob = base_prob
         eff_bps = base_bps
-        tactic = (
-            "大引け後の翌営業日スナイパー判定。翌朝寄付きから15:30大引けまでのトータル方向感を診断。"
-            "今夜の米国市場確定値を反映し、明朝07:30寄前に最終確定します。"
-        )
 
     prob_up_pct = round(eff_prob * 100.0, 1)
 
@@ -537,13 +876,22 @@ def predict_daytrade_sniper(
         judgment = "⚪ レンジ拮抗 [揉み合い・様子見]"
         judge_code = "NEUTRAL"
 
-    # Dynamic target & stop-loss bounds from 20-day volatility
-    expected_range_pct = max(0.012, vol_20 * 1.0)
-    target_price = round(cur_p * (1.0 + expected_range_pct), 1)
-    target_pct = round(expected_range_pct * 100.0, 2)
-    support_price = round(cur_p * (1.0 - expected_range_pct * 0.70), 1)
-    stop_loss_price = round(cur_p * (1.0 - expected_range_pct * 0.85), 1)
-    stop_loss_pct = round(-expected_range_pct * 0.85 * 100.0, 2)
+    # Simulate waveform pattern and 09:00 - 15:30 timeline
+    waveform_data = simulate_intraday_waveform(
+        cur_p=cur_p,
+        open_p=open_p,
+        high_p=high_p,
+        low_p=low_p,
+        prev_c=prev_c,
+        prob_up=prob_up_pct,
+        expected_bps=eff_bps,
+        vol_20=vol_20,
+        phase=phase,
+        clv=clv,
+        pullback_pct=pullback_pct,
+        risk_flags=risk_flags,
+        now_dt=now_dt,
+    )
 
     return {
         "ticker": ticker,
@@ -563,16 +911,28 @@ def predict_daytrade_sniper(
         "expected_return_bps": round(eff_bps, 1),
         "judgment": judgment,
         "judgment_code": judge_code,
-        "target_price": target_price,
-        "target_pct": target_pct,
-        "support_price": support_price,
-        "stop_loss_price": stop_loss_price,
-        "stop_loss_pct": stop_loss_pct,
-        "tactical_comment": tactic,
         "q_band": q_band,
         "volatility_20": vol_20,
         "risk_flags": risk_flags,
         "quote_source": quote.get("source", "unknown"),
+        # Waveform & Timeline Engine Data
+        "waveform_key": waveform_data["waveform_key"],
+        "waveform_title": waveform_data["waveform_title"],
+        "waveform_description": waveform_data["waveform_description"],
+        "timeline_items": waveform_data["timeline_items"],
+        "best_entry_zone": waveform_data["best_entry_zone"],
+        "target_1_price": waveform_data["target_1_price"],
+        "target_1_pct": waveform_data["target_1_pct"],
+        "target_final_price": waveform_data["target_final_price"],
+        "target_final_pct": waveform_data["target_final_pct"],
+        "stop_loss_price": waveform_data["stop_loss_price"],
+        "stop_loss_pct": waveform_data["stop_loss_pct"],
+        # Backwards compatible alias keys
+        "target_price": waveform_data["target_final_price"],
+        "target_pct": waveform_data["target_final_pct"],
+        "support_price": waveform_data["target_1_price"],
+        "stop_loss_pct": waveform_data["stop_loss_pct"],
+        "tactical_comment": waveform_data["waveform_description"],
     }
 
 

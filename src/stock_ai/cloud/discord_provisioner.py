@@ -19,6 +19,50 @@ logger = logging.getLogger(__name__)
 DISCORD_API_BASE = "https://discord.com/api/v10"
 
 
+CHANNEL_BLUEPRINTS: dict[str, dict[str, Any]] = {
+    "main": {
+        "name": "☕｜aiアナリスト作戦会議",
+        "category": "📡 AI自動配信",
+        "webhook_name": "Stock-AI Analyst Lounge",
+    },
+    "fund": {
+        "name": "💰｜100万円ファンド運用記",
+        "category": "📡 AI自動配信",
+        "webhook_name": "Stock-AI Fund Reporter",
+    },
+    "turnaround": {
+        "name": "💎｜激安回復株レーダー",
+        "category": "📡 AI自動配信",
+        "webhook_name": "Stock-AI Value Hunter",
+    },
+    "alert": {
+        "name": "🚨｜決算・急変アラート",
+        "category": "📡 AI自動配信",
+        "webhook_name": "Stock-AI Risk Guardian",
+    },
+    "daytrade": {
+        "name": "⚡｜当日デイトレ特化予想",
+        "category": "📡 AI自動配信",
+        "webhook_name": "Stock-AI Daytrade Sniper",
+    },
+    "consultation": {
+        "name": "💬｜ai投資相談室",
+        "category": "🧠 戦略・ラボ",
+        "webhook_name": "Stock-AI Consultation Room",
+    },
+    "portfolio": {
+        "name": "📊｜マイ取引ノート＆資産管理",
+        "category": "🧠 戦略・ラボ",
+        "webhook_name": "Stock-AI Portfolio Ledger",
+    },
+    "notes": {
+        "name": "📝｜相場メモ・独り言",
+        "category": "🧠 戦略・ラボ",
+        "webhook_name": "Stock-AI Notes Reporter",
+    },
+}
+
+
 class DiscordProvisioner:
     """Provisions categories, channels, and webhooks on a Discord guild."""
 
@@ -124,16 +168,29 @@ class DiscordProvisioner:
 
     def get_or_create_category(self, guild_id: str, name: str) -> dict[str, Any]:
         channels = self.get_existing_channels(guild_id)
+        # Check exact or partial match (e.g. '📡 AI自動配信' matches '📡 AI自動配信ルーム')
+        clean_name = name.replace("ルーム", "").strip()
         for ch in channels:
-            if ch.get("type") == 4 and ch.get("name") == name:
-                logger.info(f"Reusing existing category: {name} ({ch['id']})")
-                return ch
+            if ch.get("type") == 4:
+                ch_name = ch.get("name", "")
+                if ch_name == name or (clean_name and clean_name in ch_name):
+                    logger.info(f"Reusing existing category: {ch_name} ({ch['id']})")
+                    return ch
 
         logger.info(f"Creating category: {name}")
         return self._api_request(
             f"/guilds/{guild_id}/channels",
             method="POST",
             payload={"name": name, "type": 4},
+        )
+
+    def move_channel_to_category(self, channel_id: str, category_id: str) -> dict[str, Any]:
+        """Move a channel to a target category via PATCH /channels/{channel_id}."""
+        logger.info(f"Relocating channel {channel_id} to category {category_id}")
+        return self._api_request(
+            f"/channels/{channel_id}",
+            method="PATCH",
+            payload={"parent_id": category_id},
         )
 
     def get_or_create_text_channel(
@@ -146,13 +203,12 @@ class DiscordProvisioner:
         for ch in channels:
             if ch.get("type") == 0 and ch.get("name") == name:
                 logger.info(f"Reusing existing text channel: {name} ({ch['id']})")
-                if parent_id and ch.get("parent_id") != parent_id:
+                current_parent = ch.get("parent_id")
+                if parent_id and str(current_parent) != str(parent_id):
+                    logger.info(f"Channel {name} current parent {current_parent} != target {parent_id}. Moving...")
                     try:
-                        self._api_request(
-                            f"/channels/{ch['id']}",
-                            method="PATCH",
-                            payload={"parent_id": parent_id},
-                        )
+                        self.move_channel_to_category(ch["id"], parent_id)
+                        ch["parent_id"] = parent_id
                     except Exception as exc:
                         logger.warning(f"Failed to move channel {name} to category {parent_id}: {exc}")
                 return ch
@@ -183,63 +239,51 @@ class DiscordProvisioner:
         return str(res["url"])
 
     def provision_all(self) -> dict[str, Any]:
-        """Provisions all designated categories, channels, and webhooks."""
+        """Provisions all designated categories, channels, and webhooks per CHANNEL_BLUEPRINTS."""
         guild_id = self.get_target_guild_id()
         logger.info(f"Target Guild ID: {guild_id}")
 
-        # Category 1: 📡 AI自動配信ルーム
-        cat1 = self.get_or_create_category(guild_id, "📡 AI自動配信ルーム")
-        cat1_id = cat1["id"]
+        # Categories
+        cat_broadcasting = self.get_or_create_category(guild_id, "📡 AI自動配信")
+        cat_broadcasting_id = cat_broadcasting["id"]
 
-        ch_main = self.get_or_create_text_channel(guild_id, "☕｜aiアナリスト作戦会議", cat1_id)
-        ch_fund = self.get_or_create_text_channel(guild_id, "💰｜100万円ファンド運用記", cat1_id)
-        ch_turn = self.get_or_create_text_channel(guild_id, "💎｜激安回復株レーダー", cat1_id)
-        ch_alert = self.get_or_create_text_channel(guild_id, "🚨｜決算・急変アラート", cat1_id)
+        cat_lab = self.get_or_create_category(guild_id, "🧠 戦略・ラボ")
+        cat_lab_id = cat_lab["id"]
 
-        # Category 2: 🧠 戦略・ラボ
-        cat2 = self.get_or_create_category(guild_id, "🧠 戦略・ラボ")
-        cat2_id = cat2["id"]
-        ch_consult = self.get_or_create_text_channel(guild_id, "💬｜ai投資相談室", cat2_id)
-        ch_daytrade = self.get_or_create_text_channel(guild_id, "⚡｜当日デイトレ特化予想", cat2_id)
-        ch_portfolio = self.get_or_create_text_channel(guild_id, "📊｜マイ取引ノート＆資産管理", cat2_id)
-        ch_notes = self.get_or_create_text_channel(guild_id, "📝｜相場メモ・独り言", cat2_id)
+        category_map = {
+            "📡 AI自動配信": cat_broadcasting_id,
+            "🧠 戦略・ラボ": cat_lab_id,
+        }
 
-        # Webhooks
-        wh_main = self.get_or_create_webhook(ch_main["id"], "Stock-AI Analyst Lounge")
-        wh_fund = self.get_or_create_webhook(ch_fund["id"], "Stock-AI Fund Reporter")
-        wh_turn = self.get_or_create_webhook(ch_turn["id"], "Stock-AI Value Hunter")
-        wh_alert = self.get_or_create_webhook(ch_alert["id"], "Stock-AI Risk Guardian")
-        wh_consult = self.get_or_create_webhook(ch_consult["id"], "Stock-AI Consultation Room")
-        wh_daytrade = self.get_or_create_webhook(ch_daytrade["id"], "Stock-AI Daytrade Sniper")
-        wh_portfolio = self.get_or_create_webhook(ch_portfolio["id"], "Stock-AI Portfolio Ledger")
-        wh_notes = self.get_or_create_webhook(ch_notes["id"], "Stock-AI Notes Reporter")
+        # Provision all channels per blueprint
+        channel_ids: dict[str, str] = {}
+        webhook_urls: dict[str, str] = {}
+
+        for key, bp in CHANNEL_BLUEPRINTS.items():
+            target_cat_name = bp["category"]
+            target_cat_id = category_map[target_cat_name]
+            ch = self.get_or_create_text_channel(guild_id, bp["name"], target_cat_id)
+            channel_ids[key] = ch["id"]
+
+            # Double-check and enforce parent_id
+            if str(ch.get("parent_id")) != str(target_cat_id):
+                try:
+                    self.move_channel_to_category(ch["id"], target_cat_id)
+                    ch["parent_id"] = target_cat_id
+                except Exception as exc:
+                    logger.warning(f"Failed to relocate {bp['name']} to {target_cat_name}: {exc}")
+
+            wh = self.get_or_create_webhook(ch["id"], bp.get("webhook_name", "Stock-AI Reporter"))
+            webhook_urls[key] = wh
 
         return {
             "guild_id": guild_id,
             "categories": {
-                "broadcasting": cat1_id,
-                "lab": cat2_id,
+                "broadcasting": cat_broadcasting_id,
+                "lab": cat_lab_id,
             },
-            "channels": {
-                "main": ch_main["id"],
-                "fund": ch_fund["id"],
-                "turnaround": ch_turn["id"],
-                "alert": ch_alert["id"],
-                "consultation": ch_consult["id"],
-                "daytrade": ch_daytrade["id"],
-                "portfolio": ch_portfolio["id"],
-                "notes": ch_notes["id"],
-            },
-            "webhooks": {
-                "main": wh_main,
-                "fund": wh_fund,
-                "turnaround": wh_turn,
-                "alert": wh_alert,
-                "consultation": wh_consult,
-                "daytrade": wh_daytrade,
-                "portfolio": wh_portfolio,
-                "notes": wh_notes,
-            },
+            "channels": channel_ids,
+            "webhooks": webhook_urls,
         }
 
     def send_welcome_messages(self, webhooks: dict[str, str], *, sleep_interval: float = 0.6) -> None:

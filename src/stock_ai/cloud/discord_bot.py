@@ -1678,7 +1678,7 @@ def build_daytrade_sniper_payloads(
     name: str = "",
     query: str = "",
 ) -> list[dict[str, Any]]:
-    """Build a sharp, 100% intraday-focused response for the 1-Day Intraday Sniper channel."""
+    """Build a sharp, 100% intraday-focused response with 6-waveform simulation and timeline."""
     from stock_ai.models.intraday import predict_daytrade_sniper
 
     res = predict_daytrade_sniper(ticker, name=name)
@@ -1691,24 +1691,26 @@ def build_daytrade_sniper_payloads(
 
     cur_p = res["current_price"]
     open_p = res["open_price"]
-    high_p = res["high_price"]
-    low_p = res["low_price"]
     p_up = res["probability_up"]
     bps = res["expected_return_bps"]
     judge = res["judgment"]
-    target_p = res["target_price"]
-    target_pct = res["target_pct"]
-    support_p = res["support_price"]
-    stop_p = res["stop_loss_price"]
-    stop_pct = res["stop_loss_pct"]
-    tactic = res["tactical_comment"]
     phase_title = res["phase_title"]
-    clv = res["clv"]
     intra_pct = res["intraday_return_pct"]
     day_pct = res["day_return_pct"]
     flags = res["risk_flags"]
     code_str = res["ticker"]
     disp_name = res["name"]
+
+    wf_title = res.get("waveform_title", "⚖️【上下往来 ➔ ボックス揉み合い型】")
+    wf_desc = res.get("waveform_description", "方向感に欠け、高値追い厳禁のレンジ波形")
+    timeline_items = res.get("timeline_items", [])
+    best_entry = res.get("best_entry_zone", "-")
+    t1_p = res.get("target_1_price", cur_p)
+    t1_pct = res.get("target_1_pct", 0.0)
+    tf_p = res.get("target_final_price", cur_p)
+    tf_pct = res.get("target_final_pct", 0.0)
+    stop_p = res.get("stop_loss_price", cur_p)
+    stop_pct = res.get("stop_loss_pct", 0.0)
 
     # Color: Green if BUY, Red if SELL, Gold if NEUTRAL
     color = 3066993 if "今日上がる" in judge or "翌営業日上がる" in judge else (15158332 if "今日下がる" in judge or "翌営業日下がる" in judge else 15844367)
@@ -1717,12 +1719,20 @@ def build_daytrade_sniper_payloads(
 
     speech = (
         f"{judge_icon} **【{judge}】{code_str} {disp_name}**{risk_str}\n"
-        f"📈 上昇確率: **`{p_up:.1f}%`** （期待値 **`{bps:+.0f}bps`**）\n\n"
-        f"> 💰 **現在値**: **`{cur_p:,.1f}円`** （始値比 `{intra_pct:+.2f}%` ／ 前日比 `{day_pct:+.2f}%`）\n"
-        f"> 🎯 **上値目標**: **`{target_p:,.1f}円`** (`+{target_pct:.2f}%`)\n"
-        f"> 🛡️ **損切撤退**: **`{stop_p:,.1f}円`** (`{stop_pct:.2f}%`)\n\n"
-        f"💡 **戦術**: {tactic}\n"
-        f"⚠️ **規律**: 15:25までに全決済（大引け手仕舞い）。オーバーナイト持ち越し厳禁。"
+        f"📊 **波形**: **{wf_title}**\n"
+        f"> 💡 {wf_desc}\n\n"
+        f"🛒 **仕込みゾーン**: **`{best_entry}`**\n"
+        f"🎯 **目標**: **`{tf_p:,.1f}円`** (`{tf_pct:+.1f}%`) ｜ 🛡️ **損切**: **`{stop_p:,.1f}円`** (`{stop_pct:+.1f}%`)\n"
+        f"⏱️ **09:00〜15:30 時間帯別株価軌道は下記のシミュレーションを参照してください！**"
+    )
+
+    timeline_lines = "\n".join(f"> **{k}**:\n>   └ {v}" for k, v in timeline_items)
+
+    action_lines = (
+        f"> 🛒 **ベスト仕込みゾーン**: **`{best_entry}`**\n"
+        f"> 🎯 **第1利確ライン (前場目安)**: **`{t1_p:,.1f}円`** (`{t1_pct:+.1f}%`)\n"
+        f"> 🚀 **最終利確ターゲット (大引け目安)**: **`{tf_p:,.1f}円`** (`{tf_pct:+.1f}%`)\n"
+        f"> 🛡️ **波形崩れ撤退 (損切り)**: **`{stop_p:,.1f}円`** (`{stop_pct:+.1f}%` ※シナリオ崩壊で即逃げ)"
     )
 
     embed = {
@@ -1731,31 +1741,32 @@ def build_daytrade_sniper_payloads(
         "color": color,
         "fields": [
             {
-                "name": f"{judge_icon} 当日判定 & 確率",
-                "value": f"判定: **{judge}**\n上昇確率: **`{p_up:.1f}%`** | 期待値: **`{bps:+.0f}bps`**",
-                "inline": False,
-            },
-            {
-                "name": "🎯 価格ライン（目標 / 損切）",
+                "name": "① 本日の日中チャート波形タイプ",
                 "value": (
-                    f"> 💰 **現在値**: **`{cur_p:,.1f}円`** (始値比 `{intra_pct:+.2f}%`)\n"
-                    f"> 🎯 **上値目標**: **`{target_p:,.1f}円`** (`+{target_pct:.2f}%`)\n"
-                    f"> 🛡️ **損切撤退**: **`{stop_p:,.1f}円`** (`{stop_pct:.2f}%`)"
+                    f"**{wf_title}**\n"
+                    f"> 💡 {wf_desc}\n"
+                    f"> 上昇確率: **`{p_up:.1f}%`** ｜ 期待値: **`{bps:+.0f}bps`**\n"
+                    f"> 現在値: **`{cur_p:,.1f}円`** (始値比 `{intra_pct:+.2f}%` ／ 前日比 `{day_pct:+.2f}%`)"
                 ),
                 "inline": False,
             },
             {
-                "name": "💡 当日デイトレ戦術",
-                "value": tactic,
+                "name": "② 時間帯別の値動きタイムライン（09:00〜15:30 予想株価軌道）",
+                "value": timeline_lines,
                 "inline": False,
             },
             {
-                "name": "🛡️ 執行ルール",
-                "value": "15:25までに全ポジション決済（大引け手仕舞い）。日中値幅だけを刈り取るのが鉄則。",
+                "name": "③ 当日トレードの具体的な指値・アクション価格帯",
+                "value": action_lines,
+                "inline": False,
+            },
+            {
+                "name": "🛡️ デイトレ執行規律",
+                "value": "15:25までに全ポジション決済（大引け手仕舞い）。日中波形だけを刈り取り、オーバーナイト持ち越し厳禁。",
                 "inline": False,
             },
         ],
-        "footer": {"text": "Stock AI 1-Day Intraday Sniper | モバイル最速レスポンス"},
+        "footer": {"text": "Stock AI 1-Day Intraday Waveform Simulator | スマホ縦1列最適化"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -1779,17 +1790,21 @@ def build_daytrade_ranking_payloads() -> list[dict[str, Any]]:
     num_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
     for idx, r in enumerate(rankings.get("top_up", []), 0):
         emoji = num_emojis[idx] if idx < len(num_emojis) else f"{idx+1}."
+        wf = r.get("waveform_title", "上昇波形")
         top_up_list.append(
-            f"{emoji} **`{r['ticker']}` {r['name']}** 【**`{r['probability_up']:.1f}%`** / `{r['expected_return_bps']:+.0f}bps`】\n"
-            f"> 🎯 目標 **`{r['target_price']:,.1f}円`** (`+{r['target_pct']:.1f}%`) ／ 🛡️ 損切 **`{r['stop_loss_price']:,.1f}円`**"
+            f"{emoji} **`{r['ticker']}` {r['name']}** 【確率 **`{r['probability_up']:.1f}%`** / `{r['expected_return_bps']:+.0f}bps`】\n"
+            f"> 📊 波形: **{wf}**\n"
+            f"> 🛒 仕込み: **`{r['best_entry_zone']}`** ➔ 🎯 目標 **`{r['target_final_price']:,.1f}円`** (`{r['target_final_pct']:+.1f}%`)"
         )
 
     top_down_list = []
     for idx, r in enumerate(rankings.get("top_down", []), 0):
         emoji = num_emojis[idx] if idx < len(num_emojis) else f"{idx+1}."
+        wf = r.get("waveform_title", "警戒波形")
         top_down_list.append(
-            f"{emoji} **`{r['ticker']}` {r['name']}** 【**`{r['probability_up']:.1f}%`** / 陰線警戒 ⚠️】\n"
-            f"> 💰 現在値 **`{r['current_price']:,.1f}円`** ／ 判定: **{r['judgment']}**"
+            f"{emoji} **`{r['ticker']}` {r['name']}** 【確率 **`{r['probability_up']:.1f}%`** / 陰線警戒 ⚠️】\n"
+            f"> 📊 波形: **{wf}**\n"
+            f"> ⚠️ 判定: **{r['judgment']}**（飛びつき厳禁・戻り売り警戒）"
         )
 
     speech = (
@@ -1798,7 +1813,7 @@ def build_daytrade_ranking_payloads() -> list[dict[str, Any]]:
         + ("\n".join(top_up_list) if top_up_list else "該当なし") + "\n\n"
         f"🔴 **本日下落警戒 TOP 5（売り・見送り）**\n"
         + ("\n".join(top_down_list) if top_down_list else "該当なし") + "\n\n"
-        f"💡 個別銘柄の詳細はコードまたは社名（例: `7012`, `フジクラ`）を送信してください！"
+        f"💡 個別銘柄のタイムライン詳細シミュレーションはコードまたは社名（例: `7012`, `フジクラ`）を送信してください！"
     )
 
     embed = {
@@ -1807,12 +1822,12 @@ def build_daytrade_ranking_payloads() -> list[dict[str, Any]]:
         "color": 15844367,  # Gold
         "fields": [
             {
-                "name": "🟢 本日上昇確率 TOP 5（買い候補）",
+                "name": "🟢 本日上昇確率 TOP 5（買い候補・波形シミュレーション）",
                 "value": ("\n".join(top_up_list) if top_up_list else "該当なし")[:1020],
                 "inline": False,
             },
             {
-                "name": "🔴 本日下落警戒 TOP 5（見送り候補）",
+                "name": "🔴 本日下落警戒 TOP 5（見送り・寄り天注意）",
                 "value": ("\n".join(top_down_list) if top_down_list else "該当なし")[:1020],
                 "inline": False,
             },
@@ -1832,6 +1847,50 @@ def build_daytrade_ranking_payloads() -> list[dict[str, Any]]:
         "text": speech,
         "embeds": [embed],
     }]
+
+
+def build_premarket_daytrade_forecast_payloads(summary_data: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Build pre-market automatic broadcast for ⚡｜当日デイトレ特化予想.
+
+    Simulates the top 2-3 focus stocks with full 09:00-15:30 waveform trajectory and rankings.
+    """
+    from stock_ai.models.intraday import get_daily_daytrade_rankings, predict_daytrade_sniper
+
+    date_str = (summary_data.get("date") if summary_data else None) or datetime.now().strftime("%Y-%m-%d")
+    rankings = get_daily_daytrade_rankings(top_n=5)
+    top_up = rankings.get("top_up", [])
+
+    payloads: list[dict[str, Any]] = []
+
+    # 1. Headline & Briefing Overview
+    top_names = [f"`{r['ticker']}` **{r['name']}**" for r in top_up[:3]]
+    overview_text = (
+        f"☀️ **【東証開場前・本日の1日値動きシミュレーション＆デイトレ予想】({date_str})**\n\n"
+        "デイトレ特化スナイパーAIが、本日09:00寄り付きから15:30大引けまでの **日中チャート波形（6タイプ）と時間帯別株価軌道** を完全シミュレートしました🎯\n\n"
+        f"🏆 **本日の厳選デイトレ本命 Top 3**: {', '.join(top_names) if top_names else '本日該当なし'}\n"
+        "マクロ解説は省き、どこで仕込み・どこで利確し・どこで逃げるか、具体的な価格ラインを提示します！"
+    )
+
+    overview_payload = {
+        "username": "⚡ デイトレ特化スナイパー AI",
+        "content": overview_text,
+        "text": overview_text,
+    }
+    payloads.append(overview_payload)
+
+    # 2. Detailed 09:00-15:30 Waveform Simulation for Top Pick (or Top 2 Picks)
+    picks_to_detail = top_up[:2] if top_up else []
+    for pick in picks_to_detail:
+        detailed_res = predict_daytrade_sniper(pick["ticker"], name=pick["name"])
+        if detailed_res:
+            p_payloads = build_daytrade_sniper_payloads(pick["ticker"], name=pick["name"])
+            payloads.extend(p_payloads)
+
+    # 3. Overall Top 5 Ranking Summary
+    ranking_payloads = build_daytrade_ranking_payloads()
+    payloads.extend(ranking_payloads)
+
+    return payloads
 
 
 # ---------------------------------------------------------------------------
