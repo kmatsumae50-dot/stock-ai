@@ -2,54 +2,54 @@
   "metrics": {
     "accuracy": 0.48381877022653724,
     "f1": 0.0,
-    "auc": 0.4895576687180885,
+    "auc": 0.49383000807288663,
     "rows": 618
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4844,
+      "max_p": 0.4842,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.5726,
-      "description": "実績ギャップアップ率 57.3%（陰線・下落警戒）"
+      "historical_win_rate": 0.5403,
+      "description": "実績ギャップアップ率 54.0%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4844,
-      "max_p": 0.4853,
+      "min_p": 0.4842,
+      "max_p": 0.4856,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.4715,
-      "description": "実績ギャップアップ率 47.2%（弱気）"
+      "historical_win_rate": 0.4228,
+      "description": "実績ギャップアップ率 42.3%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4853,
-      "max_p": 0.4867,
+      "min_p": 0.4856,
+      "max_p": 0.4881,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5122,
-      "description": "実績ギャップアップ率 51.2%（中立・推移注視）"
+      "historical_win_rate": 0.5772,
+      "description": "実績ギャップアップ率 57.7%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.4867,
-      "max_p": 0.4931,
+      "min_p": 0.4881,
+      "max_p": 0.4929,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5528,
-      "description": "実績ギャップアップ率 55.3%（堅調）"
+      "historical_win_rate": 0.5935,
+      "description": "実績ギャップアップ率 59.3%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.4931,
+      "min_p": 0.4929,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.5161,
-      "description": "実績ギャップアップ率 51.6%（最高勝率群）"
+      "historical_win_rate": 0.4919,
+      "description": "実績ギャップアップ率 49.2%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -110,11 +110,11 @@
       "importance": 3.0
     },
     {
-      "feature": "macro_sox_relative_return",
-      "importance": 3.0
+      "feature": "close_location_value",
+      "importance": 2.0
     },
     {
-      "feature": "return_1d",
+      "feature": "intraday_return",
       "importance": 2.0
     },
     {
@@ -130,7 +130,7 @@
       "importance": 2.0
     },
     {
-      "feature": "n225_return_1d",
+      "feature": "tesla_return_1d",
       "importance": 2.0
     },
     {
@@ -138,11 +138,11 @@
       "importance": 2.0
     },
     {
-      "feature": "close_location_value",
+      "feature": "return_1d",
       "importance": 1.0
     },
     {
-      "feature": "intraday_return",
+      "feature": "close_vs_ma_5",
       "importance": 1.0
     }
   ]

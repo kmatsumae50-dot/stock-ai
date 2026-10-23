@@ -1,8 +1,8 @@
 {
   "metrics": {
-    "accuracy": 0.4701130856219709,
-    "f1": 0.14136125654450263,
-    "auc": 0.5211575312177558,
+    "accuracy": 0.46849757673667203,
+    "f1": 0.13192612137203166,
+    "auc": 0.5285592452989114,
     "rows": 619
   },
   "quantile_cutoffs": [
@@ -12,44 +12,44 @@
       "max_p": 0.4653,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.5645,
-      "description": "実績ギャップアップ率 56.5%（陰線・下落警戒）"
+      "historical_win_rate": 0.5726,
+      "description": "実績ギャップアップ率 57.3%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4655,
-      "max_p": 0.4718,
+      "min_p": 0.4653,
+      "max_p": 0.4721,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.5081,
-      "description": "実績ギャップアップ率 50.8%（弱気）"
+      "historical_win_rate": 0.5,
+      "description": "実績ギャップアップ率 50.0%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4719,
-      "max_p": 0.4791,
+      "min_p": 0.4722,
+      "max_p": 0.4781,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5528,
-      "description": "実績ギャップアップ率 55.3%（中立・推移注視）"
+      "historical_win_rate": 0.5366,
+      "description": "実績ギャップアップ率 53.7%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.4791,
-      "max_p": 0.4875,
+      "min_p": 0.4781,
+      "max_p": 0.4876,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5242,
-      "description": "実績ギャップアップ率 52.4%（堅調）"
+      "historical_win_rate": 0.5161,
+      "description": "実績ギャップアップ率 51.6%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.4877,
+      "min_p": 0.4881,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.5645,
-      "description": "実績ギャップアップ率 56.5%（最高勝率群）"
+      "historical_win_rate": 0.5968,
+      "description": "実績ギャップアップ率 59.7%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -130,11 +130,11 @@
       "importance": 6.0
     },
     {
-      "feature": "volume_surge_5d",
-      "importance": 5.0
+      "feature": "sox_return_1d",
+      "importance": 6.0
     },
     {
-      "feature": "sox_return_1d",
+      "feature": "volume_surge_5d",
       "importance": 5.0
     },
     {
