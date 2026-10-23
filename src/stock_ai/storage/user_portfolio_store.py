@@ -550,51 +550,239 @@ _ZEN_TO_HAN_TABLE = str.maketrans(
 
 
 def _resolve_stock_symbol(text: str) -> tuple[str, str] | None:
-    """Resolve ticker and company name using aliases and universe."""
+    """Resolve ticker and company name using aliases and universe, prioritizing stock names over digits."""
+    clean = text.strip().translate(_ZEN_TO_HAN_TABLE)
+    if not clean:
+        return None
+
     try:
         from stock_ai.cloud.discord_bot import resolve_ticker
-        res = resolve_ticker(text)
+        res = resolve_ticker(clean)
         if res:
             return res
     except Exception:
         pass
 
-    # Direct 4-digit fallback
-    m = re.search(r"\b(\d{4}|\d{3}[A-Za-z])(?:\.T)?\b", text, re.IGNORECASE)
+    try:
+        from stock_ai.cloud.discord_bot import PRIMARY_ALIASES, _get_universe_name_map
+        # Check aliases first by longest match
+        sorted_aliases = sorted(PRIMARY_ALIASES.keys(), key=len, reverse=True)
+        for alias in sorted_aliases:
+            if alias.lower() in clean.lower():
+                return PRIMARY_ALIASES[alias]
+
+        # Check universe names
+        name_map = _get_universe_name_map()
+        for code, name in sorted(name_map.items(), key=lambda x: len(x[1]), reverse=True):
+            if name and name.lower() in clean.lower():
+                return code, name
+    except Exception:
+        pass
+
+    # Direct 4-digit fallback (only if not preceded/followed by price/quantity indicators)
+    m = re.search(r"\b(\d{4}|\d{3}[A-Za-z])(?:\.T)?\b", clean, re.IGNORECASE)
     if m:
         c = m.group(1).upper()
         return f"{c}.T", f"{c}.T"
     return None
 
 
+def _extract_price_and_clean_text(text: str) -> tuple[float | None, str]:
+    """Extract trade price (yen/per share) and return (price, text_with_price_removed).
+
+    Robustly handles:
+    - （購入時一株2098）, (購入時一株2098), （単価4130）, (一株2098), (@2139), (2098円), (2098)
+    - 購入時一株2098, 単価4130, 一株2098, @2139, 2098円, 2098で, 購入単価2098, etc.
+    """
+    clean = text
+
+    # 1. Parenthesized price with or without explicit keywords:
+    m_paren = re.search(
+        r"[（\(][^）\)]*?(?:購入時一株|購入時1株|取得時一株|取得時1株|一株|1株|単価|購入単価|取得単価|購入時|取得時|買値|@|＠)?\s*[:：=＝]?\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*円?[^）\)]*?[）\)]",
+        clean,
+    )
+    if m_paren:
+        p_val = float(m_paren.group(1).replace(",", ""))
+        if p_val > 0:
+            cleaned = clean.replace(m_paren.group(0), " ")
+            return p_val, cleaned
+
+    # 2. Explicit keywords followed by number (with or without 円):
+    m_kw = re.search(
+        r"(?:購入時一株|購入時1株|取得時一株|取得時1株|一株|1株|単価|購入単価|取得単価|購入時|取得時|買値|約定単価|約定値|約定価格|買単価)\s*[:：=＝]?\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*円?",
+        clean,
+    )
+    if m_kw:
+        p_val = float(m_kw.group(1).replace(",", ""))
+        if p_val > 0:
+            cleaned = clean.replace(m_kw.group(0), " ")
+            return p_val, cleaned
+
+    # 3. @ symbol price: @2750 or @ 2750
+    m_at = re.search(r"[@＠]\s*(\d+(?:,\d{3})*(?:\.\d+)?)", clean)
+    if m_at:
+        p_val = float(m_at.group(1).replace(",", ""))
+        if p_val > 0:
+            cleaned = clean.replace(m_at.group(0), " ")
+            return p_val, cleaned
+
+    # 4. Standard 円 price: 2750円, 2,750円, 2750.5円
+    m_yen = re.search(r"(\d+(?:,\d{3})*(?:\.\d+)?)\s*円", clean)
+    if m_yen:
+        p_val = float(m_yen.group(1).replace(",", ""))
+        if p_val > 0:
+            cleaned = re.sub(r"\d+(?:,\d{3})*(?:\.\d+)?\s*円(?:で)?", " ", clean)
+            return p_val, cleaned
+
+    # 5. Preposition: 5000で or 5000にて
+    m_de = re.search(r"(\d{3,7}(?:,\d{3})*(?:\.\d+)?)\s*(?:で|にて)", clean)
+    if m_de:
+        p_val = float(m_de.group(1).replace(",", ""))
+        if p_val > 0:
+            cleaned = clean.replace(m_de.group(0), " ")
+            return p_val, cleaned
+
+    return None, clean
+
+
+def _extract_shares_and_clean_text(text: str) -> tuple[int | None, str, bool]:
+    """Extract shares count and return (shares, cleaned_text, is_full_close)."""
+    clean = text
+
+    # Full close
+    m_full = re.search(r"(全株|すべて|全部|全売却|全決済)", clean)
+    if m_full:
+        cleaned = clean.replace(m_full.group(0), " ")
+        return None, cleaned, True
+
+    # Number of shares (e.g. 100株, 1,000株)
+    m_shares = re.search(r"(\d+(?:,\d{3})*)\s*株", clean)
+    if m_shares:
+        s_val = int(m_shares.group(1).replace(",", ""))
+        cleaned = clean.replace(m_shares.group(0), " ")
+        return s_val, cleaned, False
+
+    return None, clean, False
+
+
+def _parse_single_trade_candidate(
+    line: str,
+    default_side: str = "BUY",
+    default_notes: str = "",
+) -> dict[str, Any] | None:
+    """Parse an individual line or segment into a structured trade record."""
+    clean = line.strip().translate(_ZEN_TO_HAN_TABLE)
+    if not clean or len(clean) < 2:
+        return None
+
+    # Determine line side
+    sell_keywords = ["売った", "売却", "手放した", "利確", "損切り", "ロスカット", "手仕舞い", "決済", "売り"]
+    buy_keywords = ["買った", "購入", "買付", "買い増し", "ナンピン", "新規買", "仕込", "買い", "保有している", "保有中", "保有", "持っている", "持ってます", "持ち株", "ポジション"]
+
+    is_sell = any(kw in clean for kw in sell_keywords)
+    is_buy = any(kw in clean for kw in buy_keywords)
+    if is_sell:
+        side = "SELL"
+    elif is_buy:
+        side = "BUY"
+    else:
+        side = default_side or "BUY"
+
+    # 1. Extract price
+    price, text_no_price = _extract_price_and_clean_text(clean)
+
+    # 2. Extract shares
+    shares, text_no_shares, is_full_close = _extract_shares_and_clean_text(text_no_price)
+
+    # Must have trade keyword, quantity, or explicit price to be considered a trade
+    has_trade_keyword = is_sell or is_buy or any(kw in clean for kw in ["購入時", "取得時", "買値", "売値", "約定", "保有", "単価", "一株", "@", "＠"])
+    has_quantity = shares is not None or is_full_close
+    has_explicit_price = price is not None
+    if not (has_trade_keyword or has_quantity or has_explicit_price):
+        return None
+
+    # 3. Clean remaining keywords to isolate ticker/company name
+    isolated = text_no_shares
+    words_to_strip = (
+        sell_keywords + buy_keywords + [
+            "全株", "すべて", "全部", "で", "を", "にて", "の株", "株", "（", "）", "(", ")",
+            "購入時一株", "一株", "単価", "円", "@", "約定", "今現在", "現在", "これらの株は",
+        ]
+    )
+    for w in words_to_strip:
+        isolated = isolated.replace(w, " ")
+
+    # 4. Resolve stock symbol
+    resolved = _resolve_stock_symbol(isolated.strip())
+    if not resolved:
+        resolved = _resolve_stock_symbol(clean)
+    if not resolved:
+        return None
+
+    ticker, name = resolved
+
+    # 5. Fallback price if still None:
+    # Look for any remaining 3-7 digit number in clean that is NOT the ticker code itself!
+    if price is None:
+        ticker_code_num = ticker.split(".")[0]
+        for m in re.finditer(r"\b(\d{3,7}(?:\.\d+)?)\b", clean):
+            candidate_num = m.group(1)
+            if candidate_num != ticker_code_num and (shares is None or candidate_num != str(shares)):
+                price = float(candidate_num)
+                break
+
+    if price is None:
+        market_p = _get_latest_market_price(ticker)
+        if market_p:
+            price = market_p
+
+    # Fallback shares for buy (default 100 shares if unspecified)
+    if side == "BUY" and shares is None:
+        shares = 100
+
+    if price is None:
+        price = 0.0
+
+    return {
+        "action": side,
+        "ticker": ticker,
+        "name": name,
+        "shares": shares,
+        "price": price,
+        "notes": default_notes,
+    }
+
+
 def parse_trade_message(raw_text: str) -> dict[str, Any]:
     """Parse user natural language input into structured trading commands.
 
     Supported intents:
-    - BUY: 'トヨタ 100株 2750円で買った', '7012 川重 200株 5200円 買い', 'フジクラ 100株 @4800 購入'
+    - BUY (single & multi-stock batch):
+      '三菱重工100株（購入時一株2098）\nihi200株（購入時一株4130）\nトヨタ100株（購入時一株2139）\nの株を保有している'
+      '川重 100株 5000円で買った', '7203 トヨタ 200株 2750円 買い', 'フジクラ 100株 @4800 購入'
     - SELL: 'トヨタ 100株 2850円で売った', '7012 100株 5500円 利確', '川重 全株 5100円で損切り'
     - PORTFOLIO: '収支', 'ポートフォリオ', '保有株', '資産'
     - HISTORY: '履歴', '取引履歴', '売買履歴'
     - CANCEL: '最後の取引を取り消し', '取り消し', 'キャンセル'
     - DIAGNOSE: '今日大丈夫？', '診断', 'リスク', '保有株診断'
     """
-    clean = raw_text.strip().translate(_ZEN_TO_HAN_TABLE)
-    clean_lower = clean.lower()
+    clean_full = raw_text.strip().translate(_ZEN_TO_HAN_TABLE)
+    clean_full_lower = clean_full.lower()
 
     # 1. Cancel / Undo intent
-    if re.search(r"^(最後|直前)?の?(取引|売買)?(を)?(取り消し|取消|キャンセル|戻す)$", clean) or clean in ("取り消し", "取消", "キャンセル", "undo"):
+    if re.search(r"^(最後|直前)?の?(取引|売買)?(を)?(取り消し|取消|キャンセル|戻す)$", clean_full) or clean_full in ("取り消し", "取消", "キャンセル", "undo"):
         return {"action": "CANCEL"}
 
     # 2. Portfolio / Holdings query
-    if clean in ("収支", "ポートフォリオ", "保有株", "保有銘柄", "資産", "マイノート", "残高", "含み損益") or re.search(r"^(収支|ポートフォリオ|保有株|資産)(見せて|教えて|確認)?$", clean):
+    if clean_full in ("収支", "ポートフォリオ", "保有株", "保有銘柄", "資産", "マイノート", "残高", "含み損益") or re.search(r"^(収支|ポートフォリオ|保有株|資産)(見せて|教えて|確認)?$", clean_full):
         return {"action": "PORTFOLIO"}
 
     # 3. History query
-    if clean in ("履歴", "取引履歴", "売買履歴", "トレード履歴", "約定履歴") or re.search(r"^(履歴|取引履歴|売買履歴)(見せて|教えて)?$", clean):
+    if clean_full in ("履歴", "取引履歴", "売買履歴", "トレード履歴", "約定履歴") or re.search(r"^(履歴|取引履歴|売買履歴)(見せて|教えて)?$", clean_full):
         return {"action": "HISTORY"}
 
     # 4. Risk Diagnosis query
-    if clean in ("診断", "今日大丈夫？", "今日大丈夫", "大丈夫？", "大丈夫", "リスク", "保有株診断", "危険度") or re.search(r"^(今日|今)(の保有株)?大丈夫", clean):
+    if clean_full in ("診断", "今日大丈夫？", "今日大丈夫", "大丈夫？", "大丈夫", "リスク", "保有株診断", "危険度") or re.search(r"^(今日|今)(の保有株)?大丈夫", clean_full):
         return {"action": "DIAGNOSE"}
 
     # Exclude consultation / inquiry questions (e.g., '日産は今買い時かな？', '30万円で仕込むなら何がいい？', '評価して')
@@ -604,107 +792,75 @@ def parse_trade_message(raw_text: str) -> dict[str, Any]:
         "買うべき", "売るべき", "買えばいい", "売ればいい", "評価して",
         "見通し", "教えて", "相談", "比較", "どっち",
     ]
-    if any(ci in clean for ci in consultation_indicators) or clean.endswith("？") or clean.endswith("?"):
+    if any(ci in clean_full for ci in consultation_indicators) or clean_full.endswith("？") or clean_full.endswith("?"):
         return {"action": None, "reason": "Consultation or opinion inquiry"}
 
-    # 5. Determine Buy vs Sell Side
-    is_sell = False
-    is_buy = False
-
-    # Explicit past/completed or declarative trade words
+    # 5. Global intent & notes detection
+    buy_keywords = ["買った", "買いました", "購入", "買付", "買い増し", "ナンピン", "新規買", "保有している", "保有中", "保有", "持っている", "持ってます", "持ち株", "ポジション"]
     sell_keywords = ["売った", "売りました", "利確", "損切り", "ロスカット", "手仕舞い", "手放した", "売却", "決済"]
-    buy_keywords = ["買った", "買いました", "買い増し", "ナンピン", "購入", "買付", "新規買"]
 
-    for kw in sell_keywords:
-        if kw in clean:
-            is_sell = True
-            break
-    if not is_sell:
-        for kw in buy_keywords:
-            if kw in clean:
-                is_buy = True
-                break
+    has_global_sell = any(kw in clean_full for kw in sell_keywords)
+    has_global_buy = any(kw in clean_full for kw in buy_keywords)
+    default_side = "SELL" if has_global_sell else "BUY"
 
-    # Also detect bare "買い" or "売り" if accompanied by numeric quantity/price (e.g. '7012 100株 5000円 買い')
-    has_quantity_or_price = bool(re.search(r"(\d+\s*株|@\s*\d+|\d+\s*円|全株|すべて)", clean))
-    if not is_sell and not is_buy and has_quantity_or_price:
-        if "売り" in clean or "売" in clean:
-            is_sell = True
-        elif "買い" in clean or "買" in clean:
-            is_buy = True
+    # Pre-AI construction / legacy holding notes detection
+    legacy_markers = [
+        "ai構築前", "ai前", "aiを作る前", "構築前", "以前から", "前から",
+        "初期登録", "既存保有", "過去に購入", "昔買った", "前に購入",
+    ]
+    if any(m in clean_full_lower for m in legacy_markers):
+        notes = "既存保有（AI構築前購入）"
+    elif "保有している" in clean_full or "持っている" in clean_full:
+        notes = "既存保有登録"
+    else:
+        notes = ""
 
-    if not is_sell and not is_buy:
+    # 6. Parse by lines or delimiter
+    raw_lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
+    segments: list[str] = []
+    if len(raw_lines) == 1:
+        # Check if single line has multiple stocks separated by commas or Japanese commas
+        parts = re.split(r"(?<!\d)[,、;](?!\d)", raw_lines[0])
+        segments = [p.strip() for p in parts if p.strip()]
+    else:
+        segments = raw_lines
+
+    trades: list[dict[str, Any]] = []
+    seen_tickers: set[str] = set()
+
+    for seg in segments:
+        parsed_trade = _parse_single_trade_candidate(
+            seg,
+            default_side=default_side,
+            default_notes=notes,
+        )
+        if parsed_trade and parsed_trade["ticker"] not in seen_tickers:
+            trades.append(parsed_trade)
+            seen_tickers.add(parsed_trade["ticker"])
+
+    # Fallback: if line-by-line found nothing, try the full text
+    if not trades:
+        fallback_trade = _parse_single_trade_candidate(
+            raw_text,
+            default_side=default_side,
+            default_notes=notes,
+        )
+        if fallback_trade:
+            trades.append(fallback_trade)
+
+    if not trades:
         return {"action": None, "reason": "No trading intent recognized"}
 
-    # Require at least shares or price to be explicitly stated for recording
-    if not has_quantity_or_price:
-        return {"action": None, "reason": "Trade record must include shares or price"}
-
-    action = "SELL" if is_sell else "BUY"
-
-    # Extract Shares
-    shares: int | None = None
-    if re.search(r"(全株|すべて|全部|全売却|全決済)", clean):
-        shares = None  # Full close
-    else:
-        m_shares = re.search(r"(\d+)\s*株", clean)
-        if m_shares:
-            shares = int(m_shares.group(1))
-
-    # Extract Price
-    price: float | None = None
-    # Pattern A: @2750 or @ 2750
-    m_at_price = re.search(r"@\s*(\d+(?:\.\d+)?)", clean)
-    if m_at_price:
-        price = float(m_at_price.group(1))
-    else:
-        # Pattern B: 2750円, 2750.5円
-        m_yen_price = re.search(r"(\d+(?:\.\d+)?)\s*円", clean)
-        if m_yen_price:
-            price = float(m_yen_price.group(1))
-        else:
-            # Pattern C: 5000で or 5000にて
-            m_de_price = re.search(r"(\d{3,7}(?:\.\d+)?)\s*(?:で|にて)", clean)
-            if m_de_price:
-                price = float(m_de_price.group(1))
-
-    # Extract Stock / Ticker
-    # Remove shares and price from text to isolate ticker/stock name
-    isolated_text = clean
-    if m_at_price:
-        isolated_text = isolated_text.replace(m_at_price.group(0), " ")
-    if "円" in isolated_text:
-        isolated_text = re.sub(r"\d+(?:\.\d+)?\s*円(?:で)?", " ", isolated_text)
-    isolated_text = re.sub(r"\d+\s*株", " ", isolated_text)
-    for kw in sell_keywords + buy_keywords + ["全株", "すべて", "全部", "で", "を", "にて", "購入", "売却"]:
-        isolated_text = isolated_text.replace(kw, " ")
-
-    resolved = _resolve_stock_symbol(isolated_text.strip())
-    if not resolved:
-        # Fallback search in entire original clean text
-        resolved = _resolve_stock_symbol(clean)
-
-    if not resolved:
-        return {"action": None, "reason": "Could not identify stock code or name"}
-
-    ticker, name = resolved
-
-    # Fallback price to market price if not specified
-    if price is None:
-        market_p = _get_latest_market_price(ticker)
-        if market_p:
-            price = market_p
-
-    # Fallback shares for buy (default 100 shares if unspecified)
-    if action == "BUY" and shares is None:
-        shares = 100
-
+    primary = trades[0]
     return {
-        "action": action,
-        "ticker": ticker,
-        "name": name,
-        "shares": shares,
-        "price": price,
+        "action": primary["action"],
+        "ticker": primary["ticker"],
+        "name": primary["name"],
+        "shares": primary["shares"],
+        "price": primary["price"],
+        "notes": primary.get("notes", ""),
+        "trades": trades,
+        "is_batch": len(trades) > 1,
     }
 
 
@@ -1210,6 +1366,98 @@ def build_cancel_feedback_payload(cancel_res: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def build_batch_trade_feedback_payload(
+    results: list[dict[str, Any]],
+    is_buy: bool = True,
+    db_path: Path | str | None = None,
+) -> dict[str, Any]:
+    """Build a unified mobile-first Discord embed card for multiple trades recorded in batch."""
+    now_ts = datetime.now(timezone.utc).isoformat()
+    summary = get_portfolio_summary(db_path=db_path)
+    diag = diagnose_portfolio_risk(db_path=db_path)
+
+    total_shares_recorded = sum(r.get("shares", 0) for r in results)
+    total_cost_recorded = sum(r.get("shares", 0) * r.get("price", 0.0) for r in results)
+    count = len(results)
+
+    title = f"🛒 【複数銘柄一括記帳完了】{count}銘柄のポジションを登録しました"
+    desc = (
+        f"✅ **計 {count} 銘柄の保有登録が完了しました**（AI構築前からの既存保有分を含む）\n"
+        f"投下資金合計: **`{total_cost_recorded:,.0f}円`** ({total_shares_recorded:,}株)"
+    )
+
+    stock_fields = []
+    for r in results:
+        t = r["ticker"]
+        n = r["name"]
+        s = r["shares"]
+        p = r["price"]
+        cost = s * p
+        stock_fields.append(
+            f"> 📦 **`{t}` {n}**\n"
+            f"> 約定: **`{s:,}株`** @ **`{p:,.1f}円`** ➔ 取得総額 **`{cost:,.0f}円`**"
+        )
+    stocks_summary_text = "\n\n".join(stock_fields)
+
+    pos_count = summary.get("positions_count", 0)
+    total_book = summary.get("total_book_value", 0.0)
+    total_market = summary.get("total_market_value", 0.0)
+    total_unrealized = summary.get("total_unrealized_pnl", 0.0)
+    total_unrealized_pct = summary.get("total_unrealized_pnl_pct", 0.0)
+    p_sign = "+" if total_unrealized >= 0 else ""
+
+    portfolio_status_text = (
+        f"> 保有銘柄数: **`{pos_count} 銘柄`**\n"
+        f"> 取得元本計: **`{total_book:,.0f} 円`**\n"
+        f"> リアルタイム時価: **`{total_market:,.0f} 円`**\n"
+        f"> 総合評価損益: **`{p_sign}{total_unrealized:,.0f} 円` (`{total_unrealized_pct:+.1%}`)**"
+    )
+
+    red_cnt = diag.get("risk_counts", {}).get("red", 0)
+    yellow_cnt = diag.get("risk_counts", {}).get("yellow", 0)
+    green_cnt = diag.get("risk_counts", {}).get("green", 0)
+
+    risk_text = (
+        f"> 🔴 急落・撤退警戒: **`{red_cnt} 件`**\n"
+        f"> 🟡 利確検討: **`{yellow_cnt} 件`**\n"
+        f"> 🟢 継続保有OK: **`{green_cnt} 件`**\n"
+        f"💡 最新診断の詳細は `今日大丈夫？` または `診断` とお尋ねください。"
+    )
+
+    embed = {
+        "title": title,
+        "description": desc,
+        "color": 3066993,  # Emerald Green
+        "fields": [
+            {
+                "name": "📋 今回一括登録したポジション",
+                "value": stocks_summary_text,
+                "inline": False,
+            },
+            {
+                "name": "📊 更新後ポートフォリオ全体資産",
+                "value": portfolio_status_text,
+                "inline": False,
+            },
+            {
+                "name": "🛡️ AIリスクガードマン速報",
+                "value": risk_text,
+                "inline": False,
+            },
+        ],
+        "footer": {"text": "Stock AI Personal Portfolio Ledger | 一括記帳・資産管理"},
+        "timestamp": now_ts,
+    }
+
+    content = f"✅ **【一括記帳完了】{count}銘柄をポートフォリオに登録しました**\n{desc}"
+    return {
+        "username": "📊 マイ資産管理コンシェルジュ AI",
+        "content": content,
+        "text": content,
+        "embeds": [embed],
+    }
+
+
 def handle_user_portfolio_message(
     text: str,
     db_path: Path | str | None = None,
@@ -1221,6 +1469,37 @@ def handle_user_portfolio_message(
     if action is None:
         return None
 
+    # Handle batch multi-stock trades if present
+    trades = parsed.get("trades") or []
+    if len(trades) > 1:
+        results = []
+        try:
+            for t in trades:
+                t_act = t.get("action", "BUY")
+                if t_act == "BUY":
+                    r = record_buy(
+                        ticker=t["ticker"],
+                        name=t["name"],
+                        shares=t["shares"],
+                        price=t["price"],
+                        notes=t.get("notes", ""),
+                        db_path=db_path,
+                    )
+                    results.append(r)
+                elif t_act == "SELL":
+                    r = record_sell(
+                        ticker=t["ticker"],
+                        shares=t.get("shares"),
+                        price=t["price"],
+                        notes=t.get("notes", ""),
+                        db_path=db_path,
+                    )
+                    results.append(r)
+            return [build_batch_trade_feedback_payload(results, is_buy=(trades[0].get("action") == "BUY"), db_path=db_path)]
+        except Exception as exc:
+            err_msg = f"⚠️ 一括記帳エラー: {exc}"
+            return [{"username": "📊 マイ資産管理コンシェルジュ AI", "content": err_msg, "text": err_msg}]
+
     if action == "BUY":
         try:
             buy_res = record_buy(
@@ -1228,6 +1507,7 @@ def handle_user_portfolio_message(
                 name=parsed["name"],
                 shares=parsed["shares"],
                 price=parsed["price"],
+                notes=parsed.get("notes", ""),
                 db_path=db_path,
             )
             return [build_buy_feedback_payload(buy_res)]
@@ -1241,6 +1521,7 @@ def handle_user_portfolio_message(
                 ticker=parsed["ticker"],
                 shares=parsed.get("shares"),
                 price=parsed["price"],
+                notes=parsed.get("notes", ""),
                 db_path=db_path,
             )
             return [build_sell_feedback_payload(sell_res)]

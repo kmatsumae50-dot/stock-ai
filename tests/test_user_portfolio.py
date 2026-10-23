@@ -97,6 +97,58 @@ class TestNaturalLanguageTradeParser:
     def test_parse_non_trade(self) -> None:
         assert parse_trade_message("こんにちは")["action"] is None
 
+    def test_parse_multiline_user_portfolio_message(self) -> None:
+        text = (
+            "今現在\n"
+            "三菱重工100株（購入時一株2098）\n"
+            "ihi200株（購入時一株4130）\n"
+            "トヨタ100株（購入時一株2139）\n"
+            "の株を保有している。これらの株はこのAIを構築する前に購入したものであることには考慮すること"
+        )
+        parsed = parse_trade_message(text)
+        assert parsed["action"] == "BUY"
+        assert parsed["is_batch"] is True
+        trades = parsed["trades"]
+        assert len(trades) == 3
+
+        # 1. 7011.T MHI
+        assert trades[0]["ticker"] == "7011.T"
+        assert trades[0]["shares"] == 100
+        assert trades[0]["price"] == 2098.0
+        assert "三菱重工" in trades[0]["name"]
+        assert "既存保有" in trades[0]["notes"]
+
+        # 2. 7013.T IHI
+        assert trades[1]["ticker"] == "7013.T"
+        assert trades[1]["shares"] == 200
+        assert trades[1]["price"] == 4130.0
+        assert trades[1]["name"] == "IHI"
+        assert "既存保有" in trades[1]["notes"]
+
+        # 3. 7203.T Toyota
+        assert trades[2]["ticker"] == "7203.T"
+        assert trades[2]["shares"] == 100
+        assert trades[2]["price"] == 2139.0
+        assert "トヨタ" in trades[2]["name"]
+        assert "既存保有" in trades[2]["notes"]
+
+    def test_parse_price_without_yen_formats(self) -> None:
+        p1 = parse_trade_message("三菱重工 100株（購入時一株2098）保有中")
+        assert p1["ticker"] == "7011.T"
+        assert p1["price"] == 2098.0
+
+        p2 = parse_trade_message("IHI 200株 単価4130 購入")
+        assert p2["ticker"] == "7013.T"
+        assert p2["price"] == 4130.0
+
+        p3 = parse_trade_message("トヨタ 100株 @2139 買った")
+        assert p3["ticker"] == "7203.T"
+        assert p3["price"] == 2139.0
+
+        p4 = parse_trade_message("三菱重工 100株 一株2098 持っている")
+        assert p4["ticker"] == "7011.T"
+        assert p4["price"] == 2098.0
+
 
 class TestPortfolioLedgerOperations:
     """Tests for record_buy, record_sell, and cancel_last_trade."""
@@ -229,3 +281,32 @@ class TestPortfolioSummaryAndRisk:
         assert res_sell is not None
         assert "決済記帳完了" in res_sell[0]["content"]
         assert "+50,000 円" in res_sell[0]["content"]
+
+    def test_handle_multiline_portfolio_message_batch_registration(self, temp_db: Path) -> None:
+        text = (
+            "今現在\n"
+            "三菱重工100株（購入時一株2098）\n"
+            "ihi200株（購入時一株4130）\n"
+            "トヨタ100株（購入時一株2139）\n"
+            "の株を保有している。これらの株はこのAIを構築する前に購入したものであることには考慮すること"
+        )
+        res = handle_user_portfolio_message(text, db_path=temp_db)
+        assert res is not None
+        assert "一括記帳完了" in res[0]["content"]
+
+        positions = get_open_positions(temp_db)
+        assert len(positions) == 3
+        pos_map = {p["ticker"]: p for p in positions}
+
+        assert "7011.T" in pos_map
+        assert pos_map["7011.T"]["shares"] == 100
+        assert pos_map["7011.T"]["avg_price"] == 2098.0
+
+        assert "7013.T" in pos_map
+        assert pos_map["7013.T"]["shares"] == 200
+        assert pos_map["7013.T"]["avg_price"] == 4130.0
+
+        assert "7203.T" in pos_map
+        assert pos_map["7203.T"]["shares"] == 100
+        assert pos_map["7203.T"]["avg_price"] == 2139.0
+

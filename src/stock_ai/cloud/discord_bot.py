@@ -110,9 +110,14 @@ PRIMARY_ALIASES: dict[str, tuple[str, str]] = {
     "三菱重工": ("7011.T", "三菱重工業"),
     "三菱重工業": ("7011.T", "三菱重工業"),
     "MHI": ("7011.T", "三菱重工業"),
+    "mhi": ("7011.T", "三菱重工業"),
     "川崎重工": ("7012.T", "川崎重工業"),
+    "川崎重工業": ("7012.T", "川崎重工業"),
     "川重": ("7012.T", "川崎重工業"),
     "IHI": ("7013.T", "IHI"),
+    "ihi": ("7013.T", "IHI"),
+    "石川島播磨": ("7013.T", "IHI"),
+    "石川島播磨重工業": ("7013.T", "IHI"),
     "コマツ": ("6301.T", "小松製作所"),
     "小松製作所": ("6301.T", "小松製作所"),
     "ダイキン": ("6367.T", "ダイキン工業"),
@@ -319,7 +324,11 @@ _ZEN_TO_HAN = str.maketrans(
 
 
 def resolve_ticker(query: str) -> tuple[str, str] | None:
-    """Resolve user query string into a canonical ticker (e.g. '7203.T', '285A.T') and company name."""
+    """Resolve user query string into a canonical ticker (e.g. '7203.T', '285A.T') and company name.
+
+    Prioritizes aliases and universe company names over bare 4-digit numbers to prevent
+    prices (e.g. 2098, 4130, 2139) from being falsely matched as tickers.
+    """
     clean_text = query.strip()
     if not clean_text:
         return None
@@ -328,10 +337,10 @@ def resolve_ticker(query: str) -> tuple[str, str] | None:
     clean_text = clean_text.translate(_ZEN_TO_HAN)
     name_map = _get_universe_name_map()
 
-    # 2. Check 4-character code pattern (4 digits or 3 digits + 1 letter, e.g. 7203, 285A, 7203.T, 285A.T)
-    match = re.search(r"(?<![A-Za-z0-9])(\d{3}[A-Za-z]|\d{4})(?:\.T)?(?![A-Za-z0-9])", clean_text, re.IGNORECASE)
-    if match:
-        code_num = match.group(1).upper()
+    # 2. Check explicit code pattern with .T (e.g. 7203.T, 285A.T)
+    match_t = re.search(r"(?<![A-Za-z0-9])(\d{3}[A-Za-z]|\d{4})\.T(?![A-Za-z0-9])", clean_text, re.IGNORECASE)
+    if match_t:
+        code_num = match_t.group(1).upper()
         ticker = f"{code_num}.T"
         name = name_map.get(ticker)
         if not name:
@@ -341,17 +350,53 @@ def resolve_ticker(query: str) -> tuple[str, str] | None:
                     break
         return ticker, name or ticker
 
-    # 3. Check alias map with longest match first
+    # 3. Check exact bare code if input is ONLY a 4-char code (e.g. '7203', '7011')
+    if re.fullmatch(r"(\d{3}[A-Za-z]|\d{4})", clean_text):
+        code_num = clean_text.upper()
+        ticker = f"{code_num}.T"
+        name = name_map.get(ticker)
+        if not name:
+            for k, (t_code, t_name) in PRIMARY_ALIASES.items():
+                if t_code == ticker:
+                    name = t_name
+                    break
+        return ticker, name or ticker
+
+    # 4. Check alias map with longest match first (case-insensitive)
     sorted_aliases = sorted(PRIMARY_ALIASES.keys(), key=len, reverse=True)
     for alias in sorted_aliases:
         if alias.lower() in clean_text.lower():
             ticker, name = PRIMARY_ALIASES[alias]
             return ticker, name
 
-    # 4. Check universe names directly
-    for code, name in name_map.items():
+    # 5. Check universe names directly (longest name first)
+    for code, name in sorted(name_map.items(), key=lambda x: len(x[1]), reverse=True):
         if name and name.lower() in clean_text.lower():
             return code, name
+
+    # 6. Fallback: 4-character code pattern embedded in text (strictly avoiding price/shares numbers)
+    for m in re.finditer(r"(?<![A-Za-z0-9])(\d{3}[A-Za-z]|\d{4})(?![A-Za-z0-9])", clean_text, re.IGNORECASE):
+        code_num = m.group(1).upper()
+        s_start, s_end = m.span()
+        before_context = clean_text[max(0, s_start - 8):s_start]
+        after_context = clean_text[s_end:min(len(clean_text), s_end + 8)]
+
+        # Skip if preceded by price keywords (一株, 単価, @, 購入時, etc.)
+        if any(w in before_context for w in ["一株", "1株", "単価", "@", "＠", "購入時", "取得時", "買値", "約定"]):
+            continue
+        # Skip if followed by shares or yen or preposition
+        if any(w in after_context for w in ["株", "円", "で", "にて"]):
+            continue
+
+        ticker = f"{code_num}.T"
+        name = name_map.get(ticker)
+        if not name:
+            for k, (t_code, t_name) in PRIMARY_ALIASES.items():
+                if t_code == ticker:
+                    name = t_name
+                    break
+        if name or ticker in name_map:
+            return ticker, name or ticker
 
     return None
 
@@ -360,15 +405,15 @@ def extract_all_tickers(query: str) -> list[tuple[str, str]]:
     """Extract all distinct ticker symbols and company names mentioned in the query.
 
     Handles Japanese particle separation (と, や, の, は, って, どっち, vs, etc.)
-    and dynamic ticker searches.
+    and dynamic ticker searches, prioritizing aliases and stock names over bare digits.
     """
     clean_text = query.strip().translate(_ZEN_TO_HAN)
     name_map = _get_universe_name_map()
     results: list[tuple[str, str]] = []
     seen_tickers: set[str] = set()
 
-    # 1. Code matches (both 4-digit and 3-digit+letter like 285A)
-    for m in re.finditer(r"(?<![A-Za-z0-9])(\d{3}[A-Za-z]|\d{4})(?:\.T)?(?![A-Za-z0-9])", clean_text, re.IGNORECASE):
+    # 1. Explicit .T code matches (e.g. 7203.T, 285A.T)
+    for m in re.finditer(r"(?<![A-Za-z0-9])(\d{3}[A-Za-z]|\d{4})\.T(?![A-Za-z0-9])", clean_text, re.IGNORECASE):
         code_num = m.group(1).upper()
         ticker = f"{code_num}.T"
         if ticker not in seen_tickers:
@@ -391,13 +436,40 @@ def extract_all_tickers(query: str) -> list[tuple[str, str]]:
                 seen_tickers.add(ticker)
 
     # 3. Check universe names
-    for code, name in name_map.items():
+    for code, name in sorted(name_map.items(), key=lambda x: len(x[1]), reverse=True):
         if name and name.lower() in clean_text.lower():
             if code not in seen_tickers:
                 results.append((code, name))
                 seen_tickers.add(code)
 
-    # 4. Tokenize by particles and try dynamic resolution if nothing found or to catch unlisted
+    # 4. Bare 4-character code matches (only if valid stock code and not a price/quantity)
+    for m in re.finditer(r"(?<![A-Za-z0-9])(\d{3}[A-Za-z]|\d{4})(?![A-Za-z0-9])", clean_text, re.IGNORECASE):
+        code_num = m.group(1).upper()
+        s_start, s_end = m.span()
+        before_context = clean_text[max(0, s_start - 8):s_start]
+        after_context = clean_text[s_end:min(len(clean_text), s_end + 8)]
+
+        # Skip if preceded by price keywords (一株, 単価, @, 購入時, etc.)
+        if any(w in before_context for w in ["一株", "1株", "単価", "@", "＠", "購入時", "取得時", "買値", "約定"]):
+            continue
+        # Skip if followed by shares or yen or preposition
+        if any(w in after_context for w in ["株", "円", "で", "にて"]):
+            continue
+
+        ticker = f"{code_num}.T"
+        if ticker not in seen_tickers:
+            name = name_map.get(ticker)
+            if not name:
+                for t_code, t_name in PRIMARY_ALIASES.values():
+                    if t_code == ticker:
+                        name = t_name
+                        break
+            # Only add if it's a known stock in universe or alias map
+            if name or ticker in name_map:
+                results.append((ticker, name or ticker))
+                seen_tickers.add(ticker)
+
+    # 5. Tokenize by particles and try dynamic resolution if nothing found or to catch unlisted
     particles = r"[とやのはをにがでよりならってどっちどう比較vsVS\s,、。！？\?!]+"
     tokens = [t.strip() for t in re.split(particles, clean_text) if len(t.strip()) >= 2]
     for token in tokens:
