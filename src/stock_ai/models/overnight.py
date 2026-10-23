@@ -354,6 +354,22 @@ def train_pooled_cross_sectional_overnight_model(
     train_data = train_subset[train_subset["date"] < valid_start_dt]
     valid_data = train_subset[train_subset["date"] >= valid_start_dt]
 
+    from stock_ai.features.afml import compute_afml_sample_weights, prune_features_with_mda
+
+    # AFML Chapter 4: Sample Weighting
+    ret_col = "next_open_return" if "next_open_return" in train_subset.columns else (
+        "return_1d" if "return_1d" in train_subset.columns else None
+    )
+    if ret_col is not None:
+        train_rets = train_data[ret_col].fillna(0.0)
+        subset_rets = train_subset[ret_col].fillna(0.0)
+    else:
+        train_rets = np.zeros(len(train_data))
+        subset_rets = np.zeros(len(train_subset))
+
+    w_train = compute_afml_sample_weights(train_rets, train_data["date"], time_decay=0.50, cost_bps=20.0)
+    w_subset = compute_afml_sample_weights(subset_rets, train_subset["date"], time_decay=0.50, cost_bps=20.0)
+
     model = lgb.LGBMClassifier(
         objective="binary",
         n_estimators=75,
@@ -370,12 +386,30 @@ def train_pooled_cross_sectional_overnight_model(
     model.fit(
         train_data[feature_columns],
         train_data[POOLED_OVERNIGHT_TARGET].astype(int),
+        sample_weight=w_train,
         eval_set=[(valid_data[feature_columns], valid_data[POOLED_OVERNIGHT_TARGET].astype(int))],
         eval_metric="auc",
         callbacks=[lgb.early_stopping(50, verbose=False)],
     )
 
-    # Validation metrics
+    # AFML Chapter 8: OOS Permutation Importance (MDA) Feature Pruning
+    pruned_features, mda_scores = prune_features_with_mda(
+        model,
+        valid_data,
+        valid_data[POOLED_OVERNIGHT_TARGET],
+        feature_columns,
+        min_importance=0.0,
+    )
+    feature_columns = pruned_features
+
+    # Fit model on selected features with AFML sample weights
+    model.fit(
+        train_data[feature_columns],
+        train_data[POOLED_OVERNIGHT_TARGET].astype(int),
+        sample_weight=w_train,
+    )
+
+    # Validation metrics with pruned features
     val_probs = model.predict_proba(valid_data[feature_columns])[:, 1]
     val_auc = float(roc_auc_score(valid_data[POOLED_OVERNIGHT_TARGET].astype(int), val_probs))
     val_acc = float(accuracy_score(valid_data[POOLED_OVERNIGHT_TARGET].astype(int), (val_probs >= 0.5).astype(int)))
@@ -386,10 +420,11 @@ def train_pooled_cross_sectional_overnight_model(
         val_probs,
     )
 
-    # Fit final production model on all pre-2024 training observations (zero test leakage)
+    # Fit final production model on all pre-2024 training observations with AFML sample weights
     model.fit(
         train_subset[feature_columns],
         train_subset[POOLED_OVERNIGHT_TARGET].astype(int),
+        sample_weight=w_subset,
     )
 
     metrics_info = {

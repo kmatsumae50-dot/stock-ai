@@ -89,15 +89,20 @@ OVERNIGHT_CURATED_FEATURES = [
     "macro_tnx_rate_shock",
     "vix_spike_flag",
     "vix_stress_score",
+    # 10. AFML 固定窓・分数次差分 (Fractional Differentiation: d=0.4 Memory Features)
+    "afml_fracdiff_close_d04",
+    "afml_fracdiff_vol_d04",
+    "afml_fracdiff_zscore_20",
 ]
 
 
 def add_overnight_features(data: pd.DataFrame) -> pd.DataFrame:
-    """Add Japanese market micro-structure, demand, and curated overnight features."""
+    """Add Japanese market micro-structure, demand, AFML memory, and curated overnight features."""
     if data.empty:
         return data
 
-    result = data.copy()
+    from stock_ai.features.afml import add_afml_features
+    result = add_afml_features(data.copy(), d=0.4)
     grouped = result.groupby("ticker", group_keys=False) if "ticker" in result.columns else None
 
     close = result["close"]

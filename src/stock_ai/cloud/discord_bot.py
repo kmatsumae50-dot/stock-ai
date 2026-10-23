@@ -1754,7 +1754,8 @@ def build_daytrade_sniper_payloads(
                 "value": (
                     f"**{wf_title}**\n"
                     f"> 💡 {wf_desc}\n"
-                    f"> 上昇確率: **`{p_up:.1f}%`** (CS Outperform: `{res.get('p_intraday_cs', p_up):.1f}%` / Clean Win: `{res.get('p_clean_win', p_up):.1f}%`)\n"
+                    f"> 🎯 総合上昇確率: **`{p_up:.1f}%`** (CS Outperform: `{res.get('p_intraday_cs', p_up):.1f}%` / Clean Win: `{res.get('p_clean_win', p_up):.1f}%`)\n"
+                    f"> 🧬 AFML メタ勝率: **`{res.get('p_afml_meta', p_up):.1f}%`** ｜ **{res.get('lot_recommendation', '🔥 推奨ロット: 100%')}**\n"
                     f"> 期待値: **`{bps:+.0f}bps`** ｜ 現在値: **`{cur_p:,.1f}円`** (始値比 `{intra_pct:+.2f}%` ／ 前日比 `{day_pct:+.2f}%`)"
                 ),
                 "inline": False,
@@ -1780,7 +1781,7 @@ def build_daytrade_sniper_payloads(
                 "inline": False,
             },
         ],
-        "footer": {"text": "Stock AI 1-Day Intraday Waveform Simulator | VWAP & ORB Powered"},
+        "footer": {"text": "Stock AI 1-Day Intraday Waveform Simulator | AFML & VWAP Powered"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -1805,9 +1806,11 @@ def build_daytrade_ranking_payloads() -> list[dict[str, Any]]:
     for idx, r in enumerate(rankings.get("top_up", []), 0):
         emoji = num_emojis[idx] if idx < len(num_emojis) else f"{idx+1}."
         wf = r.get("waveform_title", "上昇波形")
+        lot_rec = r.get("lot_recommendation", "")
+        lot_suffix = f" ｜ {lot_rec}" if lot_rec else ""
         top_up_list.append(
             f"{emoji} **`{r['ticker']}` {r['name']}** 【確率 **`{r['probability_up']:.1f}%`** / `{r['expected_return_bps']:+.0f}bps`】\n"
-            f"> 📊 波形: **{wf}**\n"
+            f"> 📊 波形: **{wf}**{lot_suffix}\n"
             f"> 🛒 仕込み: **`{r['best_entry_zone']}`** ➔ 🎯 目標 **`{r['target_final_price']:,.1f}円`** (`{r['target_final_pct']:+.1f}%`)"
         )
 

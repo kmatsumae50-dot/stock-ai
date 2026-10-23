@@ -55,6 +55,10 @@ INTRADAY_BASE_FEATURES = [
     "prior_lower_shadow_ratio",
     "rolling_buying_pressure_5d",
     "sector_intraday_laggard_score",
+    # AFML 第5章 固定窓・分数次差分 (Pre-Market t-1 Lagged FFD Memory)
+    "prior_afml_fracdiff_close",
+    "prior_afml_fracdiff_vol",
+    "prior_afml_fracdiff_zscore",
 ]
 
 INTRADAY_CROSS_SECTIONAL_FEATURES = [
@@ -208,6 +212,27 @@ def add_intraday_premarket_features(df: pd.DataFrame) -> pd.DataFrame:
     result["rebound_potential"] = (
         (45.0 - result["prior_rsi_14"]).clip(lower=0.0) * (-result["overnight_gap"]).clip(lower=0.0)
     )
+
+    # 5. AFML 第5章 固定窓・分数次差分 (Pre-Market t-1 Lagged FFD Memory)
+    from stock_ai.features.afml import frac_diff_ffd
+    if "close" in result.columns:
+        p_close = pd.to_numeric(result["close"], errors="coerce").shift(1).ffill().bfill()
+        log_p_close = np.log(p_close.clip(lower=1e-4))
+        result["prior_afml_fracdiff_close"] = frac_diff_ffd(log_p_close, d=0.4).fillna(0.0)
+
+        roll_m = result["prior_afml_fracdiff_close"].rolling(20, min_periods=5).mean()
+        roll_s = result["prior_afml_fracdiff_close"].rolling(20, min_periods=5).std().replace(0.0, np.nan)
+        result["prior_afml_fracdiff_zscore"] = ((result["prior_afml_fracdiff_close"] - roll_m) / (roll_s + 1e-8)).clip(-3.0, 3.0).fillna(0.0)
+    else:
+        result["prior_afml_fracdiff_close"] = 0.0
+        result["prior_afml_fracdiff_zscore"] = 0.0
+
+    if "volume" in result.columns:
+        p_vol = pd.to_numeric(result["volume"], errors="coerce").shift(1).fillna(0.0)
+        log_p_vol = np.log1p(p_vol.clip(lower=0.0))
+        result["prior_afml_fracdiff_vol"] = frac_diff_ffd(log_p_vol, d=0.4).fillna(0.0)
+    else:
+        result["prior_afml_fracdiff_vol"] = 0.0
 
     return result
 

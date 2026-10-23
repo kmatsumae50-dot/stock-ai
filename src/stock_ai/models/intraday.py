@@ -164,6 +164,14 @@ def train_pooled_cross_sectional_intraday_model(
             t_sub = all_df[all_df["ticker"] == code].sort_values("date").reset_index(drop=True)
             write_parquet(t_sub, features_path / f"{code}.parquet")
 
+    from stock_ai.features.afml import (
+        calculate_bet_size,
+        compute_afml_sample_weights,
+        compute_dynamic_triple_barrier_events,
+        generate_meta_labels,
+        prune_features_with_mda,
+    )
+
     feature_columns = [c for c in ALL_INTRADAY_FEATURES if c in all_df.columns]
 
     split_dt = pd.to_datetime(train_end_date)
@@ -181,7 +189,21 @@ def train_pooled_cross_sectional_intraday_model(
     train_data = train_subset[train_subset["date"] < valid_start_dt].copy()
     valid_data = train_subset[train_subset["date"] >= valid_start_dt].copy()
 
-    # 1. Train Classifier for Cross-Sectional Outperform
+    # AFML Chapter 4: Sample Weighting (Informativeness x Time-Decay)
+    w_train = compute_afml_sample_weights(
+        train_data["intraday_return"],
+        train_data["date"],
+        time_decay=0.50,
+        cost_bps=20.0,
+    )
+    w_subset = compute_afml_sample_weights(
+        train_subset["intraday_return"],
+        train_subset["date"],
+        time_decay=0.50,
+        cost_bps=20.0,
+    )
+
+    # 1. Train Classifier for Cross-Sectional Outperform (with AFML Sample Weighting)
     clf = lgb.LGBMClassifier(
         objective="binary",
         n_estimators=200,
@@ -198,19 +220,33 @@ def train_pooled_cross_sectional_intraday_model(
     clf.fit(
         train_data[feature_columns],
         train_data[INTRADAY_TARGET].astype(int),
+        sample_weight=w_train,
         eval_set=[(valid_data[feature_columns], valid_data[INTRADAY_TARGET].astype(int))],
         eval_metric="auc",
         callbacks=[lgb.early_stopping(50, verbose=False)],
     )
 
+    # AFML Chapter 8: OOS Permutation Importance (MDA) Feature Pruning on validation set
+    pruned_features, mda_scores = prune_features_with_mda(
+        clf,
+        valid_data,
+        valid_data[INTRADAY_TARGET],
+        feature_columns,
+        min_importance=0.0,
+    )
+    feature_columns = pruned_features
+
+    # Refit Primary classifier on selected features with sample weights
+    clf.fit(
+        train_subset[feature_columns],
+        train_subset[INTRADAY_TARGET].astype(int),
+        sample_weight=w_subset,
+    )
     val_probs = clf.predict_proba(valid_data[feature_columns])[:, 1]
     val_auc = float(roc_auc_score(valid_data[INTRADAY_TARGET].astype(int), val_probs))
     val_acc = float(accuracy_score(valid_data[INTRADAY_TARGET].astype(int), (val_probs >= 0.5).astype(int)))
 
-    # Refit classifier on full training set
-    clf.fit(train_subset[feature_columns], train_subset[INTRADAY_TARGET].astype(int))
-
-    # 2. Train Classifier for Clean Intraday Win (No severe drawdown & cost-adjusted profit)
+    # 2. Train Classifier for Clean Intraday Win
     if CLEAN_WIN_TARGET not in train_subset.columns:
         train_subset[CLEAN_WIN_TARGET] = (train_subset["intraday_return"] >= 0.0020).astype(int)
         train_data[CLEAN_WIN_TARGET] = (train_data["intraday_return"] >= 0.0020).astype(int)
@@ -232,6 +268,7 @@ def train_pooled_cross_sectional_intraday_model(
     clf_clean.fit(
         train_data[feature_columns],
         train_data[CLEAN_WIN_TARGET].astype(int),
+        sample_weight=w_train,
         eval_set=[(valid_data[feature_columns], valid_data[CLEAN_WIN_TARGET].astype(int))],
         eval_metric="auc",
         callbacks=[lgb.early_stopping(50, verbose=False)],
@@ -240,9 +277,75 @@ def train_pooled_cross_sectional_intraday_model(
     val_clean_probs = clf_clean.predict_proba(valid_data[feature_columns])[:, 1]
     val_clean_auc = float(roc_auc_score(valid_data[CLEAN_WIN_TARGET].astype(int), val_clean_probs))
     val_clean_acc = float(accuracy_score(valid_data[CLEAN_WIN_TARGET].astype(int), (val_clean_probs >= 0.5).astype(int)))
-    clf_clean.fit(train_subset[feature_columns], train_subset[CLEAN_WIN_TARGET].astype(int))
+    clf_clean.fit(
+        train_subset[feature_columns],
+        train_subset[CLEAN_WIN_TARGET].astype(int),
+        sample_weight=w_subset,
+    )
 
-    # 3. Train Regressor for expected return hurdle
+    # 3. AFML Chapter 3: Dynamic Volatility Triple-Barrier & Meta-Labeling Model
+    tb_subset = compute_dynamic_triple_barrier_events(train_subset, k_pt=1.0, k_sl=0.8, cost_bps=20.0)
+    primary_subset_probs = clf.predict_proba(train_subset[feature_columns])[:, 1]
+    train_subset["target_afml_meta"] = generate_meta_labels(
+        primary_preds=primary_subset_probs,
+        actual_returns=train_subset["intraday_return"],
+        lower_barrier_hit=tb_subset["tb_hit_lower"],
+        cost_bps=20.0,
+        primary_buy_threshold=0.50,
+    )
+
+    tb_train = compute_dynamic_triple_barrier_events(train_data, k_pt=1.0, k_sl=0.8, cost_bps=20.0)
+    primary_train_probs = clf.predict_proba(train_data[feature_columns])[:, 1]
+    train_data["target_afml_meta"] = generate_meta_labels(
+        primary_preds=primary_train_probs,
+        actual_returns=train_data["intraday_return"],
+        lower_barrier_hit=tb_train["tb_hit_lower"],
+        cost_bps=20.0,
+        primary_buy_threshold=0.50,
+    )
+
+    tb_valid = compute_dynamic_triple_barrier_events(valid_data, k_pt=1.0, k_sl=0.8, cost_bps=20.0)
+    primary_valid_probs = clf.predict_proba(valid_data[feature_columns])[:, 1]
+    valid_data["target_afml_meta"] = generate_meta_labels(
+        primary_preds=primary_valid_probs,
+        actual_returns=valid_data["intraday_return"],
+        lower_barrier_hit=tb_valid["tb_hit_lower"],
+        cost_bps=20.0,
+        primary_buy_threshold=0.50,
+    )
+
+    clf_meta = lgb.LGBMClassifier(
+        objective="binary",
+        n_estimators=180,
+        learning_rate=0.03,
+        num_leaves=10,
+        min_child_samples=40,
+        subsample=0.8,
+        colsample_bytree=0.7,
+        reg_alpha=0.5,
+        reg_lambda=2.0,
+        random_state=42,
+        verbose=-1,
+    )
+    clf_meta.fit(
+        train_data[feature_columns],
+        train_data["target_afml_meta"].astype(int),
+        sample_weight=w_train,
+        eval_set=[(valid_data[feature_columns], valid_data["target_afml_meta"].astype(int))],
+        eval_metric="auc",
+        callbacks=[lgb.early_stopping(40, verbose=False)],
+    )
+
+    val_meta_probs = clf_meta.predict_proba(valid_data[feature_columns])[:, 1]
+    val_meta_auc = float(roc_auc_score(valid_data["target_afml_meta"].astype(int), val_meta_probs))
+    val_meta_acc = float(accuracy_score(valid_data["target_afml_meta"].astype(int), (val_meta_probs >= 0.5).astype(int)))
+    clf_meta.fit(
+        train_subset[feature_columns],
+        train_subset["target_afml_meta"].astype(int),
+        sample_weight=w_subset,
+    )
+
+    # 4. Train Regressor for expected return hurdle (with sample weights)
     reg = lgb.LGBMRegressor(
         n_estimators=180,
         learning_rate=0.02,
@@ -255,19 +358,23 @@ def train_pooled_cross_sectional_intraday_model(
         random_state=42,
         verbose=-1,
     )
-    reg.fit(train_subset[feature_columns], train_subset["intraday_return"])
+    reg.fit(train_subset[feature_columns], train_subset["intraday_return"], sample_weight=w_subset)
 
     metrics_info = {
         "model_name": INTRADAY_MODEL_NAME,
         "target": INTRADAY_TARGET,
         "clean_target": CLEAN_WIN_TARGET,
+        "meta_target": "target_afml_meta",
         "trained_samples": len(train_data),
         "validation_samples": len(valid_data),
         "validation_auc": val_auc,
         "validation_accuracy": val_acc,
         "validation_clean_auc": val_clean_auc,
         "validation_clean_accuracy": val_clean_acc,
+        "validation_meta_auc": val_meta_auc,
+        "validation_meta_accuracy": val_meta_acc,
         "feature_columns_count": len(feature_columns),
+        "mda_pruned_count": len(ALL_INTRADAY_FEATURES) - len(feature_columns),
         "top_features": [
             {"feature": f, "importance": int(imp)}
             for f, imp in sorted(
@@ -281,8 +388,10 @@ def train_pooled_cross_sectional_intraday_model(
     bundle = {
         "model": clf,
         "model_clean": clf_clean,
+        "model_meta": clf_meta,
         "regressor": reg,
         "feature_columns": feature_columns,
+        "mda_scores": mda_scores,
         "metadata": metrics_info,
         "trained_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -347,18 +456,20 @@ def predict_intraday_for_ticker(
 
     X_row = row_df[bundle["feature_columns"]].fillna(0.0)
 
+    from stock_ai.features.afml import calculate_bet_size
+
     clf = bundle["model"]
     clf_clean = bundle.get("model_clean")
+    clf_meta = bundle.get("model_meta")
     reg = bundle.get("regressor")
 
     p_cs = float(clf.predict_proba(X_row)[:, 1][0])
-    if clf_clean is not None:
-        p_clean = float(clf_clean.predict_proba(X_row)[:, 1][0])
-        # Ensemble: 50% CS Outperform + 50% Clean Intraday Win
-        prob = 0.50 * p_cs + 0.50 * p_clean
-    else:
-        p_clean = p_cs
-        prob = p_cs
+    p_clean = float(clf_clean.predict_proba(X_row)[:, 1][0]) if clf_clean is not None else p_cs
+    p_meta = float(clf_meta.predict_proba(X_row)[:, 1][0]) if clf_meta is not None else p_clean
+    bet_size = calculate_bet_size(p_meta)
+
+    # AFML Enhanced Tri-Model Ensemble: 40% CS Outperform + 35% Clean Win + 25% Meta Net-Profit
+    prob = 0.40 * p_cs + 0.35 * p_clean + 0.25 * p_meta
 
     pred_ret = float(reg.predict(X_row)[0]) if reg is not None else 0.0
 
@@ -367,6 +478,8 @@ def predict_intraday_for_ticker(
     info["date"] = str(row_df["date"].iloc[0]) if "date" in row_df.columns else "-"
     info["p_intraday_cs"] = p_cs
     info["p_clean_win"] = p_clean
+    info["p_afml_meta"] = p_meta
+    info["bet_size"] = bet_size
     info["p_intraday_ensemble"] = prob
     info["pred_intraday_return"] = pred_ret
     info["expected_return_bps"] = pred_ret * 10000.0
@@ -889,9 +1002,18 @@ def predict_daytrade_sniper(
 
     base_prob = float(base_pred.get("p_intraday_cs", 0.50))
     clean_prob = float(base_pred.get("p_clean_win", base_prob))
+    meta_prob = float(base_pred.get("p_afml_meta", clean_prob))
+    bet_size = float(base_pred.get("bet_size", 0.50))
     ensemble_prob = float(base_pred.get("p_intraday_ensemble", base_prob))
     base_bps = float(base_pred.get("expected_return_bps", 0.0))
     q_band = str(base_pred.get("quantile", "Q3"))
+
+    if bet_size >= 0.70:
+        lot_recommendation = "🔥 推奨ロット: 100%（AFML強気フルサイズ）"
+    elif bet_size >= 0.25:
+        lot_recommendation = f"⚡ 推奨ロット: {int(round(bet_size * 100))}%（AFML打診ポジション）"
+    else:
+        lot_recommendation = "⚠️ 推奨ロット: 0%（AFMLリスク回避・ノーポジ推奨）"
 
     # Load technical features for volatility and fallback
     f_path = settings.paths.feature_data_dir / f"{ticker}.parquet"
@@ -1065,6 +1187,9 @@ def predict_daytrade_sniper(
         "probability_up": prob_up_pct,
         "p_intraday_cs": round(base_prob * 100.0, 1),
         "p_clean_win": round(clean_prob * 100.0, 1),
+        "p_afml_meta": round(meta_prob * 100.0, 1),
+        "bet_size": round(bet_size, 2),
+        "lot_recommendation": lot_recommendation,
         "expected_return_bps": round(eff_bps, 1),
         "judgment": judgment,
         "judgment_code": judge_code,
