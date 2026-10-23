@@ -67,6 +67,16 @@ INTRADAY_BASE_FEATURES = [
     "prior_ml4at_alpha_44",
     "prior_ml4at_alpha_54",
     "prior_ml4at_info_discreteness_10d",
+    # 12. Ernest P. Chan Pre-Market Quantitative Features (t-1 Lagged, Zero-Leakage)
+    "prior_chan_hurst_20d",
+    "prior_chan_variance_ratio_10d",
+    "prior_chan_regime_momentum_score",
+    "prior_chan_ou_halflife_20d",
+    "prior_chan_ou_zscore",
+    "prior_chan_kalman_spread",
+    "prior_chan_kalman_zscore",
+    "prior_chan_kalman_slope",
+    "intraday_half_kelly_size",
 ]
 
 INTRADAY_CROSS_SECTIONAL_FEATURES = [
@@ -84,6 +94,10 @@ INTRADAY_CROSS_SECTIONAL_FEATURES = [
     "cs_rank_prior_ml4at_alpha_12",
     "cs_rank_prior_ml4at_alpha_54",
     "cs_rank_prior_ml4at_info_discreteness",
+    # Chan Cross-Sectional Ranks
+    "cs_rank_prior_chan_hurst",
+    "cs_rank_prior_chan_ou_zscore",
+    "cs_rank_prior_chan_kalman_spread",
 ]
 
 ALL_INTRADAY_FEATURES = INTRADAY_BASE_FEATURES + INTRADAY_CROSS_SECTIONAL_FEATURES
@@ -284,6 +298,52 @@ def add_intraday_premarket_features(df: pd.DataFrame) -> pd.DataFrame:
         ]:
             result[f] = 0.0
 
+    # 7. Ernest P. Chan Quantitative Features (t-1 Lagged, Zero-Leakage)
+    from stock_ai.features.chan_quant import (
+        calculate_half_kelly_fraction,
+        compute_hurst_exponent_rolling,
+        compute_kalman_filter_features,
+        compute_ou_halflife,
+        compute_regime_momentum_score,
+        compute_variance_ratio,
+    )
+    if "close" in result.columns:
+        p_c = pd.to_numeric(result["close"], errors="coerce").shift(1).ffill().bfill()
+        p_ret5 = p_c.pct_change(5).fillna(0.0)
+        c_hurst = compute_hurst_exponent_rolling(p_c, window=20)
+        c_vr = compute_variance_ratio(p_c, window=20, lag=5)
+        c_regime = compute_regime_momentum_score(c_hurst, p_ret5)
+        c_hl, c_ouz = compute_ou_halflife(p_c, window=20)
+        c_kspread, c_kz, c_kslope = compute_kalman_filter_features(p_c, q=1e-4, r=1e-2)
+
+        result["prior_chan_hurst_20d"] = c_hurst
+        result["prior_chan_variance_ratio_10d"] = c_vr
+        result["prior_chan_regime_momentum_score"] = c_regime
+        result["prior_chan_ou_halflife_20d"] = c_hl
+        result["prior_chan_ou_zscore"] = c_ouz
+        result["prior_chan_kalman_spread"] = c_kspread
+        result["prior_chan_kalman_zscore"] = c_kz
+        result["prior_chan_kalman_slope"] = c_kslope
+
+        # Pre-market estimated return for Half-Kelly sizing
+        exp_ret = result["rebound_potential"] * 0.05 + result["prior_vol_adj_mom"] * 0.001
+        result["intraday_half_kelly_size"] = calculate_half_kelly_fraction(
+            exp_ret, result["prior_vol_20"], max_leverage=1.0
+        )
+    else:
+        for f in [
+            "prior_chan_hurst_20d",
+            "prior_chan_variance_ratio_10d",
+            "prior_chan_regime_momentum_score",
+            "prior_chan_ou_halflife_20d",
+            "prior_chan_ou_zscore",
+            "prior_chan_kalman_spread",
+            "prior_chan_kalman_zscore",
+            "prior_chan_kalman_slope",
+            "intraday_half_kelly_size",
+        ]:
+            result[f] = 0.0
+
     return result
 
 
@@ -314,6 +374,15 @@ def add_cross_sectional_intraday_features(pooled_df: pd.DataFrame) -> pd.DataFra
         "rebound_potential": "cs_rank_rebound",
         "gap_to_atr_ratio": "cs_rank_gap_to_atr",
         "rolling_buying_pressure_5d": "cs_rank_buying_pressure",
+        # ML4AT Ranks
+        "prior_ml4at_alpha_101": "cs_rank_prior_ml4at_alpha_101",
+        "prior_ml4at_alpha_12": "cs_rank_prior_ml4at_alpha_12",
+        "prior_ml4at_alpha_54": "cs_rank_prior_ml4at_alpha_54",
+        "prior_ml4at_info_discreteness_10d": "cs_rank_prior_ml4at_info_discreteness",
+        # Chan Ranks
+        "prior_chan_hurst_20d": "cs_rank_prior_chan_hurst",
+        "prior_chan_ou_zscore": "cs_rank_prior_chan_ou_zscore",
+        "prior_chan_kalman_spread": "cs_rank_prior_chan_kalman_spread",
     }
     for src_col, target_col in rank_cols.items():
         if src_col in result.columns:

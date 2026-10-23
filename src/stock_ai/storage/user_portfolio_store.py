@@ -579,11 +579,29 @@ def _resolve_stock_symbol(text: str) -> tuple[str, str] | None:
     except Exception:
         pass
 
-    # Direct 4-digit fallback (only if not preceded/followed by price/quantity indicators)
-    m = re.search(r"\b(\d{4}|\d{3}[A-Za-z])(?:\.T)?\b", clean, re.IGNORECASE)
-    if m:
-        c = m.group(1).upper()
+    # Direct 4-digit fallback (validate against universe or explicit .T to prevent 4-digit prices from becoming tickers)
+    m_explicit_t = re.search(r"\b(\d{4}|\d{3}[A-Za-z])\.T\b", clean, re.IGNORECASE)
+    if m_explicit_t:
+        c = m_explicit_t.group(1).upper()
         return f"{c}.T", f"{c}.T"
+
+    # Bare 4-digit must exist in universe or primary aliases
+    try:
+        from stock_ai.cloud.discord_bot import PRIMARY_ALIASES, _get_universe_name_map
+        valid_codes = set(_get_universe_name_map().keys()) | {v[0] for v in PRIMARY_ALIASES.values()}
+        for m in re.finditer(r"\b(\d{4}|\d{3}[A-Za-z])\b", clean):
+            cand_ticker = f"{m.group(1).upper()}.T"
+            if cand_ticker in valid_codes:
+                name = _get_universe_name_map().get(cand_ticker)
+                if not name:
+                    for k, (tc, tn) in PRIMARY_ALIASES.items():
+                        if tc == cand_ticker:
+                            name = tn
+                            break
+                return cand_ticker, name or cand_ticker
+    except Exception:
+        pass
+
     return None
 
 

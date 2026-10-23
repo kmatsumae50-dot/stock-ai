@@ -105,19 +105,35 @@ OVERNIGHT_CURATED_FEATURES = [
     "ml4at_alpha_12_cs_rank",
     "ml4at_alpha_54_cs_rank",
     "ml4at_info_discreteness_10d_cs_rank",
+    # 12. Ernest P. Chan Algorithmic Trading Core Alphas (Chapter 2, 3, 5, 8)
+    "chan_hurst_20d",
+    "chan_variance_ratio_10d",
+    "chan_regime_momentum_score",
+    "chan_ou_halflife_20d",
+    "chan_ou_zscore",
+    "chan_kalman_spread",
+    "chan_kalman_zscore",
+    "chan_kalman_slope",
+    "chan_hurst_20d_cs_rank",
+    "chan_variance_ratio_10d_cs_rank",
+    "chan_regime_momentum_score_cs_rank",
+    "chan_ou_zscore_cs_rank",
+    "chan_kalman_spread_cs_rank",
 ]
 
 
 def add_overnight_features(data: pd.DataFrame) -> pd.DataFrame:
-    """Add Japanese market micro-structure, demand, AFML memory, ML4AT alphas, and curated overnight features."""
+    """Add Japanese market micro-structure, demand, AFML memory, ML4AT alphas, Chan quant, and curated overnight features."""
     if data.empty:
         return data
 
     from stock_ai.features.afml import add_afml_features
     from stock_ai.features.ml4at import add_ml4at_features
+    from stock_ai.features.chan_quant import add_chan_quant_features
 
     result = add_afml_features(data.copy(), d=0.4)
     result = add_ml4at_features(result)
+    result = add_chan_quant_features(result)
     grouped = result.groupby("ticker", group_keys=False) if "ticker" in result.columns else None
 
     close = result["close"]

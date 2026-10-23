@@ -388,14 +388,27 @@ def simulate_overnight_strategy(
             applied_cost = cost * (w_total_long + w_total_short)
         elif long_rets:
             if max_position_weight is not None:
-                # Volatility-adaptive sizing when volatility_20 is available
+                # Volatility-adaptive & Chan Half-Kelly sizing
+                from stock_ai.features.chan_quant import calculate_half_kelly_fraction
                 pick_vols = [
                     float(day_slice.loc[day_slice["ticker"] == t, "volatility_20"].values[0])
                     if "volatility_20" in day_slice.columns and not day_slice.loc[day_slice["ticker"] == t, "volatility_20"].empty
                     else 0.025
                     for t in valid_long_picks
                 ]
-                if len(long_rets) > 1 and all(v > 0 for v in pick_vols):
+                pick_kelly_weights = []
+                for t in valid_long_picks:
+                    t_row = day_slice.loc[day_slice["ticker"] == t]
+                    p_val = float(t_row["p_cs"].values[0]) if "p_cs" in t_row.columns and not t_row["p_cs"].empty else 0.55
+                    vol_val = float(t_row["volatility_20"].values[0]) if "volatility_20" in t_row.columns and not t_row["volatility_20"].empty else 0.025
+                    exp_mu = max(0.001, (p_val - 0.50) * 0.04)
+                    k_w = float(calculate_half_kelly_fraction(exp_mu, vol_val, max_leverage=max_position_weight))
+                    pick_kelly_weights.append(k_w)
+
+                if len(long_rets) > 1 and all(w > 0 for w in pick_kelly_weights):
+                    k_arr = np.array(pick_kelly_weights)
+                    pos_weights = np.minimum(k_arr, max_position_weight)
+                elif len(long_rets) > 1 and all(v > 0 for v in pick_vols):
                     v_arr = np.clip(np.array(pick_vols), 0.015, 0.055)
                     inv_v = 1.0 / v_arr
                     raw_w = (inv_v / inv_v.sum()) * 0.95
