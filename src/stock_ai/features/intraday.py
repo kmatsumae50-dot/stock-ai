@@ -59,6 +59,14 @@ INTRADAY_BASE_FEATURES = [
     "prior_afml_fracdiff_close",
     "prior_afml_fracdiff_vol",
     "prior_afml_fracdiff_zscore",
+    # 11. Stefan Jansen ML4AT WorldQuant Formulaic Alphas (t-1 Lagged, Zero-Leakage)
+    "prior_ml4at_alpha_101",
+    "prior_ml4at_alpha_101_sma5",
+    "prior_ml4at_alpha_12",
+    "prior_ml4at_alpha_06",
+    "prior_ml4at_alpha_44",
+    "prior_ml4at_alpha_54",
+    "prior_ml4at_info_discreteness_10d",
 ]
 
 INTRADAY_CROSS_SECTIONAL_FEATURES = [
@@ -71,6 +79,11 @@ INTRADAY_CROSS_SECTIONAL_FEATURES = [
     "cs_rank_macro_intraday",
     "cs_rank_gap_to_atr",
     "cs_rank_buying_pressure",
+    # ML4AT Cross-Sectional Ranks
+    "cs_rank_prior_ml4at_alpha_101",
+    "cs_rank_prior_ml4at_alpha_12",
+    "cs_rank_prior_ml4at_alpha_54",
+    "cs_rank_prior_ml4at_info_discreteness",
 ]
 
 ALL_INTRADAY_FEATURES = INTRADAY_BASE_FEATURES + INTRADAY_CROSS_SECTIONAL_FEATURES
@@ -234,6 +247,43 @@ def add_intraday_premarket_features(df: pd.DataFrame) -> pd.DataFrame:
     else:
         result["prior_afml_fracdiff_vol"] = 0.0
 
+    # 6. Stefan Jansen ML4AT WorldQuant Formulaic Alphas (t-1 Lagged, Zero-Leakage)
+    from stock_ai.features.ml4at import (
+        compute_alpha_06,
+        compute_alpha_12,
+        compute_alpha_44,
+        compute_alpha_54,
+        compute_alpha_101,
+        compute_information_discreteness,
+    )
+    if "close" in result.columns:
+        p_c = pd.to_numeric(result["close"], errors="coerce").shift(1).ffill().bfill()
+        p_o = pd.to_numeric(result.get("open", p_c), errors="coerce").shift(1).ffill().bfill()
+        p_h = pd.to_numeric(result.get("high", p_c), errors="coerce").shift(1).ffill().bfill()
+        p_l = pd.to_numeric(result.get("low", p_c), errors="coerce").shift(1).ffill().bfill()
+        vol_src = result["volume"] if "volume" in result.columns else pd.Series(1000.0, index=result.index)
+        p_v = pd.to_numeric(vol_src, errors="coerce").shift(1).fillna(1000.0)
+
+        a101 = compute_alpha_101(p_c, p_o, p_h, p_l)
+        result["prior_ml4at_alpha_101"] = a101
+        result["prior_ml4at_alpha_101_sma5"] = a101.rolling(5, min_periods=1).mean().fillna(0.0)
+        result["prior_ml4at_alpha_12"] = compute_alpha_12(p_c, p_v)
+        result["prior_ml4at_alpha_06"] = compute_alpha_06(p_o, p_v, window=10)
+        result["prior_ml4at_alpha_44"] = compute_alpha_44(p_h, p_v, window=10)
+        result["prior_ml4at_alpha_54"] = compute_alpha_54(p_c, p_o, p_h, p_l)
+        result["prior_ml4at_info_discreteness_10d"] = compute_information_discreteness(p_c, window=10)
+    else:
+        for f in [
+            "prior_ml4at_alpha_101",
+            "prior_ml4at_alpha_101_sma5",
+            "prior_ml4at_alpha_12",
+            "prior_ml4at_alpha_06",
+            "prior_ml4at_alpha_44",
+            "prior_ml4at_alpha_54",
+            "prior_ml4at_info_discreteness_10d",
+        ]:
+            result[f] = 0.0
+
     return result
 
 
@@ -285,5 +335,18 @@ def add_cross_sectional_intraday_features(pooled_df: pd.DataFrame) -> pd.DataFra
         result["cs_rank_macro_intraday"] = result.groupby("date")["semicon_sox_shock"].rank(pct=True).fillna(0.5)
     else:
         result["cs_rank_macro_intraday"] = 0.5
+
+    # ML4AT WorldQuant Alphas Daily Cross-Sectional Ranks
+    ml4at_ranks = {
+        "prior_ml4at_alpha_101": "cs_rank_prior_ml4at_alpha_101",
+        "prior_ml4at_alpha_12": "cs_rank_prior_ml4at_alpha_12",
+        "prior_ml4at_alpha_54": "cs_rank_prior_ml4at_alpha_54",
+        "prior_ml4at_info_discreteness_10d": "cs_rank_prior_ml4at_info_discreteness",
+    }
+    for src_col, target_col in ml4at_ranks.items():
+        if src_col in result.columns:
+            result[target_col] = result.groupby("date")[src_col].rank(pct=True).fillna(0.5)
+        else:
+            result[target_col] = 0.5
 
     return result

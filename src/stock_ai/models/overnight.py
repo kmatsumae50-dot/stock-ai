@@ -215,6 +215,27 @@ def train_lightgbm_overnight_classifier(
     return model, feature_columns
 
 
+class HeterogeneousEnsembleClassifier:
+    """Stefan Jansen ML4AT Chapter 12: Combines LightGBM non-linear decision trees with L2-regularized linear model."""
+
+    def __init__(self, lgb_model: Any, linear_model: Any, w_lgb: float = 0.80, w_lin: float = 0.20):
+        self.lgb_model = lgb_model
+        self.linear_model = linear_model
+        self.w_lgb = w_lgb
+        self.w_lin = w_lin
+        self.feature_importances_ = getattr(lgb_model, "feature_importances_", None)
+
+    def predict_proba(self, X: Any) -> np.ndarray:
+        X_df = pd.DataFrame(X) if not isinstance(X, pd.DataFrame) else X
+        p_lgb = self.lgb_model.predict_proba(X_df)
+        p_lin = self.linear_model.predict_proba(X_df.fillna(0.0))
+        return self.w_lgb * p_lgb + self.w_lin * p_lin
+
+    def predict(self, X: Any) -> np.ndarray:
+        probs = self.predict_proba(X)
+        return (probs[:, 1] >= 0.5).astype(int)
+
+
 def predict_latest_overnight_rows(
     model,
     feature_columns: list[str],
@@ -402,15 +423,67 @@ def train_pooled_cross_sectional_overnight_model(
     )
     feature_columns = pruned_features
 
-    # Fit model on selected features with AFML sample weights
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    # ML4AT Chapter 7 & 12: Train L2-regularized Linear Pipeline
+    linear_pipe = Pipeline([
+        ("scaler", StandardScaler()),
+        ("clf", LogisticRegression(C=0.1, penalty="l2", max_iter=1000, random_state=42)),
+    ])
+    linear_pipe.fit(
+        train_data[feature_columns].fillna(0.0),
+        train_data[POOLED_OVERNIGHT_TARGET].astype(int),
+        clf__sample_weight=w_train,
+    )
+
+    # Fit LightGBM on selected features with AFML sample weights
     model.fit(
         train_data[feature_columns],
         train_data[POOLED_OVERNIGHT_TARGET].astype(int),
         sample_weight=w_train,
     )
 
-    # Validation metrics with pruned features
-    val_probs = model.predict_proba(valid_data[feature_columns])[:, 1]
+    val_lgb_probs = model.predict_proba(valid_data[feature_columns])[:, 1]
+    val_lin_probs = linear_pipe.predict_proba(valid_data[feature_columns].fillna(0.0))[:, 1]
+    y_val_arr = valid_data[POOLED_OVERNIGHT_TARGET].astype(int).values
+
+    best_w = 0.80
+    best_auc = -1.0
+    for candidate_w in [0.50, 0.60, 0.70, 0.75, 0.80, 0.85, 0.90, 1.00]:
+        blend_p = candidate_w * val_lgb_probs + (1.0 - candidate_w) * val_lin_probs
+        try:
+            score = float(roc_auc_score(y_val_arr, blend_p))
+            if score > best_auc:
+                best_auc = score
+                best_w = candidate_w
+        except Exception:
+            pass
+
+    blend_weights = {"lgb": best_w, "linear": round(1.0 - best_w, 2)}
+
+    # Refit both models on full training set with sample weights
+    model.fit(
+        train_subset[feature_columns],
+        train_subset[POOLED_OVERNIGHT_TARGET].astype(int),
+        sample_weight=w_subset,
+    )
+    linear_pipe.fit(
+        train_subset[feature_columns].fillna(0.0),
+        train_subset[POOLED_OVERNIGHT_TARGET].astype(int),
+        clf__sample_weight=w_subset,
+    )
+
+    ensemble = HeterogeneousEnsembleClassifier(
+        lgb_model=model,
+        linear_model=linear_pipe,
+        w_lgb=best_w,
+        w_lin=round(1.0 - best_w, 2),
+    )
+
+    # Validation metrics with heterogeneous ensemble
+    val_probs = ensemble.predict_proba(valid_data[feature_columns])[:, 1]
     val_auc = float(roc_auc_score(valid_data[POOLED_OVERNIGHT_TARGET].astype(int), val_probs))
     val_acc = float(accuracy_score(valid_data[POOLED_OVERNIGHT_TARGET].astype(int), (val_probs >= 0.5).astype(int)))
 
@@ -418,13 +491,6 @@ def train_pooled_cross_sectional_overnight_model(
     quantile_cutoffs = compute_empirical_quantile_cutoffs(
         valid_data[POOLED_OVERNIGHT_TARGET].astype(int),
         val_probs,
-    )
-
-    # Fit final production model on all pre-2024 training observations with AFML sample weights
-    model.fit(
-        train_subset[feature_columns],
-        train_subset[POOLED_OVERNIGHT_TARGET].astype(int),
-        sample_weight=w_subset,
     )
 
     metrics_info = {
@@ -446,9 +512,9 @@ def train_pooled_cross_sectional_overnight_model(
         "quantile_cutoffs": quantile_cutoffs,
     }
 
-    # Save artifacts
+    # Save artifacts (Heterogeneous Ensemble: LightGBM + L2 Linear)
     save_model(
-        model=model,
+        model=ensemble,
         feature_columns=feature_columns,
         path=models_path / POOLED_OVERNIGHT_ARTIFACT_FILENAME,
         metadata=metrics_info,
@@ -459,4 +525,4 @@ def train_pooled_cross_sectional_overnight_model(
         encoding="utf-8",
     )
 
-    return model, feature_columns, metrics_info
+    return ensemble, feature_columns, metrics_info

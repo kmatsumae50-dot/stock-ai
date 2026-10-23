@@ -93,16 +93,31 @@ OVERNIGHT_CURATED_FEATURES = [
     "afml_fracdiff_close_d04",
     "afml_fracdiff_vol_d04",
     "afml_fracdiff_zscore_20",
+    # 11. Stefan Jansen ML4AT WorldQuant Formulaic Alphas & Information Discreteness
+    "ml4at_alpha_101",
+    "ml4at_alpha_101_sma5",
+    "ml4at_alpha_12",
+    "ml4at_alpha_06",
+    "ml4at_alpha_44",
+    "ml4at_alpha_54",
+    "ml4at_info_discreteness_10d",
+    "ml4at_alpha_101_cs_rank",
+    "ml4at_alpha_12_cs_rank",
+    "ml4at_alpha_54_cs_rank",
+    "ml4at_info_discreteness_10d_cs_rank",
 ]
 
 
 def add_overnight_features(data: pd.DataFrame) -> pd.DataFrame:
-    """Add Japanese market micro-structure, demand, AFML memory, and curated overnight features."""
+    """Add Japanese market micro-structure, demand, AFML memory, ML4AT alphas, and curated overnight features."""
     if data.empty:
         return data
 
     from stock_ai.features.afml import add_afml_features
+    from stock_ai.features.ml4at import add_ml4at_features
+
     result = add_afml_features(data.copy(), d=0.4)
+    result = add_ml4at_features(result)
     grouped = result.groupby("ticker", group_keys=False) if "ticker" in result.columns else None
 
     close = result["close"]
@@ -305,6 +320,10 @@ def add_cross_sectional_overnight_features(pooled_df: pd.DataFrame) -> pd.DataFr
         result["cs_rank_macro_sensitivity"] = grouped["semicon_sox_beta_return"].rank(pct=True).fillna(0.5)
     else:
         result["cs_rank_macro_sensitivity"] = 0.5
+
+    # 6. ML4AT WorldQuant Alphas Daily Cross-Sectional Rank Normalization
+    from stock_ai.features.ml4at import add_cross_sectional_rank_features
+    result = add_cross_sectional_rank_features(result)
 
     return result
 

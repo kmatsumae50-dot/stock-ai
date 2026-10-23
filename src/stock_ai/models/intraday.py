@@ -236,13 +236,58 @@ def train_pooled_cross_sectional_intraday_model(
     )
     feature_columns = pruned_features
 
-    # Refit Primary classifier on selected features with sample weights
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    # ML4AT Chapter 7 & 12: Heterogeneous Ensemble (LightGBM + L2 Regularized Linear Model)
+    linear_pipe = Pipeline([
+        ("scaler", StandardScaler()),
+        ("clf", LogisticRegression(C=0.1, penalty="l2", max_iter=1000, random_state=42)),
+    ])
+    # Fit both models on selected pruned features with AFML sample weights
+    clf.fit(
+        train_data[feature_columns],
+        train_data[INTRADAY_TARGET].astype(int),
+        sample_weight=w_train,
+    )
+    linear_pipe.fit(
+        train_data[feature_columns].fillna(0.0),
+        train_data[INTRADAY_TARGET].astype(int),
+        clf__sample_weight=w_train,
+    )
+    val_lgb_probs = clf.predict_proba(valid_data[feature_columns])[:, 1]
+    val_lin_probs = linear_pipe.predict_proba(valid_data[feature_columns].fillna(0.0))[:, 1]
+
+    # Optimize blend weights on Purged Validation set to maximize AUC / Rank IC
+    best_w = 0.80
+    best_auc = -1.0
+    y_val_arr = valid_data[INTRADAY_TARGET].astype(int).values
+    for candidate_w in [0.50, 0.60, 0.70, 0.75, 0.80, 0.85, 0.90, 1.00]:
+        blend_p = candidate_w * val_lgb_probs + (1.0 - candidate_w) * val_lin_probs
+        try:
+            score = float(roc_auc_score(y_val_arr, blend_p))
+            if score > best_auc:
+                best_auc = score
+                best_w = candidate_w
+        except Exception:
+            pass
+
+    blend_weights = {"lgb": best_w, "linear": round(1.0 - best_w, 2)}
+    logger.info("ML4AT Heterogeneous Ensemble Blend Weights: %s (Val AUC: %.4f)", blend_weights, best_auc)
+
+    # Refit Primary classifier & linear pipeline on selected features with sample weights
     clf.fit(
         train_subset[feature_columns],
         train_subset[INTRADAY_TARGET].astype(int),
         sample_weight=w_subset,
     )
-    val_probs = clf.predict_proba(valid_data[feature_columns])[:, 1]
+    linear_pipe.fit(
+        train_subset[feature_columns].fillna(0.0),
+        train_subset[INTRADAY_TARGET].astype(int),
+        clf__sample_weight=w_subset,
+    )
+    val_probs = best_w * clf.predict_proba(valid_data[feature_columns])[:, 1] + (1.0 - best_w) * linear_pipe.predict_proba(valid_data[feature_columns].fillna(0.0))[:, 1]
     val_auc = float(roc_auc_score(valid_data[INTRADAY_TARGET].astype(int), val_probs))
     val_acc = float(accuracy_score(valid_data[INTRADAY_TARGET].astype(int), (val_probs >= 0.5).astype(int)))
 
@@ -387,6 +432,8 @@ def train_pooled_cross_sectional_intraday_model(
 
     bundle = {
         "model": clf,
+        "model_linear": linear_pipe,
+        "blend_weights": blend_weights,
         "model_clean": clf_clean,
         "model_meta": clf_meta,
         "regressor": reg,
@@ -415,8 +462,9 @@ def predict_intraday_for_ticker(
     """Predict intraday open-to-close probability and expected return for a ticker.
 
     Ensembles:
-    1. Cross-Sectional Outperform probability (`p_intraday_cs`)
-    2. Clean Intraday Win probability (`p_clean_win`: no severe drawdown <= -1.2% & cost-adjusted profit)
+    1. Heterogeneous Stacked Ensemble (LightGBM + L2 Linear) Cross-Sectional Outperform (`p_intraday_cs`)
+    2. Clean Intraday Win probability (`p_clean_win`)
+    3. AFML Meta-Labeling Net-Profit probability (`p_afml_meta`) and Chapter 10 Bet Sizing
     """
     if settings is None:
         settings = load_settings()
@@ -459,16 +507,24 @@ def predict_intraday_for_ticker(
     from stock_ai.features.afml import calculate_bet_size
 
     clf = bundle["model"]
+    clf_linear = bundle.get("model_linear")
+    blend_weights = bundle.get("blend_weights", {"lgb": 0.80, "linear": 0.20})
+    w_lgb = blend_weights.get("lgb", 0.80)
+    w_lin = blend_weights.get("linear", 0.20)
+
     clf_clean = bundle.get("model_clean")
     clf_meta = bundle.get("model_meta")
     reg = bundle.get("regressor")
 
-    p_cs = float(clf.predict_proba(X_row)[:, 1][0])
+    p_cs_lgb = float(clf.predict_proba(X_row)[:, 1][0])
+    p_cs_lin = float(clf_linear.predict_proba(X_row)[:, 1][0]) if clf_linear is not None else p_cs_lgb
+    p_cs = w_lgb * p_cs_lgb + w_lin * p_cs_lin
+
     p_clean = float(clf_clean.predict_proba(X_row)[:, 1][0]) if clf_clean is not None else p_cs
     p_meta = float(clf_meta.predict_proba(X_row)[:, 1][0]) if clf_meta is not None else p_clean
     bet_size = calculate_bet_size(p_meta)
 
-    # AFML Enhanced Tri-Model Ensemble: 40% CS Outperform + 35% Clean Win + 25% Meta Net-Profit
+    # Tri-Model Ensemble: 40% Heterogeneous CS Outperform + 35% Clean Win + 25% Meta Net-Profit
     prob = 0.40 * p_cs + 0.35 * p_clean + 0.25 * p_meta
 
     pred_ret = float(reg.predict(X_row)[0]) if reg is not None else 0.0
