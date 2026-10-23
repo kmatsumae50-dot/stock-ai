@@ -165,7 +165,7 @@
       "dividend_yield": 3.35,
       "is_value_trap": false,
       "overnight_p_up": 0.5045566535629518,
-      "overnight_quantile": "Q1 (ギャップダウン警戒帯)",
+      "overnight_quantile": "Q2 (弱気帯)",
       "is_golden_signal": false,
       "status": "👀 調整監視圏"
     },
@@ -186,7 +186,7 @@
       "dividend_yield": 2.59,
       "is_value_trap": false,
       "overnight_p_up": 0.5154752994936054,
-      "overnight_quantile": "Q4 (強気先行帯)",
+      "overnight_quantile": "Q5 (強気ギャップアップ帯)",
       "is_golden_signal": false,
       "status": "👀 調整監視圏"
     },
@@ -417,7 +417,7 @@
       "dividend_yield": 1.67,
       "is_value_trap": false,
       "overnight_p_up": 0.4969951504389264,
-      "overnight_quantile": "Q2 (弱気帯)",
+      "overnight_quantile": "Q1 (ギャップダウン警戒帯)",
       "is_golden_signal": false,
       "status": "📈 高値巡航圏"
     },
@@ -543,7 +543,7 @@
       "dividend_yield": 2.28,
       "is_value_trap": false,
       "overnight_p_up": 0.5073169696778065,
-      "overnight_quantile": "Q1 (ギャップダウン警戒帯)",
+      "overnight_quantile": "Q3 (中立帯)",
       "is_golden_signal": false,
       "status": "📈 高値巡航圏"
     },
@@ -627,7 +627,7 @@
       "dividend_yield": 0.92,
       "is_value_trap": false,
       "overnight_p_up": 0.5266133238300618,
-      "overnight_quantile": "Q3 (中立帯)",
+      "overnight_quantile": "Q2 (弱気帯)",
       "is_golden_signal": false,
       "status": "📈 高値巡航圏"
     },
@@ -669,7 +669,7 @@
       "dividend_yield": 3.99,
       "is_value_trap": false,
       "overnight_p_up": 0.4986921671379273,
-      "overnight_quantile": "Q3 (中立帯)",
+      "overnight_quantile": "Q4 (強気先行帯)",
       "is_golden_signal": false,
       "status": "📈 高値巡航圏"
     },

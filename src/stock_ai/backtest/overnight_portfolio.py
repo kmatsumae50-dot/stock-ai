@@ -131,7 +131,13 @@ def collect_overnight_universe_predictions(
             for c in i_cols:
                 if c not in sub.columns:
                     sub[c] = 0.0
-            sub["p_intraday_cs"] = intraday_bundle["model"].predict_proba(sub[i_cols].fillna(0.0))[:, 1]
+            p_cs_intra = intraday_bundle["model"].predict_proba(sub[i_cols].fillna(0.0))[:, 1]
+            if "model_clean" in intraday_bundle and intraday_bundle["model_clean"] is not None:
+                p_clean = intraday_bundle["model_clean"].predict_proba(sub[i_cols].fillna(0.0))[:, 1]
+                sub["p_intraday_cs"] = 0.50 * p_cs_intra + 0.50 * p_clean
+            else:
+                sub["p_intraday_cs"] = p_cs_intra
+
             if "regressor" in intraday_bundle and intraday_bundle["regressor"] is not None:
                 sub["pred_intraday_ret"] = intraday_bundle["regressor"].predict(sub[i_cols].fillna(0.0))
             else:

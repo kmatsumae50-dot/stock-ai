@@ -27,6 +27,8 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+sys.path.insert(0, str(Path("src").resolve()))
+
 from stock_ai.backtest.overnight_portfolio import (
     collect_overnight_universe_predictions,
     export_portfolio_simulation_reports,

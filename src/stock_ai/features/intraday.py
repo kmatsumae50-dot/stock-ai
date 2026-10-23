@@ -47,6 +47,14 @@ INTRADAY_BASE_FEATURES = [
     "finance_tnx_shock",
     "vix_risk_off_shock",
     "semicon_intraday_gap_divergence",
+    # 高度デイトレ特徴量 (Gap-to-ATR, 陽線継続クセ, ヒゲ非対称性, 出遅れ初動)
+    "gap_to_atr_ratio",
+    "rolling_intraday_win_rate_20d",
+    "rolling_gap_fade_corr_20d",
+    "prior_upper_shadow_ratio",
+    "prior_lower_shadow_ratio",
+    "rolling_buying_pressure_5d",
+    "sector_intraday_laggard_score",
 ]
 
 INTRADAY_CROSS_SECTIONAL_FEATURES = [
@@ -57,6 +65,8 @@ INTRADAY_CROSS_SECTIONAL_FEATURES = [
     "cs_rank_rebound",
     "sector_rel_gap",
     "cs_rank_macro_intraday",
+    "cs_rank_gap_to_atr",
+    "cs_rank_buying_pressure",
 ]
 
 ALL_INTRADAY_FEATURES = INTRADAY_BASE_FEATURES + INTRADAY_CROSS_SECTIONAL_FEATURES
@@ -84,10 +94,23 @@ def add_intraday_premarket_features(df: pd.DataFrame) -> pd.DataFrame:
         prev_close = result["close"].shift(1)
         result["overnight_gap"] = (result["open"] - prev_close) / (prev_close + 1e-8)
         result["target_intraday_positive"] = (result["intraday_return"] > 0.0).astype(int)
+
+        # Clean Intraday Win target: MAE >= -1.2% and return >= +20 bps
+        if "low" in result.columns:
+            mae = (result["low"] - result["open"]) / (result["open"] + 1e-8)
+            result["intraday_mae"] = mae
+            result["target_clean_intraday_win"] = (
+                (mae >= -0.012) & (result["intraday_return"] >= 0.0020)
+            ).astype(int)
+        else:
+            result["intraday_mae"] = 0.0
+            result["target_clean_intraday_win"] = (result["intraday_return"] >= 0.0020).astype(int)
     else:
         result["intraday_return"] = 0.0
         result["overnight_gap"] = 0.0
         result["target_intraday_positive"] = 0
+        result["intraday_mae"] = 0.0
+        result["target_clean_intraday_win"] = 0
 
     # 2. Prior Day Japanese Technicals (shift 1 so they are strictly pre-market known)
     result["prior_return_1d"] = result["return_1d"].shift(1).fillna(0.0) if "return_1d" in result.columns else 0.0
@@ -101,6 +124,38 @@ def add_intraday_premarket_features(df: pd.DataFrame) -> pd.DataFrame:
     result["prior_high_low_range"] = result["high_low_range"].shift(1).fillna(0.01) if "high_low_range" in result.columns else 0.01
     result["prior_vol_surge_5d"] = result["volume_surge_5d"].shift(1).fillna(1.0) if "volume_surge_5d" in result.columns else 1.0
     result["prior_sector_rel_ret"] = result["sector_relative_return"].shift(1).fillna(0.0) if "sector_relative_return" in result.columns else 0.0
+
+    # 2b. Advanced Intraday Features (Gap-to-ATR, Rolling Win Rate, Gap-Fade Correlation, Shadows)
+    result["gap_to_atr_ratio"] = (result["overnight_gap"] / (result["prior_vol_20"] + 1e-6)).fillna(0.0).clip(-5.0, 5.0)
+
+    # Rolling intraday positive win rate (strictly lag 1)
+    past_intra_win = (result["intraday_return"] > 0.0).astype(float).shift(1)
+    result["rolling_intraday_win_rate_20d"] = past_intra_win.rolling(20, min_periods=5).mean().fillna(0.5)
+
+    # Rolling correlation between overnight gap and intraday return (fade vs follow propensity)
+    past_gap = result["overnight_gap"].shift(1)
+    past_ret = result["intraday_return"].shift(1)
+    result["rolling_gap_fade_corr_20d"] = past_gap.rolling(20, min_periods=5).corr(past_ret).fillna(0.0).clip(-1.0, 1.0)
+
+    # Candlestick upper and lower shadows asymmetry
+    if "high" in result.columns and "low" in result.columns and "open" in result.columns:
+        p_hl = (result["high"] - result["low"]).shift(1).replace(0, 1e-6)
+        p_open = result["open"].shift(1)
+        p_close = result["close"].shift(1)
+        p_high = result["high"].shift(1)
+        p_low = result["low"].shift(1)
+
+        body_top = np.maximum(p_open, p_close)
+        body_bottom = np.minimum(p_open, p_close)
+
+        result["prior_upper_shadow_ratio"] = ((p_high - body_top) / p_hl).fillna(0.0).clip(0.0, 1.0)
+        result["prior_lower_shadow_ratio"] = ((body_bottom - p_low) / p_hl).fillna(0.0).clip(0.0, 1.0)
+        shadow_diff = result["prior_lower_shadow_ratio"] - result["prior_upper_shadow_ratio"]
+        result["rolling_buying_pressure_5d"] = shadow_diff.rolling(5, min_periods=1).mean().fillna(0.0).clip(-1.0, 1.0)
+    else:
+        result["prior_upper_shadow_ratio"] = 0.0
+        result["prior_lower_shadow_ratio"] = 0.0
+        result["rolling_buying_pressure_5d"] = 0.0
 
     # 3. Overnight US, FX and 4 Major Macro Shocks (07:30 JST pre-market finalized)
     t_val = str(result["ticker"].iloc[0]) if "ticker" in result.columns and len(result) > 0 else ""
@@ -137,6 +192,11 @@ def add_intraday_premarket_features(df: pd.DataFrame) -> pd.DataFrame:
     result["semicon_intraday_gap_divergence"] = (
         (result["overnight_gap"] - (0.60 * sox_s + 0.40 * nvda_s)) if is_semi else pd.Series(0.0, index=result.index)
     )
+
+    # Initial sector laggard score (ticker vs expected gap)
+    result["sector_intraday_laggard_score"] = (
+        result["expected_gap"] - result["prior_sector_rel_ret"]
+    ).fillna(0.0)
 
     # 4. Non-Linear Reversal & Exhaustion Interactions
     result["gap_down_oversold"] = np.where(
@@ -177,6 +237,8 @@ def add_cross_sectional_intraday_features(pooled_df: pd.DataFrame) -> pd.DataFra
         "prior_rsi_14": "cs_rank_prior_rsi",
         "prior_clv": "cs_rank_prior_clv",
         "rebound_potential": "cs_rank_rebound",
+        "gap_to_atr_ratio": "cs_rank_gap_to_atr",
+        "rolling_buying_pressure_5d": "cs_rank_buying_pressure",
     }
     for src_col, target_col in rank_cols.items():
         if src_col in result.columns:
@@ -184,10 +246,12 @@ def add_cross_sectional_intraday_features(pooled_df: pd.DataFrame) -> pd.DataFra
         else:
             result[target_col] = 0.5
 
-    # Sector relative gap
+    # Sector relative gap & sector laggard refinement
     if "sector" in result.columns and "overnight_gap" in result.columns:
         sector_gap = result.groupby(["date", "sector"])["overnight_gap"].transform("mean")
         result["sector_rel_gap"] = result["overnight_gap"] - sector_gap
+        # Refine sector_intraday_laggard_score: sector average gap minus ticker overnight gap
+        result["sector_intraday_laggard_score"] = (sector_gap - result["overnight_gap"]).fillna(0.0)
     else:
         result["sector_rel_gap"] = 0.0
 

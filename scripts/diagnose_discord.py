@@ -2,6 +2,8 @@ import json
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+from pathlib import Path
+sys.path.insert(0, str(Path("src").resolve()))
 
 from stock_ai.cloud.discord_provisioner import DiscordProvisioner
 

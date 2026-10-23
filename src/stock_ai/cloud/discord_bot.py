@@ -1735,6 +1735,15 @@ def build_daytrade_sniper_payloads(
         f"> 🛡️ **波形崩れ撤退 (損切り)**: **`{stop_p:,.1f}円`** (`{stop_pct:+.1f}%` ※シナリオ崩壊で即逃げ)"
     )
 
+    micro = res.get("microstructure")
+    micro_field_value = (
+        f"> 🛡️ **当日VWAP**: **`{micro['vwap']:,.1f}円`**（乖離 `{micro['vwap_deviation_pct']:+.1f}%` / {micro['vwap_status']}）\n"
+        f"> ⚡ **朝イチ30分ORB**: **`{micro['orb_low']:,.1f}円 〜 {micro['orb_high']:,.1f}円`**（**{micro['orb_status']}**）\n"
+        f"> 📊 **出来高ペース (RVOL)**: **`{micro['rvol_intraday']:.1f}倍`**（過去4営業日同時刻比 / 累積出来高 `{micro['cum_volume']:,}株`）"
+        if micro
+        else "> 📡 寄前のため開場後に5分足VWAP・ORBブレイク判定を自動取得・更新します"
+    )
+
     embed = {
         "title": f"⚡ 当日デイトレ特化予想: {code_str} {disp_name}",
         "description": f"**判定: {judge}** ({phase_title})",
@@ -1745,18 +1754,23 @@ def build_daytrade_sniper_payloads(
                 "value": (
                     f"**{wf_title}**\n"
                     f"> 💡 {wf_desc}\n"
-                    f"> 上昇確率: **`{p_up:.1f}%`** ｜ 期待値: **`{bps:+.0f}bps`**\n"
-                    f"> 現在値: **`{cur_p:,.1f}円`** (始値比 `{intra_pct:+.2f}%` ／ 前日比 `{day_pct:+.2f}%`)"
+                    f"> 上昇確率: **`{p_up:.1f}%`** (CS Outperform: `{res.get('p_intraday_cs', p_up):.1f}%` / Clean Win: `{res.get('p_clean_win', p_up):.1f}%`)\n"
+                    f"> 期待値: **`{bps:+.0f}bps`** ｜ 現在値: **`{cur_p:,.1f}円`** (始値比 `{intra_pct:+.2f}%` ／ 前日比 `{day_pct:+.2f}%`)"
                 ),
                 "inline": False,
             },
             {
-                "name": "② 時間帯別の値動きタイムライン（09:00〜15:30 予想株価軌道）",
+                "name": "② 5分足マイクロストラクチャー診断（当日VWAP ＆ 朝イチ30分ORB）",
+                "value": micro_field_value,
+                "inline": False,
+            },
+            {
+                "name": "③ 時間帯別の値動きタイムライン（09:00〜15:30 予想株価軌道）",
                 "value": timeline_lines,
                 "inline": False,
             },
             {
-                "name": "③ 当日トレードの具体的な指値・アクション価格帯",
+                "name": "④ 当日トレードの具体的な指値・アクション価格帯",
                 "value": action_lines,
                 "inline": False,
             },
@@ -1766,7 +1780,7 @@ def build_daytrade_sniper_payloads(
                 "inline": False,
             },
         ],
-        "footer": {"text": "Stock AI 1-Day Intraday Waveform Simulator | スマホ縦1列最適化"},
+        "footer": {"text": "Stock AI 1-Day Intraday Waveform Simulator | VWAP & ORB Powered"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 

@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 INTRADAY_MODEL_NAME = "lightgbm_intraday_pooled_cs"
 INTRADAY_TARGET = "target_intraday_cs_outperform"
+CLEAN_WIN_TARGET = "target_clean_intraday_win"
 INTRADAY_ARTIFACT_FILENAME = "lightgbm_intraday_pooled_cs.joblib"
 INTRADAY_METRICS_FILENAME = "lightgbm_intraday_pooled_cs.json"
 
@@ -114,7 +115,7 @@ def train_pooled_cross_sectional_intraday_model(
     train_end_date: str = "2024-04-01",
     sync_features_to_disk: bool = True,
 ) -> tuple[Any, list[str], dict[str, Any]]:
-    """Train a leak-free Pooled Cross-Sectional Intraday model (Classifier + Regressor bundle).
+    """Train a leak-free Pooled Cross-Sectional Intraday model (Classifier + Clean Win + Regressor bundle).
 
     Trained strictly on dates prior to `train_end_date` (2024-04-01) across all universe tickers.
     """
@@ -167,7 +168,7 @@ def train_pooled_cross_sectional_intraday_model(
 
     split_dt = pd.to_datetime(train_end_date)
     train_mask = all_df["date"] < split_dt
-    train_subset = all_df[train_mask].dropna(subset=feature_columns + [INTRADAY_TARGET, "intraday_return"])
+    train_subset = all_df[train_mask].dropna(subset=feature_columns + [INTRADAY_TARGET, "intraday_return"]).copy()
 
     if train_subset.empty:
         raise ValueError("Training subset for Intraday model is empty.")
@@ -177,8 +178,8 @@ def train_pooled_cross_sectional_intraday_model(
     valid_start_idx = max(1, int(len(train_dates) * 0.85))
     valid_start_dt = train_dates[valid_start_idx]
 
-    train_data = train_subset[train_subset["date"] < valid_start_dt]
-    valid_data = train_subset[train_subset["date"] >= valid_start_dt]
+    train_data = train_subset[train_subset["date"] < valid_start_dt].copy()
+    valid_data = train_subset[train_subset["date"] >= valid_start_dt].copy()
 
     # 1. Train Classifier for Cross-Sectional Outperform
     clf = lgb.LGBMClassifier(
@@ -209,7 +210,39 @@ def train_pooled_cross_sectional_intraday_model(
     # Refit classifier on full training set
     clf.fit(train_subset[feature_columns], train_subset[INTRADAY_TARGET].astype(int))
 
-    # 2. Train Regressor for expected return hurdle
+    # 2. Train Classifier for Clean Intraday Win (No severe drawdown & cost-adjusted profit)
+    if CLEAN_WIN_TARGET not in train_subset.columns:
+        train_subset[CLEAN_WIN_TARGET] = (train_subset["intraday_return"] >= 0.0020).astype(int)
+        train_data[CLEAN_WIN_TARGET] = (train_data["intraday_return"] >= 0.0020).astype(int)
+        valid_data[CLEAN_WIN_TARGET] = (valid_data["intraday_return"] >= 0.0020).astype(int)
+
+    clf_clean = lgb.LGBMClassifier(
+        objective="binary",
+        n_estimators=200,
+        learning_rate=0.03,
+        num_leaves=12,
+        min_child_samples=50,
+        subsample=0.8,
+        colsample_bytree=0.7,
+        reg_alpha=0.5,
+        reg_lambda=2.0,
+        random_state=42,
+        verbose=-1,
+    )
+    clf_clean.fit(
+        train_data[feature_columns],
+        train_data[CLEAN_WIN_TARGET].astype(int),
+        eval_set=[(valid_data[feature_columns], valid_data[CLEAN_WIN_TARGET].astype(int))],
+        eval_metric="auc",
+        callbacks=[lgb.early_stopping(50, verbose=False)],
+    )
+
+    val_clean_probs = clf_clean.predict_proba(valid_data[feature_columns])[:, 1]
+    val_clean_auc = float(roc_auc_score(valid_data[CLEAN_WIN_TARGET].astype(int), val_clean_probs))
+    val_clean_acc = float(accuracy_score(valid_data[CLEAN_WIN_TARGET].astype(int), (val_clean_probs >= 0.5).astype(int)))
+    clf_clean.fit(train_subset[feature_columns], train_subset[CLEAN_WIN_TARGET].astype(int))
+
+    # 3. Train Regressor for expected return hurdle
     reg = lgb.LGBMRegressor(
         n_estimators=180,
         learning_rate=0.02,
@@ -227,10 +260,13 @@ def train_pooled_cross_sectional_intraday_model(
     metrics_info = {
         "model_name": INTRADAY_MODEL_NAME,
         "target": INTRADAY_TARGET,
+        "clean_target": CLEAN_WIN_TARGET,
         "trained_samples": len(train_data),
         "validation_samples": len(valid_data),
         "validation_auc": val_auc,
         "validation_accuracy": val_acc,
+        "validation_clean_auc": val_clean_auc,
+        "validation_clean_accuracy": val_clean_acc,
         "feature_columns_count": len(feature_columns),
         "top_features": [
             {"feature": f, "importance": int(imp)}
@@ -244,6 +280,7 @@ def train_pooled_cross_sectional_intraday_model(
 
     bundle = {
         "model": clf,
+        "model_clean": clf_clean,
         "regressor": reg,
         "feature_columns": feature_columns,
         "metadata": metrics_info,
@@ -266,7 +303,12 @@ def predict_intraday_for_ticker(
     settings: Settings | None = None,
     features_df: pd.DataFrame | None = None,
 ) -> dict[str, Any] | None:
-    """Predict intraday open-to-close probability and expected return for a ticker."""
+    """Predict intraday open-to-close probability and expected return for a ticker.
+
+    Ensembles:
+    1. Cross-Sectional Outperform probability (`p_intraday_cs`)
+    2. Clean Intraday Win probability (`p_clean_win`: no severe drawdown <= -1.2% & cost-adjusted profit)
+    """
     if settings is None:
         settings = load_settings()
 
@@ -306,15 +348,26 @@ def predict_intraday_for_ticker(
     X_row = row_df[bundle["feature_columns"]].fillna(0.0)
 
     clf = bundle["model"]
+    clf_clean = bundle.get("model_clean")
     reg = bundle.get("regressor")
 
-    prob = float(clf.predict_proba(X_row)[:, 1][0])
+    p_cs = float(clf.predict_proba(X_row)[:, 1][0])
+    if clf_clean is not None:
+        p_clean = float(clf_clean.predict_proba(X_row)[:, 1][0])
+        # Ensemble: 50% CS Outperform + 50% Clean Intraday Win
+        prob = 0.50 * p_cs + 0.50 * p_clean
+    else:
+        p_clean = p_cs
+        prob = p_cs
+
     pred_ret = float(reg.predict(X_row)[0]) if reg is not None else 0.0
 
     info = classify_intraday_quantile(prob, pred_ret=pred_ret)
     info["ticker"] = ticker
     info["date"] = str(row_df["date"].iloc[0]) if "date" in row_df.columns else "-"
-    info["p_intraday_cs"] = prob
+    info["p_intraday_cs"] = p_cs
+    info["p_clean_win"] = p_clean
+    info["p_intraday_ensemble"] = prob
     info["pred_intraday_return"] = pred_ret
     info["expected_return_bps"] = pred_ret * 10000.0
 
@@ -366,77 +419,105 @@ def fetch_realtime_intraday_quote(ticker: str) -> dict[str, Any] | None:
     return None
 
 
-def predict_daytrade_sniper(
+def analyze_intraday_5m_microstructure(
     ticker: str,
-    settings: Settings | None = None,
     now_dt: datetime | None = None,
-    name: str = "",
 ) -> dict[str, Any] | None:
-    """Predict strictly 'Will it go Up or Down TODAY (or next 1-Day)' with targets and tactics.
+    """Analyze real-time 5-minute microstructure from yfinance.
 
-    Integrates:
-    1. 07:30 JST pre-market pooled intraday model (lightgbm_intraday_pooled_cs)
-    2. Real-time intraday quote (yfinance Open, High, Low, Current CLV, Momentum)
-    3. Concrete intraday volatility targets and stop-loss boundaries
+    Computes:
+    1. Intraday VWAP (Volume Weighted Average Price) & VWAP deviation
+    2. Opening Range (09:00 - 09:30 JST) High/Low and Breakout status
+    3. Relative Volume Pace (RVOL) compared to prior 4 trading days at the same time
     """
-    if settings is None:
-        settings = load_settings()
+    try:
+        import yfinance as yf
 
-    phase, phase_title = determine_market_phase(now_dt)
-    base_pred = predict_intraday_for_ticker(ticker, settings=settings)
-    if not base_pred:
+        df = yf.download(ticker, period="5d", interval="5m", progress=False)
+        if df is None or df.empty:
+            return None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+
+        latest_date = df.index[-1].date()
+        today_df = df[df.index.date == latest_date]
+        if today_df.empty:
+            return None
+
+        # 1. Intraday VWAP & Deviation
+        typical_p = (today_df["High"] + today_df["Low"] + today_df["Close"]) / 3.0
+        cum_vol = float(today_df["Volume"].sum())
+        if cum_vol > 0:
+            vwap = float((typical_p * today_df["Volume"]).sum() / cum_vol)
+        else:
+            vwap = float(today_df["Close"].iloc[-1])
+
+        latest_price = float(today_df["Close"].iloc[-1])
+        open_price = float(today_df["Open"].iloc[0])
+        day_high = float(today_df["High"].max())
+        day_low = float(today_df["Low"].min())
+        vwap_dev_pct = ((latest_price - vwap) / vwap) * 100.0 if vwap > 0 else 0.0
+        is_above_vwap = latest_price >= vwap
+
+        # 2. Opening Range (09:00 - 09:30) High / Low & Breakout
+        orb_bars = today_df[
+            (today_df.index.time >= datetime.strptime("09:00", "%H:%M").time())
+            & (today_df.index.time <= datetime.strptime("09:30", "%H:%M").time())
+        ]
+        if orb_bars.empty:
+            orb_bars = today_df.head(6)
+
+        orb_high = float(orb_bars["High"].max()) if not orb_bars.empty else day_high
+        orb_low = float(orb_bars["Low"].min()) if not orb_bars.empty else day_low
+
+        if latest_price > orb_high:
+            orb_status = "朝イチ高値ブレイク（順張り加速）"
+            orb_code = "BREAK_HIGH"
+        elif latest_price < orb_low:
+            orb_status = "朝イチ安値割れ（寄り天崩壊）"
+            orb_code = "BREAK_LOW"
+        else:
+            orb_status = "朝イチレンジ内（揉み合い推移）"
+            orb_code = "RANGE"
+
+        # 3. Relative Volume Pace (RVOL)
+        cur_time = today_df.index[-1].time()
+        past_df = df[df.index.date < latest_date]
+        past_dates = np.unique(past_df.index.date)
+        past_cum_vols: list[float] = []
+        for p_date in past_dates:
+            day_slice = past_df[(past_df.index.date == p_date) & (past_df.index.time <= cur_time)]
+            if not day_slice.empty:
+                past_cum_vols.append(float(day_slice["Volume"].sum()))
+
+        if past_cum_vols:
+            mean_past_vol = sum(past_cum_vols) / len(past_cum_vols)
+            rvol = cum_vol / mean_past_vol if mean_past_vol > 0 else 1.0
+        else:
+            mean_past_vol = 0.0
+            rvol = 1.0
+
+        return {
+            "vwap": round(vwap, 1),
+            "latest_price": round(latest_price, 1),
+            "open_price": round(open_price, 1),
+            "day_high": round(day_high, 1),
+            "day_low": round(day_low, 1),
+            "vwap_deviation_pct": round(vwap_dev_pct, 2),
+            "is_above_vwap": is_above_vwap,
+            "vwap_status": "VWAPより上（機関投資家の買い支え圏）" if is_above_vwap else "VWAP割れ（戻り売り・失速圏）",
+            "orb_high": round(orb_high, 1),
+            "orb_low": round(orb_low, 1),
+            "orb_status": orb_status,
+            "orb_code": orb_code,
+            "rvol_intraday": round(rvol, 2),
+            "cum_volume": int(cum_vol),
+            "as_of_time": str(cur_time),
+            "bars_count": len(today_df),
+        }
+    except Exception as exc:
+        logger.debug("5m microstructure analysis failed for %s: %s", ticker, exc)
         return None
-
-    base_prob = float(base_pred.get("p_intraday_cs", 0.50))
-    base_bps = float(base_pred.get("expected_return_bps", 0.0))
-    q_band = str(base_pred.get("quantile", "Q3"))
-
-    # Load technical features for volatility and fallback
-    f_path = settings.paths.feature_data_dir / f"{ticker}.parquet"
-    vol_20 = 0.022
-    features_df = None
-    if f_path.exists():
-        try:
-            features_df = read_parquet(f_path)
-            if not features_df.empty and "volatility_20" in features_df.columns:
-                v_val = float(features_df["volatility_20"].iloc[-1])
-                if not np.isnan(v_val) and v_val > 0.005:
-                    vol_20 = v_val
-        except Exception:
-            pass
-
-    # Real-time quote or fallback to features parquet
-    quote = fetch_realtime_intraday_quote(ticker)
-    if quote is None and features_df is not None and not features_df.empty:
-        last_row = features_df.iloc[-1]
-        c = float(last_row.get("close", 1000.0))
-        o = float(last_row.get("open", c))
-        h = float(last_row.get("high", max(c, o)))
-        l_p = float(last_row.get("low", min(c, o)))
-        pc = float(features_df["close"].iloc[-2]) if len(features_df) >= 2 else o
-        quote = {
-            "last_price": c,
-            "open": o,
-            "high": h,
-            "low": l_p,
-            "previous_close": pc,
-            "source": "parquet_fallback",
-        }
-    elif quote is None:
-        quote = {
-            "last_price": 1000.0,
-            "open": 1000.0,
-            "high": 1000.0,
-            "low": 1000.0,
-            "previous_close": 1000.0,
-            "source": "default_mock",
-        }
-
-    cur_p = quote["last_price"]
-    open_p = quote["open"]
-    high_p = quote["high"]
-    low_p = quote["low"]
-    prev_c = quote["previous_close"]
 
 def format_price_yen(val: float) -> str:
     """Format yen price with commas, using integer if >= 1000 or rounded to 1 decimal."""
@@ -493,6 +574,7 @@ def simulate_intraday_waveform(
     pullback_pct: float,
     risk_flags: list[str],
     now_dt: datetime | None = None,
+    micro: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Simulate which of the 6 intraday waveform patterns the stock will draw today,
 
@@ -506,8 +588,11 @@ def simulate_intraday_waveform(
 
     # 1. Determine Waveform Pattern Type
     if phase == "intraday_live":
-        # Live intraday price action takes precedence
-        if any("寄り天" in f for f in risk_flags) or (high_p >= open_p * 1.006 and pullback_pct >= 0.40) or (intra_ret_pct > 0.8 and pullback_pct >= 0.40):
+        if micro is not None and micro.get("orb_code") == "BREAK_HIGH" and micro.get("is_above_vwap"):
+            waveform_key = "trend_breakout"
+        elif micro is not None and micro.get("orb_code") == "BREAK_LOW" and not micro.get("is_above_vwap"):
+            waveform_key = "yoriten_fade"
+        elif any("寄り天" in f for f in risk_flags) or (high_p >= open_p * 1.006 and pullback_pct >= 0.40) or (intra_ret_pct > 0.8 and pullback_pct >= 0.40):
             waveform_key = "yoriten_fade"
         elif open_p < prev_c and cur_p >= open_p and clv >= 0.55:
             waveform_key = "gd_v_shape"
@@ -565,12 +650,17 @@ def simulate_intraday_waveform(
         t_afternoon = f"大口の買い支えが入り {format_price_yen(aft_lo)}〜{format_price_yen(aft_hi)} の高値圏維持"
         t_close = f"日中最高値圏 {format_price_yen(close_lo)}〜{format_price_yen(close_hi)} での高値引け着地予想"
 
-        buy_zone = f"{format_price_yen(dip_lo)} 〜 {format_price_yen(dip_hi)}"
+        if micro is not None and micro.get("is_above_vwap"):
+            buy_zone = f"{format_price_yen(micro['vwap'])}（VWAP押し目）〜 {format_price_yen(dip_hi)}"
+            stop_loss = round(min(cur_p * (1.0 - max(0.012, vol_pct * 0.45)), micro["vwap"] * 0.995, micro.get("orb_low", dip_lo) * 0.998), 1)
+        else:
+            buy_zone = f"{format_price_yen(dip_lo)} 〜 {format_price_yen(dip_hi)}"
+            stop_loss = round(min(cur_p * (1.0 - max(0.012, vol_pct * 0.50)), prev_c * (1.0 - vol_pct * 0.40)), 1)
+
         target_1 = morn_hi
         target_1_pct = round(((target_1 - cur_p) / cur_p) * 100.0, 1)
         target_final = close_hi
         target_final_pct = round(((target_final - cur_p) / cur_p) * 100.0, 1)
-        stop_loss = round(min(cur_p * (1.0 - max(0.012, vol_pct * 0.50)), prev_c * (1.0 - vol_pct * 0.40)), 1)
         stop_loss_pct = round(((stop_loss - cur_p) / cur_p) * 100.0, 1)
 
     elif waveform_key == "gd_v_shape":
@@ -592,12 +682,17 @@ def simulate_intraday_waveform(
         t_afternoon = f"買い優勢が継続、{format_price_yen(aft_lo)}〜{format_price_yen(aft_hi)} でプラス圏定着"
         t_close = f"後場高値水準 {format_price_yen(close_lo)}〜{format_price_yen(close_hi)} で陽線着地予想"
 
-        buy_zone = f"{format_price_yen(dip_lo)} 〜 {format_price_yen(dip_hi)}"
+        if micro is not None and micro.get("is_above_vwap"):
+            buy_zone = f"{format_price_yen(micro['vwap'])}（VWAP浮上）〜 {format_price_yen(dip_hi)}"
+            stop_loss = round(min(cur_p * (1.0 - max(0.012, vol_pct * 0.45)), micro["vwap"] * 0.995, dip_lo * 0.995), 1)
+        else:
+            buy_zone = f"{format_price_yen(dip_lo)} 〜 {format_price_yen(dip_hi)}"
+            stop_loss = round(min(cur_p * (1.0 - max(0.012, vol_pct * 0.50)), dip_lo * 0.995), 1)
+
         target_1 = morn_hi
         target_1_pct = round(((target_1 - cur_p) / cur_p) * 100.0, 1)
         target_final = close_hi
         target_final_pct = round(((target_final - cur_p) / cur_p) * 100.0, 1)
-        stop_loss = round(min(cur_p * (1.0 - max(0.012, vol_pct * 0.50)), dip_lo * 0.995), 1)
         stop_loss_pct = round(((stop_loss - cur_p) / cur_p) * 100.0, 1)
 
     elif waveform_key == "trend_breakout":
@@ -619,12 +714,17 @@ def simulate_intraday_waveform(
         t_afternoon = f"売り方の踏み上げを巻き込み {format_price_yen(aft_lo)}〜{format_price_yen(aft_hi)} へ独歩高"
         t_close = f"当日最高値 {format_price_yen(close_lo)}〜{format_price_yen(close_hi)} での大陽線引け予想"
 
-        buy_zone = f"{format_price_yen(open_lo)} 〜 {format_price_yen(dip_lo)}"
+        if micro is not None and micro.get("orb_high"):
+            buy_zone = f"{format_price_yen(micro.get('vwap', open_lo))}（VWAP押し目）〜 {format_price_yen(micro['orb_high'])}（ORBブレイク）"
+            stop_loss = round(min(cur_p * (1.0 - max(0.010, vol_pct * 0.40)), micro.get("vwap", open_lo) * 0.995, micro.get("orb_low", open_lo)), 1)
+        else:
+            buy_zone = f"{format_price_yen(open_lo)} 〜 {format_price_yen(dip_lo)}"
+            stop_loss = round(min(cur_p * (1.0 - max(0.010, vol_pct * 0.40)), open_lo * 0.995), 1)
+
         target_1 = morn_hi
         target_1_pct = round(((target_1 - cur_p) / cur_p) * 100.0, 1)
         target_final = close_hi
         target_final_pct = round(((target_final - cur_p) / cur_p) * 100.0, 1)
-        stop_loss = round(min(cur_p * (1.0 - max(0.010, vol_pct * 0.40)), open_lo * 0.995), 1)
         stop_loss_pct = round(((stop_loss - cur_p) / cur_p) * 100.0, 1)
 
     elif waveform_key == "yoriten_fade":
@@ -646,12 +746,17 @@ def simulate_intraday_waveform(
         t_afternoon = f"買い支えが入らず戻り売り優勢、{format_price_yen(aft_lo)}〜{format_price_yen(aft_hi)} へ下値切り下げ"
         t_close = f"安値圏 {format_price_yen(close_lo)}〜{format_price_yen(close_hi)} での陰線着地警戒"
 
-        buy_zone = f"⚠️ 買い厳禁（戻り売りゾーン: {format_price_yen(peak_lo)} 〜 {format_price_yen(peak_hi)}）"
+        if micro is not None:
+            buy_zone = f"⚠️ 買い厳禁（戻り売りゾーン: VWAP {format_price_yen(micro['vwap'])} 〜 朝イチ高値 {format_price_yen(micro['orb_high'])}）"
+            stop_loss = round(max(cur_p * 1.012, micro["vwap"] * 1.005, micro["orb_high"] * 1.004), 1)
+        else:
+            buy_zone = f"⚠️ 買い厳禁（戻り売りゾーン: {format_price_yen(peak_lo)} 〜 {format_price_yen(peak_hi)}）"
+            stop_loss = round(max(cur_p * 1.012, peak_hi * 1.004), 1)
+
         target_1 = morn_lo
         target_1_pct = round(((target_1 - cur_p) / cur_p) * 100.0, 1)
         target_final = close_lo
         target_final_pct = round(((target_final - cur_p) / cur_p) * 100.0, 1)
-        stop_loss = round(max(cur_p * 1.012, peak_hi * 1.004), 1)
         stop_loss_pct = round(((stop_loss - cur_p) / cur_p) * 100.0, 1)
 
     elif waveform_key == "gd_downtrend":
@@ -673,12 +778,17 @@ def simulate_intraday_waveform(
         t_afternoon = f"戻り待ちの投げ売りが重なり {format_price_yen(aft_lo)}〜{format_price_yen(aft_hi)} へ下落加速"
         t_close = f"最安値圏 {format_price_yen(close_lo)}〜{format_price_yen(close_hi)} での大陰線警戒"
 
-        buy_zone = "⚠️ 買いエントリー完全見送り（逆張り厳禁）"
+        if micro is not None:
+            buy_zone = f"⚠️ 買いエントリー完全見送り（VWAP {format_price_yen(micro['vwap'])} 割れ逆張り厳禁）"
+            stop_loss = round(max(cur_p * 1.015, micro["vwap"] * 1.005), 1)
+        else:
+            buy_zone = "⚠️ 買いエントリー完全見送り（逆張り厳禁）"
+            stop_loss = round(max(cur_p * 1.015, open_hi), 1)
+
         target_1 = morn_lo
         target_1_pct = round(((target_1 - cur_p) / cur_p) * 100.0, 1)
         target_final = close_lo
         target_final_pct = round(((target_final - cur_p) / cur_p) * 100.0, 1)
-        stop_loss = round(max(cur_p * 1.015, open_hi), 1)
         stop_loss_pct = round(((stop_loss - cur_p) / cur_p) * 100.0, 1)
 
     else:  # box_range
@@ -700,17 +810,30 @@ def simulate_intraday_waveform(
         t_afternoon = f"出来高細り {format_price_yen(aft_lo)}〜{format_price_yen(aft_hi)} の膠着状態"
         t_close = f"前日終値近辺 {format_price_yen(close_lo)}〜{format_price_yen(close_hi)} で着地予想"
 
-        buy_zone = f"{format_price_yen(box_lo)} 付近（レンジ下限打診）"
+        if micro is not None:
+            buy_zone = f"{format_price_yen(micro.get('vwap', box_lo))} 付近（VWAP押し目・レンジ下限打診）"
+            stop_loss = round(min(cur_p * 0.992, micro.get("orb_low", box_lo) * 0.995), 1)
+        else:
+            buy_zone = f"{format_price_yen(box_lo)} 付近（レンジ下限打診）"
+            stop_loss = round(min(cur_p * 0.992, box_lo * 0.994), 1)
+
         target_1 = max(round(cur_p * 1.008, 1), box_hi)
         target_1_pct = round(((target_1 - cur_p) / cur_p) * 100.0, 1)
         target_final = max(round(cur_p * 1.015, 1), round(box_hi * 1.002, 1))
         target_final_pct = round(((target_final - cur_p) / cur_p) * 100.0, 1)
-        stop_loss = round(min(cur_p * 0.992, box_lo * 0.994), 1)
         stop_loss_pct = round(((stop_loss - cur_p) / cur_p) * 100.0, 1)
 
     # 3. Format Intraday Live Dynamic Trajectory when market is actively trading
     if phase == "intraday_live":
-        t_actual = f"始値 {format_price_yen(open_p)} ➔ 安値 {format_price_yen(low_p)} / 高値 {format_price_yen(high_p)} ➔ 現在値 {format_price_yen(cur_p)}（始値比 {intra_ret_pct:+.2f}%）"
+        if micro is not None:
+            t_actual = (
+                f"始値 {format_price_yen(open_p)} ➔ 現在 {format_price_yen(cur_p)}（始値比 {intra_ret_pct:+.2f}%）"
+                f" | VWAP {format_price_yen(micro['vwap'])}（乖離 {micro['vwap_deviation_pct']:+.1f}%）"
+                f" | 30分ORB {format_price_yen(micro['orb_low'])}〜{format_price_yen(micro['orb_high'])}（{micro['orb_status']}）"
+            )
+        else:
+            t_actual = f"始値 {format_price_yen(open_p)} ➔ 安値 {format_price_yen(low_p)} / 高値 {format_price_yen(high_p)} ➔ 現在値 {format_price_yen(cur_p)}（始値比 {intra_ret_pct:+.2f}%）"
+
         timeline_items = [
             ("🕒【09:00〜現在 実績】", t_actual),
             ("🕚【10:00〜11:30 前場】", t_morning),
@@ -747,12 +870,13 @@ def predict_daytrade_sniper(
     settings: Settings | None = None,
     now_dt: datetime | None = None,
     name: str = "",
+    fetch_5m_micro: bool = True,
 ) -> dict[str, Any] | None:
     """Predict strictly 'How will the price trajectory and waveform behave TODAY (09:00 - 15:30)'.
 
     Integrates:
     1. 07:30 JST pre-market pooled intraday model (lightgbm_intraday_pooled_cs)
-    2. Real-time intraday quote (yfinance Open, High, Low, Current CLV, Momentum)
+    2. Real-time intraday quote & 5-minute microstructure (VWAP, 30m ORB Break, RVOL)
     3. 6-pattern waveform classification and 09:00-15:30 concrete price trajectory simulation
     """
     if settings is None:
@@ -764,6 +888,8 @@ def predict_daytrade_sniper(
         return None
 
     base_prob = float(base_pred.get("p_intraday_cs", 0.50))
+    clean_prob = float(base_pred.get("p_clean_win", base_prob))
+    ensemble_prob = float(base_pred.get("p_intraday_ensemble", base_prob))
     base_bps = float(base_pred.get("expected_return_bps", 0.0))
     q_band = str(base_pred.get("quantile", "Q3"))
 
@@ -808,10 +934,20 @@ def predict_daytrade_sniper(
             "source": "default_mock",
         }
 
-    cur_p = quote["last_price"]
-    open_p = quote["open"]
-    high_p = quote["high"]
-    low_p = quote["low"]
+    # Analyze 5-minute Microstructure (VWAP, 30m ORB, RVOL) if enabled
+    micro = analyze_intraday_5m_microstructure(ticker, now_dt=now_dt) if fetch_5m_micro else None
+    if micro is not None and phase == "intraday_live":
+        # Override with exact latest bar data from 5m stream
+        cur_p = micro["latest_price"]
+        open_p = micro["open_price"]
+        high_p = micro["day_high"]
+        low_p = micro["day_low"]
+    else:
+        cur_p = quote["last_price"]
+        open_p = quote["open"]
+        high_p = quote["high"]
+        low_p = quote["low"]
+
     prev_c = quote["previous_close"]
 
     day_ret_pct = ((cur_p - prev_c) / prev_c) * 100.0 if prev_c > 0 else 0.0
@@ -830,27 +966,45 @@ def predict_daytrade_sniper(
         risk_flags.append("⚠️ 直近決算リスク")
 
     if phase == "intraday_live":
-        if clv >= 0.70 and intra_ret_pct > 0:
-            mom_adj = +0.10
-        elif intra_ret_pct > 1.2 and pullback_pct >= 0.50:
-            mom_adj = -0.15
-            risk_flags.append("⚠️ 寄り天・上ヒゲ失速警戒")
-        elif intra_ret_pct < -0.8 and clv >= 0.60:
-            mom_adj = +0.07
-        elif intra_ret_pct < -0.8 and clv <= 0.30:
-            mom_adj = -0.12
-            risk_flags.append("⚠️ 安値引け警戒")
+        if micro is not None:
+            # 5-minute Microstructure Signals
+            if micro["is_above_vwap"] and micro["orb_code"] == "BREAK_HIGH":
+                mom_adj += 0.12
+                risk_flags.append(f"⚡ VWAP上＋朝イチ30分高値ブレイク（{format_price_yen(micro['orb_high'])}突破）")
+            elif not micro["is_above_vwap"] and micro["orb_code"] == "BREAK_LOW":
+                mom_adj -= 0.15
+                risk_flags.append(f"⚠️ VWAP割れ＋朝イチ30分安値割れ（{format_price_yen(micro['orb_low'])}割れ寄り天）")
+            elif micro["is_above_vwap"]:
+                mom_adj += 0.05
+                risk_flags.append(f"🛡️ VWAP買い支え圏（乖離 {micro['vwap_deviation_pct']:+.1f}%）")
+            else:
+                mom_adj -= 0.05
+                risk_flags.append(f"⚠️ VWAP下抜け警戒（乖離 {micro['vwap_deviation_pct']:+.1f}%）")
+
+            if micro["rvol_intraday"] >= 1.4:
+                mom_adj += 0.04
+                risk_flags.append(f"🔥 大口資金流入（出来高ペース {micro['rvol_intraday']:.1f}倍）")
         else:
-            mom_adj = 0.0
-        eff_prob = float(np.clip(base_prob + mom_adj, 0.05, 0.95))
+            if clv >= 0.70 and intra_ret_pct > 0:
+                mom_adj = +0.10
+            elif intra_ret_pct > 1.2 and pullback_pct >= 0.50:
+                mom_adj = -0.15
+                risk_flags.append("⚠️ 寄り天・上ヒゲ失速警戒")
+            elif intra_ret_pct < -0.8 and clv >= 0.60:
+                mom_adj = +0.07
+            elif intra_ret_pct < -0.8 and clv <= 0.30:
+                mom_adj = -0.12
+                risk_flags.append("⚠️ 安値引け警戒")
+
+        eff_prob = float(np.clip(ensemble_prob + mom_adj, 0.05, 0.95))
         eff_bps = base_bps + (mom_adj * 10000.0 * 0.4)
     elif phase == "premarket":
-        eff_prob = base_prob
+        eff_prob = ensemble_prob
         eff_bps = base_bps
         if q_band in ("Q1", "Q2") or base_bps <= -25.0:
             risk_flags.append("⚠️ 寄り天・陰線警戒")
     else:  # post_market
-        eff_prob = base_prob
+        eff_prob = ensemble_prob
         eff_bps = base_bps
 
     prob_up_pct = round(eff_prob * 100.0, 1)
@@ -891,6 +1045,7 @@ def predict_daytrade_sniper(
         pullback_pct=pullback_pct,
         risk_flags=risk_flags,
         now_dt=now_dt,
+        micro=micro,
     )
 
     return {
@@ -908,6 +1063,8 @@ def predict_daytrade_sniper(
         "clv": round(clv, 2),
         "pullback_pct": round(pullback_pct, 2),
         "probability_up": prob_up_pct,
+        "p_intraday_cs": round(base_prob * 100.0, 1),
+        "p_clean_win": round(clean_prob * 100.0, 1),
         "expected_return_bps": round(eff_bps, 1),
         "judgment": judgment,
         "judgment_code": judge_code,
@@ -915,6 +1072,15 @@ def predict_daytrade_sniper(
         "volatility_20": vol_20,
         "risk_flags": risk_flags,
         "quote_source": quote.get("source", "unknown"),
+        # Microstructure Analysis Data
+        "microstructure": micro,
+        "vwap": micro.get("vwap") if micro else None,
+        "vwap_deviation_pct": micro.get("vwap_deviation_pct") if micro else None,
+        "is_above_vwap": micro.get("is_above_vwap") if micro else None,
+        "orb_high": micro.get("orb_high") if micro else None,
+        "orb_low": micro.get("orb_low") if micro else None,
+        "orb_status": micro.get("orb_status") if micro else None,
+        "rvol_intraday": micro.get("rvol_intraday") if micro else None,
         # Waveform & Timeline Engine Data
         "waveform_key": waveform_data["waveform_key"],
         "waveform_title": waveform_data["waveform_title"],
@@ -942,22 +1108,45 @@ def get_daily_daytrade_rankings(
     top_n: int = 5,
     now_dt: datetime | None = None,
 ) -> dict[str, Any]:
-    """Scan all 50 universe tickers and generate Top 5 Up (buy candidates) and Top 5 Down (risk candidates)."""
+    """Scan all 50 universe tickers and generate Top 5 Up (buy candidates) and Top 5 Down (risk candidates).
+
+    Optimized: Performs fast scan first, then enriches top focus tickers with 5m microstructure.
+    """
     if universe is None:
         universe = load_universe()
     if settings is None:
         settings = load_settings()
 
+    # 1. Fast screening scan across all 50 tickers
     results: list[dict[str, Any]] = []
     for t in universe:
-        res = predict_daytrade_sniper(t.code, settings=settings, now_dt=now_dt, name=t.name)
+        res = predict_daytrade_sniper(t.code, settings=settings, now_dt=now_dt, name=t.name, fetch_5m_micro=False)
         if res:
             res["sector"] = getattr(t, "sector_ja", "") or getattr(t, "sector", "") or "-"
             results.append(res)
 
     results.sort(key=lambda x: (x["probability_up"], x["expected_return_bps"]), reverse=True)
-    top_up = results[:top_n]
-    top_down = sorted(results, key=lambda x: (x["probability_up"], x["expected_return_bps"]))[:top_n]
+    raw_top_up = results[:top_n]
+    raw_top_down = sorted(results, key=lambda x: (x["probability_up"], x["expected_return_bps"]))[:top_n]
+
+    # 2. Enrich selected Top Up & Top Down with real-time 5m microstructure
+    top_up: list[dict[str, Any]] = []
+    for r in raw_top_up:
+        enriched = predict_daytrade_sniper(r["ticker"], settings=settings, now_dt=now_dt, name=r["name"], fetch_5m_micro=True)
+        if enriched:
+            enriched["sector"] = r.get("sector", "-")
+            top_up.append(enriched)
+        else:
+            top_up.append(r)
+
+    top_down: list[dict[str, Any]] = []
+    for r in raw_top_down:
+        enriched = predict_daytrade_sniper(r["ticker"], settings=settings, now_dt=now_dt, name=r["name"], fetch_5m_micro=True)
+        if enriched:
+            enriched["sector"] = r.get("sector", "-")
+            top_down.append(enriched)
+        else:
+            top_down.append(r)
 
     phase, phase_title = determine_market_phase(now_dt)
     date_str = (now_dt or datetime.now()).strftime("%Y-%m-%d")

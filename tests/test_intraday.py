@@ -228,3 +228,82 @@ def test_simulate_intraday_waveform() -> None:
     assert wf_box["waveform_key"] == "box_range"
     assert "ボックス揉み合い" in wf_box["waveform_title"]
 
+
+def test_intraday_advanced_features() -> None:
+    """Test advanced pre-market features: Gap-to-ATR, shadows, and Clean Intraday Win target."""
+    dates = pd.date_range("2024-01-01", periods=25, freq="B")
+    df = pd.DataFrame(
+        {
+            "date": dates,
+            "open": [100.0 + i for i in range(25)],
+            "high": [103.0 + i for i in range(25)],
+            "low": [98.0 + i for i in range(25)],
+            "close": [101.0 + i for i in range(25)],
+            "return_1d": [0.01] * 25,
+            "volatility_20": [0.02] * 25,
+            "rsi_14": [50.0] * 25,
+        }
+    )
+
+    result = add_intraday_premarket_features(df)
+
+    assert "gap_to_atr_ratio" in result.columns
+    assert "rolling_intraday_win_rate_20d" in result.columns
+    assert "rolling_gap_fade_corr_20d" in result.columns
+    assert "prior_upper_shadow_ratio" in result.columns
+    assert "prior_lower_shadow_ratio" in result.columns
+    assert "rolling_buying_pressure_5d" in result.columns
+    assert "target_clean_intraday_win" in result.columns
+
+    # Verify shadow calculation range [0, 1]
+    assert (result["prior_upper_shadow_ratio"] >= 0.0).all()
+    assert (result["prior_upper_shadow_ratio"] <= 1.0).all()
+    assert (result["prior_lower_shadow_ratio"] >= 0.0).all()
+    assert (result["prior_lower_shadow_ratio"] <= 1.0).all()
+
+    # Clean Intraday Win target: binary 0 or 1
+    assert set(result["target_clean_intraday_win"].dropna().unique()).issubset({0, 1})
+
+
+def test_simulate_intraday_waveform_with_microstructure() -> None:
+    """Test simulate_intraday_waveform when real-time 5m microstructure is integrated."""
+    from stock_ai.models.intraday import simulate_intraday_waveform
+
+    micro_bull = {
+        "vwap": 2010.0,
+        "latest_price": 2025.0,
+        "open_price": 2000.0,
+        "day_high": 2030.0,
+        "day_low": 1995.0,
+        "vwap_deviation_pct": 0.75,
+        "is_above_vwap": True,
+        "orb_high": 2015.0,
+        "orb_low": 1995.0,
+        "orb_status": "朝イチ高値ブレイク（順張り加速）",
+        "orb_code": "BREAK_HIGH",
+        "rvol_intraday": 1.5,
+    }
+
+    wf = simulate_intraday_waveform(
+        cur_p=2025.0,
+        open_p=2000.0,
+        high_p=2030.0,
+        low_p=1995.0,
+        prev_c=2000.0,
+        prob_up=62.0,
+        expected_bps=40.0,
+        vol_20=0.02,
+        phase="intraday_live",
+        clv=0.85,
+        pullback_pct=0.15,
+        risk_flags=[],
+        micro=micro_bull,
+    )
+
+    # Should trigger trend breakout due to ORB break & VWAP support
+    assert wf["waveform_key"] == "trend_breakout"
+    assert "VWAP" in wf["best_entry_zone"]
+    assert "ORB" in wf["best_entry_zone"]
+    assert wf["stop_loss_price"] <= 2010.0 * 0.995  # VWAP support guard
+    assert any("VWAP" in item[1] for item in wf["timeline_items"] if "実績" in item[0])
+

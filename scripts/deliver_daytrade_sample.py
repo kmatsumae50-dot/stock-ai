@@ -6,6 +6,8 @@ import urllib.request
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
+from pathlib import Path
+sys.path.insert(0, str(Path("src").resolve()))
 
 from stock_ai.cloud.discord_bot import build_premarket_daytrade_forecast_payloads
 from stock_ai.cloud.notifications import get_configured_channel_webhooks, _post_single_webhook_payload
