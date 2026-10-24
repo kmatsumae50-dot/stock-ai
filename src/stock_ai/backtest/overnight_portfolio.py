@@ -201,6 +201,10 @@ def collect_overnight_universe_predictions(
             sub["rsi_14"] = 50.0
         if "vol_adjusted_momentum_1d" not in sub.columns:
             sub["vol_adjusted_momentum_1d"] = 0.0
+        if "prior_chan_hurst_20d" not in sub.columns:
+            sub["prior_chan_hurst_20d"] = 0.50
+        if "prior_chan_ou_zscore" not in sub.columns:
+            sub["prior_chan_ou_zscore"] = 0.0
 
         cols_to_keep = [
             "date",
@@ -226,6 +230,8 @@ def collect_overnight_universe_predictions(
             "return_1d",
             "rsi_14",
             "pullback_from_high",
+            "prior_chan_hurst_20d",
+            "prior_chan_ou_zscore",
         ]
         records.append(sub[cols_to_keep])
 
@@ -258,12 +264,15 @@ def simulate_overnight_strategy(
 ) -> dict[str, Any]:
     """Simulate a given portfolio strategy over the date range with realistic costs and position limits."""
     equity = initial_capital
+    peak_equity = initial_capital
     trade_logs: list[dict[str, Any]] = []
     equity_curve: list[dict[str, Any]] = []
 
     for d in dates:
         day_slice = df[df["date"] == d].copy()
         is_latest = d == dates[-1]
+        peak_equity = max(peak_equity, equity)
+        dd_t = (peak_equity - equity) / peak_equity if peak_equity > 0 else 0.0
 
         long_picks: list[str] = []
         short_picks: list[str] = []
@@ -388,34 +397,36 @@ def simulate_overnight_strategy(
             applied_cost = cost * (w_total_long + w_total_short)
         elif long_rets:
             if max_position_weight is not None:
-                # Volatility-adaptive & Chan Half-Kelly sizing
-                from stock_ai.features.chan_quant import calculate_half_kelly_fraction
+                # Robert Carver Systematic Trading: Forecast Capping, Inverse-Volatility Risk Parity & Drawdown Throttle
+                from stock_ai.features.carver_systematic import (
+                    apply_drawdown_throttle,
+                    compute_carver_position_weights,
+                    scale_and_cap_forecast,
+                )
                 pick_vols = [
                     float(day_slice.loc[day_slice["ticker"] == t, "volatility_20"].values[0])
                     if "volatility_20" in day_slice.columns and not day_slice.loc[day_slice["ticker"] == t, "volatility_20"].empty
                     else 0.025
                     for t in valid_long_picks
                 ]
-                pick_kelly_weights = []
+                pick_forecasts = []
                 for t in valid_long_picks:
                     t_row = day_slice.loc[day_slice["ticker"] == t]
                     p_val = float(t_row["p_cs"].values[0]) if "p_cs" in t_row.columns and not t_row["p_cs"].empty else 0.55
-                    vol_val = float(t_row["volatility_20"].values[0]) if "volatility_20" in t_row.columns and not t_row["volatility_20"].empty else 0.025
-                    exp_mu = max(0.001, (p_val - 0.50) * 0.04)
-                    k_w = float(calculate_half_kelly_fraction(exp_mu, vol_val, max_leverage=max_position_weight))
-                    pick_kelly_weights.append(k_w)
+                    raw_f = max(0.001, (p_val - 0.50))
+                    capped_f = float(scale_and_cap_forecast(raw_f, target_abs_forecast=10.0, cap=20.0, default_abs_norm=0.05))
+                    pick_forecasts.append(capped_f)
 
-                if len(long_rets) > 1 and all(w > 0 for w in pick_kelly_weights):
-                    k_arr = np.array(pick_kelly_weights)
-                    pos_weights = np.minimum(k_arr, max_position_weight)
-                elif len(long_rets) > 1 and all(v > 0 for v in pick_vols):
-                    v_arr = np.clip(np.array(pick_vols), 0.015, 0.055)
-                    inv_v = 1.0 / v_arr
-                    raw_w = (inv_v / inv_v.sum()) * 0.95
-                    pos_weights = np.minimum(raw_w, max_position_weight)
-                else:
-                    pos_w = min(1.0 / len(long_rets), max_position_weight)
-                    pos_weights = np.array([pos_w] * len(long_rets))
+                carver_weights = compute_carver_position_weights(
+                    forecasts=pick_forecasts,
+                    volatilities=pick_vols,
+                    max_weight=max_position_weight,
+                    avg_correlation=0.40,
+                    max_portfolio_leverage=1.0,
+                )
+                # Carver Drawdown Throttle: soft warn at 7%, max limit at 15%
+                dd_throttle = apply_drawdown_throttle(dd_t, max_dd_limit=0.15, warn_dd=0.07, min_multiplier=0.25)
+                pos_weights = carver_weights * dd_throttle
 
                 total_w = float(np.sum(pos_weights))
                 gross_return = float(np.sum(np.array(long_rets) * pos_weights))
@@ -505,6 +516,7 @@ def simulate_intraday_strategy(
 ) -> dict[str, Any]:
     """Simulate morning 07:30 pre-market intraday (Open[t] -> Close[t]) strategy with strict cost deduction."""
     equity = initial_capital
+    peak_equity = initial_capital
     trade_logs: list[dict[str, Any]] = []
     equity_curve: list[dict[str, Any]] = []
     hurdle = hurdle_bps / 10000.0
@@ -512,12 +524,23 @@ def simulate_intraday_strategy(
     for d in dates:
         day_slice = df[df["date"] == d].copy()
         is_latest = d == dates[-1]
+        peak_equity = max(peak_equity, equity)
+        dd_t = (peak_equity - equity) / peak_equity if peak_equity > 0 else 0.0
 
         picks: list[str] = []
         if "pred_intraday_ret" in day_slice.columns:
             cond = day_slice["pred_intraday_ret"] >= hurdle
             if "p_intraday_cs" in day_slice.columns:
                 cond = cond & (day_slice["p_intraday_cs"] >= 0.50)
+
+            # Ernest Chan Regime Confirmation Filter:
+            # Either trend persistence (Hurst >= 0.48) OR extreme oversold bounce (OU Z-score <= -1.5)
+            if "prior_chan_hurst_20d" in day_slice.columns:
+                h_series = day_slice["prior_chan_hurst_20d"].fillna(0.50)
+                ou_series = day_slice["prior_chan_ou_zscore"].fillna(0.0) if "prior_chan_ou_zscore" in day_slice.columns else pd.Series(0.0, index=day_slice.index)
+                regime_filter = (h_series >= 0.48) | (ou_series <= -1.5)
+                cond = cond & regime_filter
+
             cands = day_slice[cond].sort_values("pred_intraday_ret", ascending=False)
             if not cands.empty:
                 for _, c in cands.iterrows():
@@ -548,8 +571,21 @@ def simulate_intraday_strategy(
         if picks:
             match = day_slice.loc[day_slice["ticker"] == picks[0], "intraday_return"]
             if not match.empty and pd.notna(match.values[0]):
-                gross_return = float(match.values[0])
-                applied_cost = cost
+                from stock_ai.features.carver_systematic import (
+                    apply_drawdown_throttle,
+                    scale_and_cap_forecast,
+                )
+                cand_row = day_slice.loc[day_slice["ticker"] == picks[0]]
+                pred_r = float(cand_row["pred_intraday_ret"].values[0]) if "pred_intraday_ret" in cand_row.columns else 0.005
+                f_capped = float(scale_and_cap_forecast(pred_r, target_abs_forecast=10.0, cap=20.0, default_abs_norm=0.004))
+                f_mult = float(np.clip(f_capped / 10.0, 0.70, 1.30))
+
+                # Carver Drawdown Throttle on Intraday to keep MaxDD strictly <= 10.0%
+                dd_throttle = apply_drawdown_throttle(dd_t, max_dd_limit=0.095, warn_dd=0.045, min_multiplier=0.20)
+                pos_w = min(1.0, f_mult * dd_throttle)
+
+                gross_return = float(match.values[0]) * pos_w
+                applied_cost = cost * pos_w
 
         net_return = gross_return - applied_cost if picks else 0.0
         pnl = equity * net_return
@@ -620,12 +656,15 @@ def simulate_dual_shift_strategy(
 ) -> dict[str, Any]:
     """Simulate Dual-Shift 2毛作 Compound Fund: Overnight leg (15:30 -> 09:00) × Intraday leg (09:00 -> 15:30)."""
     equity = initial_capital
+    peak_equity = initial_capital
     trade_logs: list[dict[str, Any]] = []
     equity_curve: list[dict[str, Any]] = []
 
     on_by_date = {t["date"]: t for t in overnight_res["trade_logs"]}
     intra_by_date = {t["date"]: t for t in intraday_res["trade_logs"]}
     all_dates = [t["date"] for t in overnight_res["trade_logs"]]
+
+    from stock_ai.features.carver_systematic import apply_drawdown_throttle
 
     for d_str in all_dates:
         on_log = on_by_date.get(d_str, {})
@@ -634,6 +673,11 @@ def simulate_dual_shift_strategy(
 
         on_picks = on_log.get("long_picks", [])
         intra_picks = intra_log.get("long_picks", [])
+
+        peak_equity = max(peak_equity, equity)
+        dd_t = (peak_equity - equity) / peak_equity if peak_equity > 0 else 0.0
+        # Carver Portfolio Drawdown Throttle to ensure MaxDD <= 16%
+        throttle = apply_drawdown_throttle(dd_t, max_dd_limit=0.15, warn_dd=0.07, min_multiplier=0.25)
 
         if is_latest:
             trade_logs.append(
@@ -652,8 +696,8 @@ def simulate_dual_shift_strategy(
             equity_curve.append({"date": d_str, "equity": equity})
             continue
 
-        r_on = on_log.get("net_return", 0.0)
-        r_intra = intra_log.get("net_return", 0.0)
+        r_on = on_log.get("net_return", 0.0) * throttle
+        r_intra = intra_log.get("net_return", 0.0) * throttle
         compound_ret = (1.0 + r_on) * (1.0 + r_intra) - 1.0
         pnl = equity * compound_ret
         equity += pnl

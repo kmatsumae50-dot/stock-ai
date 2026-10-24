@@ -25,6 +25,7 @@ from stock_ai.features.intraday import (
     add_cross_sectional_intraday_features,
     add_intraday_premarket_features,
 )
+from stock_ai.features.carver_systematic import scale_and_cap_forecast
 from stock_ai.features.overnight import check_jumping_catch_risk
 from stock_ai.storage.parquet_store import read_parquet, write_parquet
 
@@ -1226,6 +1227,23 @@ def predict_daytrade_sniper(
         micro=micro,
     )
 
+    carver_forecast = float(scale_and_cap_forecast(eff_bps / 5.0, target_abs_forecast=10.0, cap=20.0, default_abs_norm=5.0))
+    chan_hurst = None
+    chan_ou_z = None
+    if features_df is not None and not features_df.empty:
+        for c in ["prior_chan_hurst_20d", "chan_hurst_20d"]:
+            if c in features_df.columns:
+                h_val = float(features_df[c].iloc[-1])
+                if not np.isnan(h_val):
+                    chan_hurst = round(h_val, 2)
+                    break
+        for c in ["prior_chan_ou_zscore", "chan_ou_zscore"]:
+            if c in features_df.columns:
+                z_val = float(features_df[c].iloc[-1])
+                if not np.isnan(z_val):
+                    chan_ou_z = round(z_val, 2)
+                    break
+
     return {
         "ticker": ticker,
         "name": name or ticker,
@@ -1246,6 +1264,9 @@ def predict_daytrade_sniper(
         "p_afml_meta": round(meta_prob * 100.0, 1),
         "bet_size": round(bet_size, 2),
         "lot_recommendation": lot_recommendation,
+        "carver_forecast": round(carver_forecast, 1),
+        "chan_hurst": chan_hurst,
+        "chan_ou_z": chan_ou_z,
         "expected_return_bps": round(eff_bps, 1),
         "judgment": judgment,
         "judgment_code": judge_code,

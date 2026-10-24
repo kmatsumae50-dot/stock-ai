@@ -76,7 +76,8 @@ INTRADAY_BASE_FEATURES = [
     "prior_chan_kalman_spread",
     "prior_chan_kalman_zscore",
     "prior_chan_kalman_slope",
-    "intraday_half_kelly_size",
+    # 13. Robert Carver Systematic Trading (Forecast Scaling & Capping [-20, +20])
+    "carver_forecast_capped",
 ]
 
 INTRADAY_CROSS_SECTIONAL_FEATURES = [
@@ -325,10 +326,11 @@ def add_intraday_premarket_features(df: pd.DataFrame) -> pd.DataFrame:
         result["prior_chan_kalman_zscore"] = c_kz
         result["prior_chan_kalman_slope"] = c_kslope
 
-        # Pre-market estimated return for Half-Kelly sizing
+        # 8. Robert Carver Systematic Trading: Forecast Scaling & Capping ([-20, +20])
+        from stock_ai.features.carver_systematic import scale_and_cap_forecast
         exp_ret = result["rebound_potential"] * 0.05 + result["prior_vol_adj_mom"] * 0.001
-        result["intraday_half_kelly_size"] = calculate_half_kelly_fraction(
-            exp_ret, result["prior_vol_20"], max_leverage=1.0
+        result["carver_forecast_capped"] = scale_and_cap_forecast(
+            exp_ret, target_abs_forecast=10.0, cap=20.0, default_abs_norm=0.004
         )
     else:
         for f in [
@@ -340,7 +342,7 @@ def add_intraday_premarket_features(df: pd.DataFrame) -> pd.DataFrame:
             "prior_chan_kalman_spread",
             "prior_chan_kalman_zscore",
             "prior_chan_kalman_slope",
-            "intraday_half_kelly_size",
+            "carver_forecast_capped",
         ]:
             result[f] = 0.0
 
