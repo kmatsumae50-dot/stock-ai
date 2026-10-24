@@ -312,7 +312,7 @@ def train_pooled_cross_sectional_overnight_model(
     from stock_ai.data.universe import load_universe
     from stock_ai.features.overnight import (
         add_cross_sectional_overnight_features,
-        select_overnight_curated_features,
+        select_pooled_overnight_curated_features,
     )
     from stock_ai.models.baseline import save_model
     from stock_ai.storage.parquet_store import read_parquet, write_parquet
@@ -357,7 +357,7 @@ def train_pooled_cross_sectional_overnight_model(
             t_sub = all_df[all_df["ticker"] == code].sort_values("date").reset_index(drop=True)
             write_parquet(t_sub, features_path / f"{code}.parquet")
 
-    feature_columns = select_overnight_curated_features(all_df)
+    feature_columns = select_pooled_overnight_curated_features(all_df)
 
     # Purged time split: Train < train_end_date
     split_dt = pd.to_datetime(train_end_date)

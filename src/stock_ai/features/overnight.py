@@ -101,10 +101,6 @@ OVERNIGHT_CURATED_FEATURES = [
     "ml4at_alpha_44",
     "ml4at_alpha_54",
     "ml4at_info_discreteness_10d",
-    "ml4at_alpha_101_cs_rank",
-    "ml4at_alpha_12_cs_rank",
-    "ml4at_alpha_54_cs_rank",
-    "ml4at_info_discreteness_10d_cs_rank",
     # 12. Ernest P. Chan Algorithmic Trading Core Alphas (Chapter 2, 3, 5, 8)
     "chan_hurst_20d",
     "chan_variance_ratio_10d",
@@ -347,13 +343,21 @@ def add_cross_sectional_overnight_features(pooled_df: pd.DataFrame) -> pd.DataFr
 
 
 def select_overnight_curated_features(data: pd.DataFrame) -> list[str]:
-    """Prune noise and return only the curated, high-importance overnight feature columns."""
-    all_curated = OVERNIGHT_CURATED_FEATURES + CROSS_SECTIONAL_FEATURES
-    available = [col for col in all_curated if col in data.columns]
+    """Prune noise and return only the curated, high-importance overnight feature columns for individual models."""
+    available = [col for col in OVERNIGHT_CURATED_FEATURES if col in data.columns]
     # Fallback to any numeric columns if curated list is not yet populated
     if len(available) < 5:
         from stock_ai.models.baseline import select_feature_columns
         return select_feature_columns(data, target_column="target_next_open_binary")
+    return available
+
+
+def select_pooled_overnight_curated_features(data: pd.DataFrame) -> list[str]:
+    """Return all curated features including cross-sectional ranks for universe pooled model."""
+    all_curated = OVERNIGHT_CURATED_FEATURES + CROSS_SECTIONAL_FEATURES
+    available = [col for col in all_curated if col in data.columns]
+    if len(available) < 5:
+        return select_overnight_curated_features(data)
     return available
 
 
