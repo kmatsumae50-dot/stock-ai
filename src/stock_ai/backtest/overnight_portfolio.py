@@ -286,12 +286,19 @@ def simulate_overnight_strategy(
     cost: float = 0.0020,
     initial_capital: float = 1_000_000.0,
     max_position_weight: float | None = None,
+    use_adaptive_learning: bool = True,
 ) -> dict[str, Any]:
     """Simulate a given portfolio strategy over the date range with realistic costs and position limits."""
     equity = initial_capital
     peak_equity = initial_capital
     trade_logs: list[dict[str, Any]] = []
     equity_curve: list[dict[str, Any]] = []
+
+    from stock_ai.features.adaptive_online_learning import (
+        RollingOnlineAdaptor,
+        compute_adaptive_credibility_multiplier,
+    )
+    adaptor = RollingOnlineAdaptor() if (use_adaptive_learning and strategy_name == "elite_top2_long") else None
 
     for d in dates:
         day_slice = df[df["date"] == d].copy()
@@ -482,11 +489,53 @@ def simulate_overnight_strategy(
                     sector_penalty_decay=1.0,
                     drawdown_throttle=dd_throttle,
                 )
-                pos_weights = np.array([weights_dict.get(t, 0.0) for t in valid_long_picks])
+                raw_weights = [weights_dict.get(t, 0.0) for t in valid_long_picks]
+
+                # Series #7 Online TD Credibility Weight Calibration
+                if adaptor is not None:
+                    cur_st = adaptor.get_current_state()
+                    adj_weights = []
+                    for t_code, w in zip(valid_long_picks, raw_weights):
+                        s_name = sec_map.get(t_code) if sec_map else None
+                        c_mult = compute_adaptive_credibility_multiplier(
+                            t_code, s_name, cur_st["ticker_td_state"], cur_st["sector_td_state"]
+                        )
+                        adj_weights.append(w * float(np.clip(c_mult, 0.70, 1.30)))
+                    pos_weights = np.array(adj_weights)
+                else:
+                    pos_weights = np.array(raw_weights)
 
                 total_w = float(np.sum(pos_weights))
                 gross_return = float(np.sum(np.array(long_rets) * pos_weights))
                 applied_cost = cost * total_w
+
+                # Update online adaptor strictly post-market for NEXT day's use (Zero Leakage)
+                if adaptor is not None and valid_long_picks:
+                    settled_recs = []
+                    for t_code, r_val, w_val in zip(valid_long_picks, long_rets, pos_weights):
+                        if w_val > 0:
+                            s_name = sec_map.get(t_code) if sec_map else None
+                            net_r = r_val - cost
+                            settled_recs.append({
+                                "ticker": t_code,
+                                "sector": s_name,
+                                "probability_up": 55.0,
+                                "expected_return_bps": 20.0,
+                                "net_return_pct": net_r * 100.0,
+                                "result_status": "WIN" if net_r > 0 else "LOSS",
+                                "result_code": "TARGET_HIT" if r_val >= 0.015 else ("STOPPED_OUT" if r_val <= -0.015 else "CLOSE_POSITIVE" if r_val > 0 else "CLOSE_NEGATIVE"),
+                                "actual_open": 1000.0,
+                                "actual_high": 1000.0 * (1.0 + max(0.0, r_val)),
+                                "actual_low": 1000.0 * (1.0 + min(0.0, r_val)),
+                                "actual_close": 1000.0 * (1.0 + r_val),
+                                "predicted_waveform": "🚀【GU朝押し ➔ 後場高値引け型】",
+                                "gap_to_atr": 0.50,
+                                "chan_hurst": 0.50,
+                                "micro_upward_elasticity": 1.00,
+                                "prior_clv": 0.50,
+                            })
+                    if settled_recs:
+                        adaptor.update_from_settled_trades(d.strftime("%Y-%m-%d"), settled_recs)
             else:
                 gross_return = float(np.mean(long_rets))
                 applied_cost = cost
@@ -569,6 +618,7 @@ def simulate_intraday_strategy(
     cost: float = 0.0020,
     initial_capital: float = 1_000_000.0,
     hurdle_bps: float = 45.0,
+    use_adaptive_learning: bool = True,
 ) -> dict[str, Any]:
     """Simulate morning 07:30 pre-market intraday (Open[t] -> Close[t]) strategy with strict cost deduction."""
     equity = initial_capital
@@ -576,6 +626,13 @@ def simulate_intraday_strategy(
     trade_logs: list[dict[str, Any]] = []
     equity_curve: list[dict[str, Any]] = []
     hurdle = hurdle_bps / 10000.0
+
+    from stock_ai.features.adaptive_online_learning import (
+        RollingOnlineAdaptor,
+        compute_adaptive_credibility_multiplier,
+        compute_failure_similarity_penalty,
+    )
+    adaptor = RollingOnlineAdaptor() if use_adaptive_learning else None
 
     for d in dates:
         day_slice = df[df["date"] == d].copy()
@@ -610,6 +667,29 @@ def simulate_intraday_strategy(
                 day_slice["intraday_sniper_score"] = day_slice["pred_intraday_ret"] * elast_mult * idio_mult
             else:
                 day_slice["intraday_sniper_score"] = day_slice["pred_intraday_ret"]
+
+            # Series #7 Closed-Loop Online Adaptation (Hedge & TD Credibility & Failure Archetype Brake)
+            if adaptor is not None:
+                cur_adapt_state = adaptor.get_current_state()
+                cred_mults = []
+                for _, r_cand in day_slice.iterrows():
+                    c_tick = r_cand["ticker"]
+                    c_sec = r_cand.get("sector")
+                    c_mult = compute_adaptive_credibility_multiplier(
+                        c_tick, c_sec, cur_adapt_state["ticker_td_state"], cur_adapt_state["sector_td_state"]
+                    )
+                    vol_val = float(r_cand.get("volatility_20", 0.02)) if "volatility_20" in r_cand and pd.notna(r_cand["volatility_20"]) else 0.02
+                    h_val = float(r_cand.get("prior_chan_hurst_20d", 0.50)) if "prior_chan_hurst_20d" in r_cand and pd.notna(r_cand["prior_chan_hurst_20d"]) else 0.50
+                    u_val = float(r_cand.get("prior_micro_upward_elasticity_10d", 1.00)) if "prior_micro_upward_elasticity_10d" in r_cand and pd.notna(r_cand["prior_micro_upward_elasticity_10d"]) else 1.00
+                    cand_prof = {
+                        "gap_to_atr": 0.50,
+                        "chan_hurst_20d": h_val,
+                        "micro_upward_elasticity_10d": u_val,
+                        "prior_clv": 0.50,
+                    }
+                    _, carver_pen, _ = compute_failure_similarity_penalty(cand_prof, cur_adapt_state.get("failure_archetypes", []))
+                    cred_mults.append(c_mult * carver_pen)
+                day_slice["intraday_sniper_score"] = day_slice["intraday_sniper_score"] * np.array(cred_mults)
 
             cands = day_slice[cond].sort_values("intraday_sniper_score", ascending=False)
             if not cands.empty:
@@ -650,12 +730,44 @@ def simulate_intraday_strategy(
                 f_capped = float(scale_and_cap_forecast(pred_r, target_abs_forecast=10.0, cap=20.0, default_abs_norm=0.004))
                 f_mult = float(np.clip(f_capped / 10.0, 0.70, 1.30))
 
+                # Online adaptive multiplier on position size
+                if adaptor is not None:
+                    cur_adapt_state = adaptor.get_current_state()
+                    c_mult = compute_adaptive_credibility_multiplier(
+                        picks[0], cand_row.get("sector", [None]).values[0] if "sector" in cand_row.columns else None,
+                        cur_adapt_state["ticker_td_state"], cur_adapt_state["sector_td_state"]
+                    )
+                    f_mult = float(np.clip(f_mult * c_mult, 0.60, 1.40))
+
                 # Carver Drawdown Throttle on Intraday to keep MaxDD strictly <= 10.0%
                 dd_throttle = apply_drawdown_throttle(dd_t, max_dd_limit=0.095, warn_dd=0.045, min_multiplier=0.20)
                 pos_w = min(1.0, f_mult * dd_throttle)
 
                 gross_return = float(match.values[0]) * pos_w
                 applied_cost = cost * pos_w
+
+                # Update online adaptor strictly post-market for NEXT day's use (Zero Leakage)
+                if adaptor is not None:
+                    raw_ret = float(match.values[0])
+                    trade_record = {
+                        "ticker": picks[0],
+                        "sector": cand_row.get("sector", [None]).values[0] if "sector" in cand_row.columns else None,
+                        "probability_up": 55.0,
+                        "expected_return_bps": pred_r * 10000.0,
+                        "net_return_pct": (gross_return - applied_cost) * 100.0,
+                        "result_status": "WIN" if (gross_return - applied_cost) > 0 else "LOSS",
+                        "result_code": "TARGET_HIT" if raw_ret >= 0.015 else ("STOPPED_OUT" if raw_ret <= -0.012 else "CLOSE_POSITIVE" if raw_ret > 0 else "CLOSE_NEGATIVE"),
+                        "actual_open": 1000.0,
+                        "actual_high": 1000.0 * (1.0 + max(0.0, raw_ret)),
+                        "actual_low": 1000.0 * (1.0 + min(0.0, raw_ret)),
+                        "actual_close": 1000.0 * (1.0 + raw_ret),
+                        "predicted_waveform": "🔥【寄り付き突破 ➔ 終日トレンド独歩高型】" if pred_r >= 0.005 else "🚀【GU朝押し ➔ 後場高値引け型】",
+                        "gap_to_atr": 0.50,
+                        "chan_hurst": float(cand_row["prior_chan_hurst_20d"].values[0]) if "prior_chan_hurst_20d" in cand_row.columns else 0.50,
+                        "micro_upward_elasticity": float(cand_row["prior_micro_upward_elasticity_10d"].values[0]) if "prior_micro_upward_elasticity_10d" in cand_row.columns else 1.00,
+                        "prior_clv": 0.50,
+                    }
+                    adaptor.update_from_settled_trades(d.strftime("%Y-%m-%d"), [trade_record])
 
         net_return = gross_return - applied_cost if picks else 0.0
         pnl = equity * net_return

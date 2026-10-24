@@ -1827,6 +1827,7 @@ def build_daytrade_sniper_payloads(
                     f"**{wf_title}**\n"
                     f"> 💡 {wf_desc}\n"
                     f"> 🎯 総合上昇確率: **`{p_up:.1f}%`** (CS Outperform: `{res.get('p_intraday_cs', p_up):.1f}%` / Clean Win: `{res.get('p_clean_win', p_up):.1f}%`)\n"
+                    f"> 🧠 適応学習 (Series #7): **{res.get('adaptive_credibility_badge', '🧠 適応信頼度: 中立 (±0%)')}** ｜ Hedge波形重み: **`{res.get('adaptive_hedge_weight', 1.0):.2f}x`**\n"
                     f"> 🧬 AFML メタ勝率: **`{res.get('p_afml_meta', p_up):.1f}%`** ｜ **{res.get('lot_recommendation', '🔥 推奨ロット: 100%')}**\n"
                     f"> 📐 Carver 予測スケール: **`{res.get('carver_forecast', 10.0):+.1f}`** [-20, +20] (Chan レジーム H: `{res.get('chan_hurst', 0.50)}`)\n"
                     f"> 🕳️ 上値真空度: **`{res.get('micro_upward_elasticity', 1.0) or 1.0:.2f}x`** (真空地帯) ｜ 固有IR: **`{res.get('paleo_idio_sharpe', 0.0) or 0.0:+.2f}`**\n"
@@ -1855,7 +1856,7 @@ def build_daytrade_sniper_payloads(
                 "inline": False,
             },
         ],
-        "footer": {"text": "Stock AI 1-Day Intraday Waveform Simulator | 5大名著 (AFML × ML4AT × Chan × Carver × Paleologo/Microstructure) Powered"},
+        "footer": {"text": "Stock AI 1-Day Intraday Waveform Simulator | 7大名著 (Sutton RL/TD × Cesa-Bianchi Hedge × AFML × ML4AT × Chan × Carver × Paleologo/HRP) Powered"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -1882,8 +1883,10 @@ def build_daytrade_ranking_payloads() -> list[dict[str, Any]]:
         wf = r.get("waveform_title", "上昇波形")
         lot_rec = r.get("lot_recommendation", "")
         lot_suffix = f" ｜ {lot_rec}" if lot_rec else ""
+        badge = r.get("adaptive_credibility_badge", "")
+        badge_str = f" ｜ {badge}" if badge else ""
         top_up_list.append(
-            f"{emoji} **`{r['ticker']}` {r['name']}** 【確率 **`{r['probability_up']:.1f}%`** / `{r['expected_return_bps']:+.0f}bps`】\n"
+            f"{emoji} **`{r['ticker']}` {r['name']}** 【確率 **`{r['probability_up']:.1f}%`** / `{r['expected_return_bps']:+.0f}bps`{badge_str}】\n"
             f"> 📊 波形: **{wf}**{lot_suffix}\n"
             f"> 🛒 仕込み: **`{r['best_entry_zone']}`** ➔ 🎯 目標 **`{r['target_final_price']:,.1f}円`** (`{r['target_final_pct']:+.1f}%`)"
         )
@@ -1909,7 +1912,7 @@ def build_daytrade_ranking_payloads() -> list[dict[str, Any]]:
 
     embed = {
         "title": f"⚡ 【本日デイトレ特化予想ランキング】({date_str})",
-        "description": f"**東証プライム主力50銘柄 全頭スキャン** ({phase_title})",
+        "description": f"**東証プライム主力50銘柄 全頭スキャン** ({phase_title}) ｜ 7大名著統合クオンツエンジン",
         "color": 15844367,  # Gold
         "fields": [
             {
@@ -1928,7 +1931,7 @@ def build_daytrade_ranking_payloads() -> list[dict[str, Any]]:
                 "inline": False,
             },
         ],
-        "footer": {"text": "Stock AI 1-Day Intraday Sniper | モバイル最適化"},
+        "footer": {"text": "Stock AI 1-Day Intraday Sniper | 7大名著統合・モバイル最適化"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -2052,6 +2055,16 @@ def build_daytrade_scorecard_payloads(scorecard_data: dict[str, Any] | None = No
             "inline": False,
         })
 
+    # Series #7 Closed-Loop Online Self-Evolution Reflection Section
+    reflection_summary = scorecard_data.get("reflection_summary", [])
+    if reflection_summary:
+        ref_text = "\n".join(f"> {line}" for line in reflection_summary)
+        trade_fields.append({
+            "name": "🧠 【AI自己反省 ＆ 明日の重み自動補正（閉ループ学習）】",
+            "value": ref_text,
+            "inline": False,
+        })
+
     trade_fields.append({
         "name": "🛡️ 答え合わせ採点ルール（往復20bps控除後）",
         "value": (
@@ -2064,10 +2077,10 @@ def build_daytrade_scorecard_payloads(scorecard_data: dict[str, Any] | None = No
 
     embed = {
         "title": f"🎯 【本日のAIデイトレ答え合わせ通信簿】({date_str})",
-        "description": f"**大引け後（15:35）自動採点システム** ｜ 6大名著統合クオンツエンジン",
+        "description": f"**大引け後（15:35）自動採点システム** ｜ 7大名著統合（強化学習TD誤差＆Hedgeオンライン適応閉ループ）",
         "color": pnl_color,
         "fields": trade_fields,
-        "footer": {"text": "Stock AI Post-Market Scorecard | 毎日15:35自動採点 / いつでも「答え合わせ」で確認可能"},
+        "footer": {"text": "Stock AI Closed-Loop Self-Evolution | 毎日15:35自動学習更新 / いつでも「通信簿」で確認可能"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
