@@ -838,6 +838,7 @@ def send_daily_summary_webhook(
         try:
             from stock_ai.cloud.discord_bot import (
                 build_daytrade_ranking_payloads,
+                build_daytrade_scorecard_payloads,
                 build_premarket_daytrade_forecast_payloads,
             )
             dt_payloads = build_premarket_daytrade_forecast_payloads(summary_data)
@@ -848,9 +849,20 @@ def send_daily_summary_webhook(
                 if code is not None:
                     last_code = code
                     total_sent += 1
+
+            # Deliver post-market AI daytrade scorecard
+            sc_payloads = build_daytrade_scorecard_payloads()
+            for p_sc in sc_payloads:
+                if sleep_interval > 0:
+                    time.sleep(sleep_interval)
+                c_sc = _post_single_webhook_payload(daytrade_url, p_sc)
+                if c_sc is not None:
+                    last_code = c_sc
+                    total_sent += 1
+
             channels_delivered.append("daytrade")
         except Exception as dt_exc:
-            logger.warning(f"Failed delivering daytrade pre-market forecast: {dt_exc}")
+            logger.warning(f"Failed delivering daytrade forecast & scorecard: {dt_exc}")
 
     # 6. Dedicated Room: Portfolio Ledger & Risk Guardian (📊｜マイ取引ノート＆資産管理)
     portfolio_url = configured.get("portfolio")

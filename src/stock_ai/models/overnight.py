@@ -247,7 +247,10 @@ def predict_latest_overnight_rows(
     metrics_dir: str | Path | None = None,
 ) -> pd.DataFrame:
     """Generate latest overnight prediction row with quantile metadata."""
-    latest_rows = data.sort_values(["ticker", "date"]).groupby("ticker", as_index=False).tail(1)
+    latest_rows = data.sort_values(["ticker", "date"]).groupby("ticker", as_index=False).tail(1).copy()
+    for col in feature_columns:
+        if col not in latest_rows.columns:
+            latest_rows[col] = 0.5 if "rank" in col else 0.0
     latest_rows = latest_rows.dropna(subset=feature_columns)
 
     if latest_rows.empty:

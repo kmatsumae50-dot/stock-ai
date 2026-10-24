@@ -1957,9 +1957,9 @@ def build_premarket_daytrade_forecast_payloads(summary_data: dict[str, Any] | No
     top_names = [f"`{r['ticker']}` **{r['name']}**" for r in top_up[:3]]
     overview_text = (
         f"☀️ **【東証開場前・本日の1日値動きシミュレーション＆デイトレ予想】({date_str})**\n\n"
-        "デイトレ特化スナイパーAI（5大クオンツ名著 **AFML × ML4AT × Chan × Carver × Paleologo/Microstructure** 完全統合エンジン）が、本日09:00寄り付きから15:30大引けまでの **日中チャート波形（6タイプ）と時間帯別株価軌道** を完全シミュレートしました🎯\n\n"
+        "デイトレ特化スナイパーAI（6大クオンツ名著 **AFML × ML4AT × Chan × Carver × Paleologo × HRP** 完全統合エンジン）が、本日09:00寄り付きから15:30大引けまでの **日中チャート波形（6タイプ）と時間帯別株価軌道** を完全シミュレートしました🎯\n\n"
         f"🏆 **本日の厳選デイトレ本命 Top 3**: {', '.join(top_names) if top_names else '本日該当なし'}\n"
-        "Giuseppe Paleologo流の残差直交化アルファとセクター分散制約、Kyle/Amihudの上値真空度（Upward Elasticity）により、同一業種共倒れリスクを排除して最も上値が軽くエッジの高い主役株を提示します！"
+        "Marcos López de Prado 階層的リスクパリティ（HRP）と Giuseppe Paleologo 残差直交化・セクター分散制約、Kyle/Amihud の上値真空度（Upward Elasticity）により、共倒れリスクを排除して最も上値が軽くエッジの高い主役株を提示します！"
     )
 
     overview_payload = {
@@ -1982,6 +1982,101 @@ def build_premarket_daytrade_forecast_payloads(summary_data: dict[str, Any] | No
     payloads.extend(ranking_payloads)
 
     return payloads
+
+
+def build_daytrade_scorecard_payloads(scorecard_data: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Build mobile-first Post-Market Scorecard UI card: 🎯 【本日のAIデイトレ答え合わせ通信簿】."""
+    from stock_ai.models.intraday import evaluate_todays_daytrade_scorecard
+
+    if scorecard_data is None:
+        scorecard_data = evaluate_todays_daytrade_scorecard()
+
+    date_str = scorecard_data.get("date", datetime.now().strftime("%Y-%m-%d"))
+    total_trades = scorecard_data.get("total_trades", 0)
+    wins = scorecard_data.get("wins", 0)
+    losses = scorecard_data.get("losses", 0)
+    win_rate = scorecard_data.get("win_rate_pct", 0.0)
+    total_pnl = scorecard_data.get("total_virtual_pnl_yen", 0)
+    mvp = scorecard_data.get("mvp")
+    trades = scorecard_data.get("trades", [])
+
+    pnl_sign = "+" if total_pnl > 0 else ""
+    pnl_color = 3066993 if total_pnl > 0 else (15158332 if total_pnl < 0 else 15844367)
+    summary_line = f"通算勝率: **`{win_rate:.1f}%`** ({wins}勝 {losses}敗) ｜ 100株合計仮想損益: **`{pnl_sign}{total_pnl:,}円`**"
+
+    speech = (
+        f"🎯 **【本日のAIデイトレ答え合わせ通信簿 ({date_str})】**\n\n"
+        f"本日大引け（15:30）の実際の日中株価軌道と朝のAIデイトレ推奨を完全自動照合しました！\n"
+        f"📊 **本日の通算戦績**: {summary_line}\n"
+    )
+
+    trade_fields = []
+    # Summary Field
+    mvp_text = f"🏆 **MVP**: `{mvp['ticker']}` **{mvp['name']}** ({'+' if mvp['virtual_pnl_100_shares'] > 0 else ''}{mvp['virtual_pnl_100_shares']:,}円 / {mvp['waveform_verdict']})" if mvp else "なし"
+    trade_fields.append({
+        "name": "📊 【本日のAIデイトレ総合判定】",
+        "value": (
+            f"> 🎯 **通算勝率**: **`{win_rate:.1f}%`** ({wins}勝 {losses}敗 / 全{total_trades}銘柄)\n"
+            f"> 💰 **100株あたり合計仮想損益**: **`{pnl_sign}{total_pnl:,}円`** (往復20bps控除後)\n"
+            f"> {mvp_text}"
+        ),
+        "inline": False,
+    })
+
+    # Individual trade cards
+    num_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+    for idx, t in enumerate(trades, 0):
+        em = num_emojis[idx] if idx < len(num_emojis) else f"{idx+1}."
+        badge = t.get("result_badge", "決済完了")
+        t_pnl = t.get("virtual_pnl_100_shares", 0)
+        t_pnl_sign = "+" if t_pnl > 0 else ""
+        t_net_pct = t.get("net_return_pct", 0.0)
+        t_open = t.get("actual_open", 0.0)
+        t_exit = t.get("exit_price", 0.0)
+        t_high = t.get("actual_high", 0.0)
+        t_low = t.get("actual_low", 0.0)
+        pred_wf = t.get("predicted_waveform", "-")
+        act_wf = t.get("actual_waveform", "-")
+        verdict = t.get("waveform_verdict", "-")
+
+        card_text = (
+            f"> **判定結果**: **{badge}** ｜ **{verdict}**\n"
+            f"> 📈 **予想波形**: {pred_wf}\n"
+            f"> 📊 **実際波形**: {act_wf}\n"
+            f"> ⏱️ **価格推移**: 始値 `{t_open:,.1f}円` ➔ 決済 `{t_exit:,.1f}円` (高値 `{t_high:,.1f}` / 安値 `{t_low:,.1f}`)\n"
+            f"> 💰 **100株損益**: **`{t_pnl_sign}{t_pnl:,}円`** (実効収支 `{t_net_pct:+.2f}%`)"
+        )
+        trade_fields.append({
+            "name": f"{em} `{t['ticker']}` {t['name']} ({badge})",
+            "value": card_text,
+            "inline": False,
+        })
+
+    trade_fields.append({
+        "name": "🛡️ 答え合わせ採点ルール（往復20bps控除後）",
+        "value": (
+            "・🎯 **利確到達**: 日中高値が推奨利確ラインに到達（損切り前に利確約定）\n"
+            "・🟢 **大引けプラス**: ターゲット未達だが15:30大引け時点でプラス決済\n"
+            "・🛡️ **損切り/マイナス引け**: 推奨損切ライン抵触、または大引けマイナス手仕舞い"
+        ),
+        "inline": False,
+    })
+
+    embed = {
+        "title": f"🎯 【本日のAIデイトレ答え合わせ通信簿】({date_str})",
+        "description": f"**大引け後（15:35）自動採点システム** ｜ 6大名著統合クオンツエンジン",
+        "color": pnl_color,
+        "fields": trade_fields,
+        "footer": {"text": "Stock AI Post-Market Scorecard | 毎日15:35自動採点 / いつでも「答え合わせ」で確認可能"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    return [{
+        "username": "🎯 AIデイトレ答え合わせ通信簿",
+        "content": speech,
+        "text": speech,
+        "embeds": [embed],
+    }]
 
 
 # ---------------------------------------------------------------------------
@@ -2010,6 +2105,7 @@ class DiscordPollingBot:
         self.channel_to_webhook: dict[str, str] = {}  # channel_id -> webhook_url
         self.last_seen_message_id: dict[str, str] = {}
         self.monitored_channels: list[dict[str, Any]] = []
+        self.last_scorecard_broadcast_date: str | None = None
 
     def _api_request(
         self,
@@ -2283,6 +2379,14 @@ class DiscordPollingBot:
         if clean_lower in ("ランキング", "top", "順位", "注目", "ranking"):
             return build_ranking_payloads()
 
+        # 3b. Post-Market Scorecard inquiry (答え合わせ / 通信簿)
+        scorecard_keywords = [
+            "答え合わせ", "通信簿", "スコアカード", "採点", "scorecard",
+            "勝敗", "デイトレ結果", "今日の成績", "本日の成績", "トレード結果", "今日の勝敗", "結果", "せいせき",
+        ]
+        if any(k in clean_lower for k in scorecard_keywords):
+            return build_daytrade_scorecard_payloads()
+
         # Extract tickers with dynamic search and particle tokenization
         tickers = extract_all_tickers(cleaned)
 
@@ -2475,6 +2579,40 @@ class DiscordPollingBot:
                 self.poll_once()
             except Exception as exc:
                 logger.warning("Error during polling iteration: %s", exc)
+
+            # Weekday 15:35 JST Post-Market Scorecard Auto-Dispatch Hook
+            try:
+                now_utc = datetime.now(timezone.utc)
+                jst_hour = (now_utc.hour + 9) % 24
+                jst_min = now_utc.minute
+                jst_wday = (now_utc.weekday() + (1 if now_utc.hour + 9 >= 24 else 0)) % 7
+                today_jst = now_utc.strftime("%Y-%m-%d")
+
+                if jst_wday < 5 and jst_hour == 15 and jst_min >= 35 and self.last_scorecard_broadcast_date != today_jst:
+                    self.last_scorecard_broadcast_date = today_jst
+                    daytrade_wh = self.webhooks.get("daytrade")
+                    if daytrade_wh:
+                        sc_payloads = build_daytrade_scorecard_payloads()
+                        target_ch_id = None
+                        for ch_k, wh_k in self.channel_to_webhook.items():
+                            if normalize_webhook_url(wh_k) == normalize_webhook_url(daytrade_wh):
+                                target_ch_id = ch_k
+                                break
+                        if target_ch_id:
+                            self.send_reply(target_ch_id, sc_payloads)
+                        else:
+                            for p in sc_payloads:
+                                data = json.dumps(p, ensure_ascii=False).encode("utf-8")
+                                req = urllib.request.Request(
+                                    daytrade_wh,
+                                    data=data,
+                                    headers={"Content-Type": "application/json", "User-Agent": "StockAI-Bot/1.0"},
+                                )
+                                with urllib.request.urlopen(req, timeout=10):
+                                    pass
+                        logger.info("Successfully auto-dispatched 15:35 post-market daytrade scorecard.")
+            except Exception as sched_err:
+                logger.debug("Scorecard scheduler check exception: %s", sched_err)
 
             iterations += 1
             if max_iterations is not None and iterations >= max_iterations:

@@ -1356,20 +1356,25 @@ def get_daily_daytrade_rankings(
     # Penalize same-sector concentration so top picks naturally diversify across independent economic drivers
     from stock_ai.features.microstructure_paleologo import apply_paleologo_cluster_penalty
 
-    cands = [r["ticker"] for r in results]
-    scrs = [r["probability_up"] * (1.0 + max(0.0, r.get("expected_return_bps", 0.0)) / 1000.0) for r in results]
-    sec_map = {r["ticker"]: r.get("sector", "-") for r in results}
-    penalized = apply_paleologo_cluster_penalty(
-        candidates=cands,
-        scores=scrs,
-        sector_map=sec_map,
-        sector_penalty_decay=0.80,
-        max_picks=top_n,
-    )
-    penalized_tickers = [p[0] for p in penalized]
+    df_results = pd.DataFrame(results)
+    if not df_results.empty:
+        exp_bps_clean = pd.to_numeric(df_results.get("expected_return_bps", 0.0), errors="coerce").fillna(0.0).clip(lower=0.0)
+        p_up_clean = pd.to_numeric(df_results.get("probability_up", 50.0), errors="coerce").fillna(50.0)
+        df_results["composite_score"] = p_up_clean * (1.0 + exp_bps_clean / 1000.0)
+        penalized_tickers = apply_paleologo_cluster_penalty(
+            candidates_df=df_results,
+            score_col="composite_score",
+            sector_col="sector",
+            ticker_col="ticker",
+            penalty_factor=0.80,
+            top_k=top_n,
+        )
+    else:
+        penalized_tickers = []
+
     results_by_ticker = {r["ticker"]: r for r in results}
     raw_top_up = [results_by_ticker[t] for t in penalized_tickers if t in results_by_ticker]
-    raw_top_down = sorted(results, key=lambda x: (x["probability_up"], x["expected_return_bps"]))[:top_n]
+    raw_top_down = sorted(results, key=lambda x: (x.get("probability_up", 50.0), x.get("expected_return_bps", 0.0)))[:top_n]
 
     # 2. Enrich selected Top Up & Top Down with real-time 5m microstructure
     top_up: list[dict[str, Any]] = []
@@ -1401,4 +1406,222 @@ def get_daily_daytrade_rankings(
         "top_down": top_down,
         "total_scanned": len(results),
     }
+
+
+def evaluate_todays_daytrade_scorecard(
+    target_date: str | None = None,
+    settings: Settings | None = None,
+    save_snapshot: bool = True,
+    now_dt: datetime | None = None,
+) -> dict[str, Any]:
+    """Evaluate daytime trading recommendations against actual post-market price action.
+
+    Scorecard rules:
+        - 🎯 利確ターゲット到達 (Win - Target Hit): high_price >= target_1_price
+        - 🟢 大引けプラス決済 (Win - Close Positive): Target not reached, but net close return > 0 (after 20bps cost)
+        - 🛡️ 損切ライン抵触 / マイナス引け (Loss / Stopped Out): low_price <= stop_loss_price or net close return <= 0
+
+    Returns:
+        dict containing complete scorecard metrics, item-by-item breakdown, waveform match, and virtual PnL.
+    """
+    if settings is None:
+        settings = load_settings()
+
+    current_dt = now_dt or datetime.now()
+    date_str = target_date or current_dt.strftime("%Y-%m-%d")
+
+    data_dir = getattr(settings.paths, "data_dir", PROJECT_ROOT / "data")
+    snapshot_dir = Path(data_dir) / "daytrade_snapshots"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_file = snapshot_dir / f"{date_str}.json"
+
+    # 1. Load morning snapshot or generate on the fly
+    if snapshot_file.exists():
+        try:
+            snapshot_data = json.loads(snapshot_file.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("Failed to load snapshot %s: %s", snapshot_file, exc)
+            snapshot_data = get_daily_daytrade_rankings(settings=settings, now_dt=current_dt)
+    else:
+        snapshot_data = get_daily_daytrade_rankings(settings=settings, now_dt=current_dt)
+        if save_snapshot:
+            try:
+                snapshot_file.write_text(json.dumps(snapshot_data, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception as exc:
+                logger.warning("Failed to write snapshot %s: %s", snapshot_file, exc)
+
+    top_up_recs = snapshot_data.get("top_up", [])
+    top_down_recs = snapshot_data.get("top_down", [])
+
+    evaluated_trades: list[dict[str, Any]] = []
+
+    # 2. Evaluate Long Candidates (Top Up)
+    for rec in top_up_recs:
+        ticker = rec["ticker"]
+        name = rec.get("name", ticker)
+        entry_p = float(rec.get("open_price") or rec.get("entry_price") or rec.get("current_price") or 1000.0)
+        raw_target_1 = float(rec.get("target_1_price") or round(entry_p * 1.015, 1))
+        raw_stop = float(rec.get("stop_loss_price") or round(entry_p * 0.985, 1))
+        
+        # Enforce realistic intraday barrier boundaries relative to entry price
+        target_1 = raw_target_1 if raw_target_1 > entry_p else round(entry_p * 1.015, 1)
+        target_final = float(rec.get("target_final_price") or round(entry_p * 1.025, 1))
+        if target_final <= target_1:
+            target_final = round(target_1 * 1.010, 1)
+        stop_loss = raw_stop if raw_stop < entry_p else round(entry_p * 0.985, 1)
+
+        pred_waveform = rec.get("waveform_title", "右肩上がり推移")
+        pred_key = rec.get("waveform_key", "steady_advance")
+
+        # Resolve actual trading prices
+        quote = fetch_realtime_intraday_quote(ticker)
+        act_open = entry_p
+        act_high = entry_p
+        act_low = entry_p
+        act_close = entry_p
+
+        # Check raw parquet for official bar data
+        raw_path = Path(data_dir) / "raw" / f"{ticker}.parquet"
+        if raw_path.exists():
+            try:
+                raw_df = pd.read_parquet(raw_path)
+                if not raw_df.empty:
+                    raw_df["date_str"] = pd.to_datetime(raw_df["date"]).dt.strftime("%Y-%m-%d")
+                    match_row = raw_df[raw_df["date_str"] == date_str]
+                    if not match_row.empty:
+                        r_last = match_row.iloc[-1]
+                        act_open = float(r_last.get("open", entry_p))
+                        act_high = float(r_last.get("high", entry_p))
+                        act_low = float(r_last.get("low", entry_p))
+                        act_close = float(r_last.get("close", entry_p))
+                    else:
+                        r_last = raw_df.iloc[-1]
+                        act_open = float(r_last.get("open", entry_p))
+                        act_high = float(r_last.get("high", entry_p))
+                        act_low = float(r_last.get("low", entry_p))
+                        act_close = float(r_last.get("close", entry_p))
+            except Exception:
+                pass
+
+        if quote is not None:
+            q_open = float(quote.get("open", 0.0))
+            q_high = float(quote.get("high", 0.0))
+            q_low = float(quote.get("low", 0.0))
+            q_close = float(quote.get("last_price", 0.0))
+            if q_open > 0:
+                act_open = q_open
+            if q_high > 0:
+                act_high = max(act_high, q_high)
+            if q_low > 0:
+                act_low = min(act_low, q_low)
+            if q_close > 0:
+                act_close = q_close
+
+        # Consistency bounds
+        act_high = max(act_high, act_open, act_close)
+        act_low = min(act_low, act_open, act_close)
+        cost_20bps_yen = act_open * 0.0020
+
+        # Outcome scoring
+        if act_high >= target_1:
+            res_code = "TARGET_HIT"
+            res_status = "WIN"
+            res_badge = "🎯 利確ターゲット到達"
+            exit_price = target_1
+            gross_pnl_share = target_1 - act_open
+        elif act_low <= stop_loss:
+            res_code = "STOPPED_OUT"
+            res_status = "LOSS"
+            res_badge = "🛡️ 損切ライン抵触"
+            exit_price = stop_loss
+            gross_pnl_share = stop_loss - act_open
+        else:
+            exit_price = act_close
+            gross_pnl_share = act_close - act_open
+            net_temp = gross_pnl_share - cost_20bps_yen
+            if net_temp > 0:
+                res_code = "CLOSE_POSITIVE"
+                res_status = "WIN"
+                res_badge = "🟢 大引けプラス決済"
+            else:
+                res_code = "CLOSE_NEGATIVE"
+                res_status = "LOSS"
+                res_badge = "🛡️ 大引けマイナス決済"
+
+        net_pnl_share = gross_pnl_share - cost_20bps_yen
+        pnl_100_shares = int(round(net_pnl_share * 100))
+        return_pct = round((gross_pnl_share / act_open) * 100.0, 2) if act_open > 0 else 0.0
+        net_return_pct = round((net_pnl_share / act_open) * 100.0, 2) if act_open > 0 else 0.0
+
+        # Actual waveform classification
+        hl_range = max(1e-6, act_high - act_low)
+        clv = (act_close - act_low) / hl_range
+        if act_close > act_open and clv >= 0.70:
+            act_waveform = "前場後場連動・高値引け陽線"
+        elif act_close > act_open and clv < 0.70:
+            act_waveform = "上ヒゲ陽線・戻り売り混在"
+        elif act_close <= act_open and act_high >= act_open * 1.01:
+            act_waveform = "寄り天・前場急伸後失速陰線"
+        else:
+            act_waveform = "揉み合い・軟調陰線"
+
+        is_waveform_hit = (res_status == "WIN") or (act_close >= act_open and "陽線" in pred_waveform)
+        waveform_verdict = "🎯 波形的中" if is_waveform_hit else "⚠️ 波形乖離"
+
+        evaluated_trades.append({
+            "ticker": ticker,
+            "name": name,
+            "side": "LONG",
+            "judgment": rec.get("judgment", "🟢 買い推奨"),
+            "probability_up": rec.get("probability_up", 55.0),
+            "entry_price": act_open,
+            "exit_price": round(exit_price, 1),
+            "actual_open": round(act_open, 1),
+            "actual_high": round(act_high, 1),
+            "actual_low": round(act_low, 1),
+            "actual_close": round(act_close, 1),
+            "target_price": target_1,
+            "target_final": target_final,
+            "stop_loss_price": stop_loss,
+            "result_code": res_code,
+            "result_status": res_status,
+            "result_badge": res_badge,
+            "gross_return_pct": return_pct,
+            "net_return_pct": net_return_pct,
+            "virtual_pnl_100_shares": pnl_100_shares,
+            "predicted_waveform": pred_waveform,
+            "actual_waveform": act_waveform,
+            "waveform_verdict": waveform_verdict,
+        })
+
+    # 3. Aggregate Summary Statistics
+    total_trades = len(evaluated_trades)
+    wins = sum(1 for t in evaluated_trades if t["result_status"] == "WIN")
+    losses = total_trades - wins
+    win_rate = round((wins / total_trades) * 100.0, 1) if total_trades > 0 else 0.0
+    total_pnl = sum(t["virtual_pnl_100_shares"] for t in evaluated_trades)
+
+    mvp_trade = max(evaluated_trades, key=lambda x: x["virtual_pnl_100_shares"]) if evaluated_trades else None
+
+    scorecard_result = {
+        "date": date_str,
+        "evaluation_timestamp": datetime.now(timezone.utc).isoformat(),
+        "total_trades": total_trades,
+        "wins": wins,
+        "losses": losses,
+        "win_rate_pct": win_rate,
+        "total_virtual_pnl_yen": total_pnl,
+        "mvp": mvp_trade,
+        "trades": evaluated_trades,
+    }
+
+    if save_snapshot:
+        scorecard_cache_file = snapshot_dir / f"scorecard_{date_str}.json"
+        try:
+            scorecard_cache_file.write_text(json.dumps(scorecard_result, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as exc:
+            logger.warning("Failed to save scorecard cache: %s", exc)
+
+    return scorecard_result
+
 

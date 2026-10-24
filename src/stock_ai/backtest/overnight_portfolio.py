@@ -104,6 +104,10 @@ def collect_overnight_universe_predictions(
             except Exception:
                 pass
 
+        for c in feature_cols:
+            if c not in sub.columns:
+                sub[c] = 0.5 if "rank" in c else 0.0
+
         probs = bundle["model"].predict_proba(sub[feature_cols])[:, 1]
         sub["p_up"] = probs
         sub["auc"] = auc_val
@@ -434,12 +438,12 @@ def simulate_overnight_strategy(
             applied_cost = cost * (w_total_long + w_total_short)
         elif long_rets:
             if max_position_weight is not None:
-                # Robert Carver Systematic Trading & Giuseppe Paleologo Cluster Risk Parity
+                # Robert Carver Systematic Trading & Giuseppe Paleologo Cluster Risk Parity & Marcos Lopez de Prado HRP
                 from stock_ai.features.carver_systematic import (
                     apply_drawdown_throttle,
-                    compute_carver_paleologo_weights,
                     scale_and_cap_forecast,
                 )
+                from stock_ai.features.hrp_allocation import compute_carver_paleologo_hrp_weights
                 pick_vols = [
                     float(day_slice.loc[day_slice["ticker"] == t, "volatility_20"].values[0])
                     if "volatility_20" in day_slice.columns and not day_slice.loc[day_slice["ticker"] == t, "volatility_20"].empty
@@ -458,12 +462,22 @@ def simulate_overnight_strategy(
                 dd_throttle = apply_drawdown_throttle(dd_t, max_dd_limit=0.15, warn_dd=0.07, min_multiplier=0.25)
                 sec_map = dict(zip(day_slice["ticker"], day_slice["sector"])) if "sector" in day_slice.columns else None
 
+                # Compute trailing correlation matrix for HRP if multiple candidates
+                corr_mat = None
+                if len(valid_long_picks) > 1:
+                    past_slice = df[(df["date"] < d) & (df["ticker"].isin(valid_long_picks))]
+                    if not past_slice.empty and "overnight_return" in past_slice.columns:
+                        ret_piv = past_slice.pivot(index="date", columns="ticker", values="overnight_return").tail(60)
+                        if len(ret_piv) >= 10:
+                            corr_mat = ret_piv.corr()
+
                 target_w = 0.55 if max_position_weight == 0.50 else max_position_weight
-                weights_dict = compute_carver_paleologo_weights(
+                weights_dict = compute_carver_paleologo_hrp_weights(
                     tickers=valid_long_picks,
                     forecasts=pick_forecasts,
                     volatilities=pick_vols,
                     sector_map=sec_map,
+                    correlation_matrix=corr_mat,
                     max_weight=target_w,
                     sector_penalty_decay=1.0,
                     drawdown_throttle=dd_throttle,
