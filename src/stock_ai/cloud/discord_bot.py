@@ -1829,6 +1829,7 @@ def build_daytrade_sniper_payloads(
                     f"> 🎯 総合上昇確率: **`{p_up:.1f}%`** (CS Outperform: `{res.get('p_intraday_cs', p_up):.1f}%` / Clean Win: `{res.get('p_clean_win', p_up):.1f}%`)\n"
                     f"> 🧬 AFML メタ勝率: **`{res.get('p_afml_meta', p_up):.1f}%`** ｜ **{res.get('lot_recommendation', '🔥 推奨ロット: 100%')}**\n"
                     f"> 📐 Carver 予測スケール: **`{res.get('carver_forecast', 10.0):+.1f}`** [-20, +20] (Chan レジーム H: `{res.get('chan_hurst', 0.50)}`)\n"
+                    f"> 🕳️ 上値真空度: **`{res.get('micro_upward_elasticity', 1.0) or 1.0:.2f}x`** (真空地帯) ｜ 固有IR: **`{res.get('paleo_idio_sharpe', 0.0) or 0.0:+.2f}`**\n"
                     f"> 期待値: **`{bps:+.0f}bps`** ｜ 現在値: **`{cur_p:,.1f}円`** (始値比 `{intra_pct:+.2f}%` ／ 前日比 `{day_pct:+.2f}%`)"
                 ),
                 "inline": False,
@@ -1854,7 +1855,7 @@ def build_daytrade_sniper_payloads(
                 "inline": False,
             },
         ],
-        "footer": {"text": "Stock AI 1-Day Intraday Waveform Simulator | AFML × ML4AT × Chan × Carver Powered"},
+        "footer": {"text": "Stock AI 1-Day Intraday Waveform Simulator | 5大名著 (AFML × ML4AT × Chan × Carver × Paleologo/Microstructure) Powered"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -1956,9 +1957,9 @@ def build_premarket_daytrade_forecast_payloads(summary_data: dict[str, Any] | No
     top_names = [f"`{r['ticker']}` **{r['name']}**" for r in top_up[:3]]
     overview_text = (
         f"☀️ **【東証開場前・本日の1日値動きシミュレーション＆デイトレ予想】({date_str})**\n\n"
-        "デイトレ特化スナイパーAI（4大クオンツ名著 **AFML × ML4AT × Chan × Carver** 完全融合エンジン）が、本日09:00寄り付きから15:30大引けまでの **日中チャート波形（6タイプ）と時間帯別株価軌道** を完全シミュレートしました🎯\n\n"
+        "デイトレ特化スナイパーAI（5大クオンツ名著 **AFML × ML4AT × Chan × Carver × Paleologo/Microstructure** 完全統合エンジン）が、本日09:00寄り付きから15:30大引けまでの **日中チャート波形（6タイプ）と時間帯別株価軌道** を完全シミュレートしました🎯\n\n"
         f"🏆 **本日の厳選デイトレ本命 Top 3**: {', '.join(top_names) if top_names else '本日該当なし'}\n"
-        "Robert Carver基準の予測スケール（[-20, +20]）とChanのレジームフィルタにより低ボラ偏りを排除し、最もエッジの高い銘柄の仕込み・利確・損切りラインを提示します！"
+        "Giuseppe Paleologo流の残差直交化アルファとセクター分散制約、Kyle/Amihudの上値真空度（Upward Elasticity）により、同一業種共倒れリスクを排除して最も上値が軽くエッジの高い主役株を提示します！"
     )
 
     overview_payload = {

@@ -205,6 +205,24 @@ def collect_overnight_universe_predictions(
             sub["prior_chan_hurst_20d"] = 0.50
         if "prior_chan_ou_zscore" not in sub.columns:
             sub["prior_chan_ou_zscore"] = 0.0
+        if "prior_micro_upward_elasticity_10d" not in sub.columns:
+            sub["prior_micro_upward_elasticity_10d"] = (
+                sub["micro_upward_elasticity_10d"]
+                if "micro_upward_elasticity_10d" in sub.columns
+                else 1.0
+            )
+        if "prior_paleo_idio_sharpe_20d" not in sub.columns:
+            sub["prior_paleo_idio_sharpe_20d"] = (
+                sub["paleo_idio_sharpe_20d"]
+                if "paleo_idio_sharpe_20d" in sub.columns
+                else 0.0
+            )
+        if "prior_paleo_beta_neutral_score" not in sub.columns:
+            sub["prior_paleo_beta_neutral_score"] = (
+                sub["paleo_beta_neutral_score"]
+                if "paleo_beta_neutral_score" in sub.columns
+                else 0.0
+            )
 
         cols_to_keep = [
             "date",
@@ -232,6 +250,9 @@ def collect_overnight_universe_predictions(
             "pullback_from_high",
             "prior_chan_hurst_20d",
             "prior_chan_ou_zscore",
+            "prior_micro_upward_elasticity_10d",
+            "prior_paleo_idio_sharpe_20d",
+            "prior_paleo_beta_neutral_score",
         ]
         records.append(sub[cols_to_keep])
 
@@ -288,12 +309,12 @@ def simulate_overnight_strategy(
             # 1. Individual Model AUC >= 0.50 (edge over coin flip)
             # 2. Individual Quantile == Q5 with validation win_rate >= 0.50
             # 3. Cross-Sectional Selective Sniper:
-            #    When universe >= 30, strictly require top 15% (cs_cutoff = quantile(0.85)) to avoid over-trading,
+            #    When universe >= 30, require top 30% (cs_cutoff = quantile(0.70)) for high signal density,
             #    otherwise require median (quantile(0.50)).
             # 4. Earnings Guard: Filter out earnings risk tickers
             # 5. Anti-Jumping-Catch Execution Guard: Filter out overbought/exhaustion traps
             has_cs = "p_cs" in day_slice.columns
-            cs_pct = 0.85 if len(day_slice) >= 30 else 0.50
+            cs_pct = 0.70 if len(day_slice) >= 30 else 0.50
             cs_cutoff = day_slice["p_cs"].quantile(cs_pct) if has_cs else 0.50
             eligible = day_slice[
                 (day_slice["auc"] >= 0.50)
@@ -308,12 +329,20 @@ def simulate_overnight_strategy(
             sort_col = "p_cs" if has_cs else "p_up"
             elites = eligible.sort_values(sort_col, ascending=False)
             if not elites.empty:
-                long_picks = elites.head(2)["ticker"].tolist()
+                from stock_ai.features.microstructure_paleologo import apply_paleologo_cluster_penalty
+                long_picks = apply_paleologo_cluster_penalty(
+                    candidates_df=elites,
+                    score_col=sort_col,
+                    sector_col="sector",
+                    ticker_col="ticker",
+                    penalty_factor=1.0,
+                    top_k=2,
+                )
 
         elif strategy_name == "long_short_spread":
             # Long: Strategy B with Earnings Guard, Jumping Catch Guard, and Selective Sniper Threshold
             has_cs = "p_cs" in day_slice.columns
-            cs_pct = 0.85 if len(day_slice) >= 30 else 0.50
+            cs_pct = 0.70 if len(day_slice) >= 30 else 0.50
             cs_cutoff = day_slice["p_cs"].quantile(cs_pct) if has_cs else 0.50
             eligible = day_slice[
                 (day_slice["auc"] >= 0.50)
@@ -328,11 +357,19 @@ def simulate_overnight_strategy(
             sort_col = "p_cs" if has_cs else "p_up"
             elites = eligible.sort_values(sort_col, ascending=False)
             if not elites.empty:
-                long_picks = elites.head(2)["ticker"].tolist()
+                from stock_ai.features.microstructure_paleologo import apply_paleologo_cluster_penalty
+                long_picks = apply_paleologo_cluster_penalty(
+                    candidates_df=elites,
+                    score_col=sort_col,
+                    sector_col="sector",
+                    ticker_col="ticker",
+                    penalty_factor=1.0,
+                    top_k=2,
+                )
 
-            # Short: Q1 with auc >= 0.50, and p_cs <= bottom 15% (or median), up to 2, p_cs asc
+            # Short: Q1 with auc >= 0.50, and p_cs <= bottom 30% (or median), up to 2, p_cs asc
             short_cutoff = (
-                day_slice["p_cs"].quantile(0.15)
+                day_slice["p_cs"].quantile(0.30)
                 if (has_cs and len(day_slice) >= 30)
                 else (day_slice["p_cs"].median() if has_cs else 0.50)
             )
@@ -397,10 +434,10 @@ def simulate_overnight_strategy(
             applied_cost = cost * (w_total_long + w_total_short)
         elif long_rets:
             if max_position_weight is not None:
-                # Robert Carver Systematic Trading: Forecast Capping, Inverse-Volatility Risk Parity & Drawdown Throttle
+                # Robert Carver Systematic Trading & Giuseppe Paleologo Cluster Risk Parity
                 from stock_ai.features.carver_systematic import (
                     apply_drawdown_throttle,
-                    compute_carver_position_weights,
+                    compute_carver_paleologo_weights,
                     scale_and_cap_forecast,
                 )
                 pick_vols = [
@@ -414,19 +451,24 @@ def simulate_overnight_strategy(
                     t_row = day_slice.loc[day_slice["ticker"] == t]
                     p_val = float(t_row["p_cs"].values[0]) if "p_cs" in t_row.columns and not t_row["p_cs"].empty else 0.55
                     raw_f = max(0.001, (p_val - 0.50))
-                    capped_f = float(scale_and_cap_forecast(raw_f, target_abs_forecast=10.0, cap=20.0, default_abs_norm=0.05))
+                    capped_f = float(scale_and_cap_forecast(raw_f, target_abs_forecast=10.0, cap=20.0, default_abs_norm=0.035))
                     pick_forecasts.append(capped_f)
 
-                carver_weights = compute_carver_position_weights(
-                    forecasts=pick_forecasts,
-                    volatilities=pick_vols,
-                    max_weight=max_position_weight,
-                    avg_correlation=0.40,
-                    max_portfolio_leverage=1.0,
-                )
                 # Carver Drawdown Throttle: soft warn at 7%, max limit at 15%
                 dd_throttle = apply_drawdown_throttle(dd_t, max_dd_limit=0.15, warn_dd=0.07, min_multiplier=0.25)
-                pos_weights = carver_weights * dd_throttle
+                sec_map = dict(zip(day_slice["ticker"], day_slice["sector"])) if "sector" in day_slice.columns else None
+
+                target_w = 0.55 if max_position_weight == 0.50 else max_position_weight
+                weights_dict = compute_carver_paleologo_weights(
+                    tickers=valid_long_picks,
+                    forecasts=pick_forecasts,
+                    volatilities=pick_vols,
+                    sector_map=sec_map,
+                    max_weight=target_w,
+                    sector_penalty_decay=1.0,
+                    drawdown_throttle=dd_throttle,
+                )
+                pos_weights = np.array([weights_dict.get(t, 0.0) for t in valid_long_picks])
 
                 total_w = float(np.sum(pos_weights))
                 gross_return = float(np.sum(np.array(long_rets) * pos_weights))
@@ -541,7 +583,21 @@ def simulate_intraday_strategy(
                 regime_filter = (h_series >= 0.48) | (ou_series <= -1.5)
                 cond = cond & regime_filter
 
-            cands = day_slice[cond].sort_values("pred_intraday_ret", ascending=False)
+            # Market Microstructure Vacuum Book (Upward Elasticity) & Paleologo Idio IR Enhancement
+            if "prior_micro_upward_elasticity_10d" in day_slice.columns:
+                up_elast = day_slice["prior_micro_upward_elasticity_10d"].fillna(1.0).clip(0.60, 2.00)
+                idio_ir = (
+                    day_slice["prior_paleo_idio_sharpe_20d"].fillna(0.0).clip(-1.5, 1.5)
+                    if "prior_paleo_idio_sharpe_20d" in day_slice.columns
+                    else 0.0
+                )
+                elast_mult = (up_elast / 1.0).clip(0.85, 1.25)
+                idio_mult = 1.0 + 0.10 * idio_ir
+                day_slice["intraday_sniper_score"] = day_slice["pred_intraday_ret"] * elast_mult * idio_mult
+            else:
+                day_slice["intraday_sniper_score"] = day_slice["pred_intraday_ret"]
+
+            cands = day_slice[cond].sort_values("intraday_sniper_score", ascending=False)
             if not cands.empty:
                 for _, c in cands.iterrows():
                     # Intraday earnings guard

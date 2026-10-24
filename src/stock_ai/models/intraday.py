@@ -1230,6 +1230,9 @@ def predict_daytrade_sniper(
     carver_forecast = float(scale_and_cap_forecast(eff_bps / 5.0, target_abs_forecast=10.0, cap=20.0, default_abs_norm=5.0))
     chan_hurst = None
     chan_ou_z = None
+    micro_upward_elasticity = None
+    paleo_idio_sharpe = None
+    paleo_beta_neutral = None
     if features_df is not None and not features_df.empty:
         for c in ["prior_chan_hurst_20d", "chan_hurst_20d"]:
             if c in features_df.columns:
@@ -1242,6 +1245,24 @@ def predict_daytrade_sniper(
                 z_val = float(features_df[c].iloc[-1])
                 if not np.isnan(z_val):
                     chan_ou_z = round(z_val, 2)
+                    break
+        for c in ["prior_micro_upward_elasticity_10d", "micro_upward_elasticity_10d"]:
+            if c in features_df.columns:
+                e_val = float(features_df[c].iloc[-1])
+                if not np.isnan(e_val):
+                    micro_upward_elasticity = round(e_val, 2)
+                    break
+        for c in ["prior_paleo_idio_sharpe_20d", "paleo_idio_sharpe_20d"]:
+            if c in features_df.columns:
+                s_val = float(features_df[c].iloc[-1])
+                if not np.isnan(s_val):
+                    paleo_idio_sharpe = round(s_val, 2)
+                    break
+        for c in ["prior_paleo_beta_neutral_score", "paleo_beta_neutral_score"]:
+            if c in features_df.columns:
+                b_val = float(features_df[c].iloc[-1])
+                if not np.isnan(b_val):
+                    paleo_beta_neutral = round(b_val, 2)
                     break
 
     return {
@@ -1267,6 +1288,9 @@ def predict_daytrade_sniper(
         "carver_forecast": round(carver_forecast, 1),
         "chan_hurst": chan_hurst,
         "chan_ou_z": chan_ou_z,
+        "micro_upward_elasticity": micro_upward_elasticity,
+        "paleo_idio_sharpe": paleo_idio_sharpe,
+        "paleo_beta_neutral": paleo_beta_neutral,
         "expected_return_bps": round(eff_bps, 1),
         "judgment": judgment,
         "judgment_code": judge_code,
@@ -1313,6 +1337,7 @@ def get_daily_daytrade_rankings(
     """Scan all 50 universe tickers and generate Top 5 Up (buy candidates) and Top 5 Down (risk candidates).
 
     Optimized: Performs fast scan first, then enriches top focus tickers with 5m microstructure.
+    Applies Paleologo cluster penalty to avoid sector crowding.
     """
     if universe is None:
         universe = load_universe()
@@ -1327,8 +1352,23 @@ def get_daily_daytrade_rankings(
             res["sector"] = getattr(t, "sector_ja", "") or getattr(t, "sector", "") or "-"
             results.append(res)
 
-    results.sort(key=lambda x: (x["probability_up"], x["expected_return_bps"]), reverse=True)
-    raw_top_up = results[:top_n]
+    # Paleologo Factor Orthogonalization & Cluster Dispersion:
+    # Penalize same-sector concentration so top picks naturally diversify across independent economic drivers
+    from stock_ai.features.microstructure_paleologo import apply_paleologo_cluster_penalty
+
+    cands = [r["ticker"] for r in results]
+    scrs = [r["probability_up"] * (1.0 + max(0.0, r.get("expected_return_bps", 0.0)) / 1000.0) for r in results]
+    sec_map = {r["ticker"]: r.get("sector", "-") for r in results}
+    penalized = apply_paleologo_cluster_penalty(
+        candidates=cands,
+        scores=scrs,
+        sector_map=sec_map,
+        sector_penalty_decay=0.80,
+        max_picks=top_n,
+    )
+    penalized_tickers = [p[0] for p in penalized]
+    results_by_ticker = {r["ticker"]: r for r in results}
+    raw_top_up = [results_by_ticker[t] for t in penalized_tickers if t in results_by_ticker]
     raw_top_down = sorted(results, key=lambda x: (x["probability_up"], x["expected_return_bps"]))[:top_n]
 
     # 2. Enrich selected Top Up & Top Down with real-time 5m microstructure

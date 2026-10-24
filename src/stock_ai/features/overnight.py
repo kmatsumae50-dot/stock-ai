@@ -114,27 +114,25 @@ OVERNIGHT_CURATED_FEATURES = [
     "chan_kalman_spread",
     "chan_kalman_zscore",
     "chan_kalman_slope",
-    "chan_hurst_20d_cs_rank",
-    "chan_variance_ratio_10d_cs_rank",
-    "chan_regime_momentum_score_cs_rank",
-    "chan_ou_zscore_cs_rank",
-    "chan_kalman_spread_cs_rank",
 ]
 
 
 def add_overnight_features(data: pd.DataFrame) -> pd.DataFrame:
-    """Add Japanese market micro-structure, demand, AFML memory, ML4AT alphas, Chan quant, and curated overnight features."""
+    """Add Japanese market micro-structure, demand, AFML memory, ML4AT alphas, Chan quant, Paleologo residual alphas, and curated overnight features."""
     if data.empty:
         return data
 
     from stock_ai.features.afml import add_afml_features
     from stock_ai.features.ml4at import add_ml4at_features
     from stock_ai.features.chan_quant import add_chan_quant_features
+    from stock_ai.features.microstructure_paleologo import add_microstructure_paleologo_features
 
     result = add_afml_features(data.copy(), d=0.4)
     result = add_ml4at_features(result)
     result = add_chan_quant_features(result)
+    result = add_microstructure_paleologo_features(result)
     grouped = result.groupby("ticker", group_keys=False) if "ticker" in result.columns else None
+
 
     close = result["close"]
     high = result["high"] if "high" in result.columns else close
@@ -340,6 +338,10 @@ def add_cross_sectional_overnight_features(pooled_df: pd.DataFrame) -> pd.DataFr
     # 6. ML4AT WorldQuant Alphas Daily Cross-Sectional Rank Normalization
     from stock_ai.features.ml4at import add_cross_sectional_rank_features
     result = add_cross_sectional_rank_features(result)
+
+    # 7. Giuseppe Paleologo & Microstructure Daily Cross-Sectional Rank Normalization
+    from stock_ai.features.microstructure_paleologo import add_cross_sectional_microstructure_features
+    result = add_cross_sectional_microstructure_features(result)
 
     return result
 

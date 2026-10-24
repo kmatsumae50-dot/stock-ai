@@ -78,6 +78,15 @@ INTRADAY_BASE_FEATURES = [
     "prior_chan_kalman_slope",
     # 13. Robert Carver Systematic Trading (Forecast Scaling & Capping [-20, +20])
     "carver_forecast_capped",
+    # 14. Giuseppe Paleologo Residual Alphas & Market Microstructure Theory (Pre-Market t-1 Lagged)
+    "prior_micro_amihud_20d",
+    "prior_micro_amihud_surge_5d",
+    "prior_micro_upward_elasticity_10d",
+    "prior_micro_kyle_lambda_20d",
+    "prior_micro_roll_spread_20d",
+    "prior_paleo_idio_return_5d",
+    "prior_paleo_idio_sharpe_20d",
+    "prior_paleo_beta_neutral_score",
 ]
 
 INTRADAY_CROSS_SECTIONAL_FEATURES = [
@@ -99,6 +108,10 @@ INTRADAY_CROSS_SECTIONAL_FEATURES = [
     "cs_rank_prior_chan_hurst",
     "cs_rank_prior_chan_ou_zscore",
     "cs_rank_prior_chan_kalman_spread",
+    # Microstructure & Paleologo Pre-Market Ranks
+    "cs_rank_prior_micro_upward_elasticity_10d",
+    "cs_rank_prior_paleo_idio_sharpe_20d",
+    "cs_rank_prior_paleo_beta_neutral_score",
 ]
 
 ALL_INTRADAY_FEATURES = INTRADAY_BASE_FEATURES + INTRADAY_CROSS_SECTIONAL_FEATURES
@@ -346,6 +359,10 @@ def add_intraday_premarket_features(df: pd.DataFrame) -> pd.DataFrame:
         ]:
             result[f] = 0.0
 
+    # 9. Giuseppe Paleologo & Microstructure Theory (Pre-Market t-1 Lagged, Zero-Leakage)
+    from stock_ai.features.microstructure_paleologo import add_premarket_microstructure_paleologo_features
+    result = add_premarket_microstructure_paleologo_features(result)
+
     return result
 
 
@@ -419,5 +436,9 @@ def add_cross_sectional_intraday_features(pooled_df: pd.DataFrame) -> pd.DataFra
             result[target_col] = result.groupby("date")[src_col].rank(pct=True).fillna(0.5)
         else:
             result[target_col] = 0.5
+
+    # Giuseppe Paleologo & Microstructure Pre-Market Cross-Sectional Ranks
+    from stock_ai.features.microstructure_paleologo import add_cross_sectional_premarket_microstructure_features
+    result = add_cross_sectional_premarket_microstructure_features(result)
 
     return result

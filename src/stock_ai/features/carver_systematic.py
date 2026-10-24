@@ -25,7 +25,12 @@ __all__ = [
     "apply_drawdown_throttle",
     "compute_volatility_regime_multiplier",
     "compute_combined_carver_throttle",
+    "apply_paleologo_cluster_penalty",
+    "compute_carver_paleologo_weights",
 ]
+
+from stock_ai.features.microstructure_paleologo import apply_paleologo_cluster_penalty
+
 
 
 def scale_and_cap_forecast(
@@ -280,3 +285,64 @@ def compute_combined_carver_throttle(
 
     combined = dd_mult * vol_mult
     return float(np.clip(combined, 0.15, 1.0))
+
+
+def compute_carver_paleologo_weights(
+    tickers: Sequence[str],
+    forecasts: Sequence[float],
+    volatilities: Sequence[float],
+    sector_map: dict[str, str] | None = None,
+    correlation_matrix: pd.DataFrame | None = None,
+    max_weight: float = 0.50,
+    correlation_threshold: float = 0.70,
+    sector_penalty_decay: float = 0.75,
+    correlation_penalty_decay: float = 0.70,
+    max_portfolio_leverage: float = 1.0,
+    drawdown_throttle: float = 1.0,
+) -> dict[str, float]:
+    """Combine Paleologo cluster penalty diversification with Carver inverse-volatility weighting.
+
+    Steps:
+    1. Apply Paleologo cluster penalty to rank and down-weight crowded/correlated candidates.
+    2. Apply Carver inverse-volatility risk parity & forecast scaling.
+    3. Apply Carver drawdown throttle and max-weight capping.
+    """
+    if not tickers:
+        return {}
+
+    # Apply Paleologo cluster penalty to crowded sectors / correlated candidates
+    seen_sectors: set[str] = set()
+    seen_tickers: list[str] = []
+    adj_forecasts: list[float] = []
+    sec_m = sector_map or {}
+
+    for t, f in zip(tickers, forecasts):
+        sec = sec_m.get(t, "")
+        is_crowded = False
+        if sec and sec in seen_sectors:
+            is_crowded = True
+        elif correlation_matrix is not None and t in correlation_matrix.index:
+            for prev_t in seen_tickers:
+                if prev_t in correlation_matrix.columns:
+                    if float(correlation_matrix.loc[t, prev_t]) >= correlation_threshold:
+                        is_crowded = True
+                        break
+
+        if is_crowded:
+            adj_forecasts.append(float(f) * sector_penalty_decay)
+        else:
+            adj_forecasts.append(float(f))
+            if sec:
+                seen_sectors.add(sec)
+            seen_tickers.append(t)
+
+    base_weights = compute_carver_position_weights(
+        forecasts=adj_forecasts,
+        volatilities=volatilities,
+        max_weight=max_weight,
+        max_portfolio_leverage=max_portfolio_leverage,
+    )
+
+    final_weights = base_weights * float(np.clip(drawdown_throttle, 0.10, 1.0))
+    return {t: float(w) for t, w in zip(tickers, final_weights)}
+
