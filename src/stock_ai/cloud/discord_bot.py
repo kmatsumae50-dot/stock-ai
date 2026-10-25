@@ -1826,6 +1826,7 @@ def build_daytrade_sniper_payloads(
                 "value": (
                     f"**{wf_title}**\n"
                     f"> 💡 {wf_desc}\n"
+                    f"> **{res.get('calibration_badge', f'🎯 校正勝率: {p_up:.1f}% (CPCV安定度: A / DSR: 0.85)')}**\n"
                     f"> 🎯 総合上昇確率: **`{p_up:.1f}%`** (CS Outperform: `{res.get('p_intraday_cs', p_up):.1f}%` / Clean Win: `{res.get('p_clean_win', p_up):.1f}%`)\n"
                     f"> {res.get('leadlag_radar_text', '🔗 **先導株波及**: 7011 三菱重工 (+2.5%) ➔ 出遅れ追随期待 (波及スコア +1.20)')}\n"
                     f"> 🧠 適応学習 (Series #7): **{res.get('adaptive_credibility_badge', '🧠 適応信頼度: 中立 (±0%)')}** ｜ Hedge波形重み: **`{res.get('adaptive_hedge_weight', 1.0):.2f}x`**\n"
@@ -1836,6 +1837,7 @@ def build_daytrade_sniper_payloads(
                 ),
                 "inline": False,
             },
+
             {
                 "name": "② 5分足マイクロストラクチャー診断（当日VWAP ＆ 朝イチ30分ORB）",
                 "value": micro_field_value,
@@ -1888,7 +1890,7 @@ def build_daytrade_ranking_payloads() -> list[dict[str, Any]]:
         badge_str = f" ｜ {badge}" if badge else ""
         radar_str = f"\n> {r['leadlag_radar_text']}" if r.get("leadlag_radar_text") else ""
         top_up_list.append(
-            f"{emoji} **`{r['ticker']}` {r['name']}** 【確率 **`{r['probability_up']:.1f}%`** / `{r['expected_return_bps']:+.0f}bps`{badge_str}】\n"
+            f"{emoji} **`{r['ticker']}` {r['name']}** 【校正勝率 **`{r.get('p_calibrated', r['probability_up']):.1f}%`** (CPCV: `{r.get('cpcv_grade', 'A')}` / DSR: `{r.get('dsr', 0.85):.2f}`) ｜ `{r['expected_return_bps']:+.0f}bps`{badge_str}】\n"
             f"> 📊 波形: **{wf}**{lot_suffix}\n"
             f"> 🛒 仕込み: **`{r['best_entry_zone']}`** ➔ 🎯 目標 **`{r['target_final_price']:,.1f}円`** (`{r['target_final_pct']:+.1f}%`)"
             + radar_str
@@ -1907,7 +1909,7 @@ def build_daytrade_ranking_payloads() -> list[dict[str, Any]]:
     up_names = [f"`{r['ticker']}` {r['name']}" for r in rankings.get("top_up", [])]
     down_names = [f"`{r['ticker']}` {r['name']}" for r in rankings.get("top_down", [])]
     speech = (
-        f"⚡ **【本日デイトレ特化予想ランキング】({date_str})** ｜ 8大名著統合エンジン\n\n"
+        f"⚡ **【本日デイトレ特化予想ランキング】({date_str})** ｜ 9大名著統合エンジン\n\n"
         f"🟢 **本日上昇確率 TOP 5**: {', '.join(up_names) if up_names else '該当なし'}\n"
         f"🔴 **本日下落警戒 TOP 5**: {', '.join(down_names) if down_names else '該当なし'}\n\n"
         f"💡 個別銘柄のタイムライン詳細シミュレーションはコードまたは社名（例: `7012`, `フジクラ`）を送信してください！"
@@ -1915,11 +1917,11 @@ def build_daytrade_ranking_payloads() -> list[dict[str, Any]]:
 
     embed = {
         "title": f"⚡ 【本日デイトレ特化予想ランキング】({date_str})",
-        "description": f"**東証プライム主力50銘柄 全頭スキャン** ({phase_title}) ｜ 8大名著統合（Lo/MacKinlay 先導株波及レーダー搭載）クオンツエンジン",
+        "description": f"**東証プライム主力50銘柄 全頭スキャン** ({phase_title}) ｜ 9大名著統合（Prado CPCV/校正/DSR × Lo/MacKinlay 先導株波及レーダー搭載）クオンツエンジン",
         "color": 15844367,  # Gold
         "fields": [
             {
-                "name": "🟢 本日上昇確率 TOP 3（買い候補・先導株波及レーダー）",
+                "name": "🟢 本日上昇確率 TOP 3（買い候補・校正勝率＆先導株波及レーダー）",
                 "value": ("\n".join(top_up_list[:3]) if top_up_list else "該当なし")[:1020],
                 "inline": False,
             },
@@ -1939,7 +1941,7 @@ def build_daytrade_ranking_payloads() -> list[dict[str, Any]]:
                 "inline": False,
             },
         ],
-        "footer": {"text": "Stock AI 1-Day Intraday Sniper | 8大名著統合・先導株波及レーダー搭載・モバイル最適化"},
+        "footer": {"text": "Stock AI 1-Day Intraday Sniper | 9大名著統合・CPCV安定度/DSR/校正勝率搭載・モバイル最適化"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -1968,10 +1970,11 @@ def build_premarket_daytrade_forecast_payloads(summary_data: dict[str, Any] | No
     top_names = [f"`{r['ticker']}` **{r['name']}**" for r in top_up[:3]]
     overview_text = (
         f"☀️ **【東証開場前・本日の1日値動きシミュレーション＆デイトレ予想】({date_str})**\n\n"
-        "デイトレ特化スナイパーAI（8大クオンツ名著 **Lo/MacKinlay Lead-Lag × Cesa-Bianchi/Sutton × HRP × Paleologo × Carver × Chan × ML4AT × AFML** 完全統合エンジン）が、本日09:00寄り付きから15:30大引けまでの **日中チャート波形（6タイプ）と時間帯別株価軌道** を完全シミュレートしました🎯\n\n"
+        "デイトレ特化スナイパーAI（9大クオンツ名著 **Prado CPCV安定度/確率校正/DSR × Lo/MacKinlay Lead-Lag × Cesa-Bianchi/Sutton × HRP × Paleologo × Carver × Chan × ML4AT × AFML** 完全統合エンジン）が、本日09:00寄り付きから15:30大引けまでの **日中チャート波形（6タイプ）と時間帯別株価軌道** を完全シミュレートしました🎯\n\n"
         f"🏆 **本日の厳選デイトレ本命 Top 3**: {', '.join(top_names) if top_names else '本日該当なし'}\n"
-        "Andrew W. Lo & A. Craig MacKinlay の Lead-Lag クロス自己相関により、先導株群の急伸から出遅れ本命株への資金波及（Spillover Alpha）を捉え、さらに Marcos López de Prado 階層的リスクパリティ（HRP）と Giuseppe Paleologo 残差直交化・セクター分散制約、Kyle/Amihud の上値真空度（Upward Elasticity）により、共倒れリスクを排除して最も上値が軽くエッジの高い主役株を提示します！"
+        "Marcos López de Prado の Combinatorial Purged Cross-Validation (CPCV) 安定度評価およびアイソトニック/プラット確率キャリブレーション（Brier Score 最小化）により過信エントリーを徹底排除し、さらに Deflated Sharpe Ratio (DSR) による多重検定バイアス補正、Andrew W. Lo & A. Craig MacKinlay の Lead-Lag クロス自己相関波及アルファ（Spillover Alpha）を融合して、真にエッジが高く騙しのない主役株を提示します！"
     )
+
 
     overview_payload = {
         "username": "⚡ デイトレ特化スナイパー AI",

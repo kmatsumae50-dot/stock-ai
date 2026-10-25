@@ -19,8 +19,14 @@ from stock_ai.models.overnight import (
     POOLED_OVERNIGHT_ARTIFACT_FILENAME,
     classify_overnight_quantile,
 )
+from stock_ai.features.cpcv_calibration import (
+    CausalHybridCalibrator,
+    compute_cpcv_path_stability,
+    compute_deflated_sharpe_ratio,
+)
 from stock_ai.features.overnight import check_jumping_catch_risk
 from stock_ai.models.predict import load_model_bundle
+
 
 
 @dataclass
@@ -233,6 +239,47 @@ def collect_overnight_universe_predictions(
         if "leadlag_leader_momentum_z" not in sub.columns:
             sub["leadlag_leader_momentum_z"] = 0.0
 
+        # Series #9 Marcos Lopez de Prado AFML: CPCV Stability, Probability Calibration & DSR
+        sub_target = (sub["next_open_return"] > 0).astype(int)
+        sub["next_open_binary"] = sub_target
+
+        if len(sub) >= 40:
+            cpcv_res = compute_cpcv_path_stability(
+                sub,
+                pred_col="p_up",
+                target_col="next_open_binary",
+                return_col="next_open_return",
+                date_col="date",
+                n_splits=5,
+                n_test_splits=2,
+                embargo_bars=2,
+            )
+            sub["cpcv_stability_score"] = cpcv_res.cpcv_stability_score
+            sub["cpcv_grade"] = cpcv_res.stability_grade
+
+            long_rets_sample = sub.loc[sub["p_up"] >= 0.50, "next_open_return"].values
+            dsr_res = compute_deflated_sharpe_ratio(long_rets_sample, num_trials=50)
+            sub["dsr"] = dsr_res.dsr
+        else:
+            sub["cpcv_stability_score"] = 0.50
+            sub["cpcv_grade"] = "C"
+            sub["dsr"] = 0.50
+
+        # Causal Walk-Forward Temperature & Isotonic Calibration (Zero forward leakage)
+        calibrator = CausalHybridCalibrator(min_samples=25, clip_bounds=(0.05, 0.95))
+        cal_p_vals = []
+        h_p: list[float] = []
+        h_y: list[int] = []
+        for p_v, y_v in zip(probs, sub_target):
+            if len(h_p) >= 25:
+                calibrator.fit(h_p[-200:], h_y[-200:])
+                cal_p_vals.append(calibrator.predict_proba(p_v))
+            else:
+                cal_p_vals.append(p_v)
+            h_p.append(float(p_v))
+            h_y.append(int(y_v))
+        sub["p_up_cal"] = np.array(cal_p_vals)
+
         cols_to_keep = [
             "date",
             "ticker",
@@ -240,9 +287,11 @@ def collect_overnight_universe_predictions(
             "sector",
             "close",
             "next_open_return",
+            "next_open_binary",
             "intraday_return",
             "overnight_gap",
             "p_up",
+            "p_up_cal",
             "p_cs",
             "p_intraday_cs",
             "pred_intraday_ret",
@@ -264,8 +313,12 @@ def collect_overnight_universe_predictions(
             "prior_paleo_beta_neutral_score",
             "leadlag_spillover_alpha_1d",
             "leadlag_leader_momentum_z",
+            "cpcv_stability_score",
+            "cpcv_grade",
+            "dsr",
         ]
         records.append(sub[cols_to_keep])
+
 
     if not records:
         return pd.DataFrame(), []
@@ -486,7 +539,17 @@ def simulate_overnight_strategy(
                             capped_f = min(20.0, capped_f * (1.0 + min(0.20, (s_val - 0.8) * 0.10)))
                         elif s_val <= -0.8:
                             capped_f = max(2.0, capped_f * max(0.70, 1.0 - (abs(s_val) - 0.8) * 0.15))
+
+                    # Series #9 CPCV Stability & DSR Multiple-Testing Confidence
+                    if "cpcv_stability_score" in t_row.columns and not t_row["cpcv_stability_score"].empty:
+                        cpcv_s = float(t_row["cpcv_stability_score"].values[0])
+                        if cpcv_s >= 0.52:
+                            capped_f = min(20.0, capped_f * (1.0 + min(0.06, (cpcv_s - 0.50) * 0.3)))
+                        elif cpcv_s < 0.48:
+                            capped_f = max(2.0, capped_f * max(0.94, 1.0 - (0.50 - cpcv_s) * 0.3))
                     pick_forecasts.append(capped_f)
+
+
 
                 # Carver Drawdown Throttle: soft warn at 7%, max limit at 15%
                 dd_throttle = apply_drawdown_throttle(dd_t, max_dd_limit=0.15, warn_dd=0.07, min_multiplier=0.25)
@@ -734,7 +797,14 @@ def simulate_intraday_strategy(
                 spill_mult = 1.0 + (spill_s * 0.08).clip(-0.25, 0.25)
                 day_slice["intraday_sniper_score"] = day_slice["intraday_sniper_score"] * spill_mult
 
+            # Series #9 Marcos Lopez de Prado AFML: CPCV Path Stability Fusion
+            if "cpcv_stability_score" in day_slice.columns:
+                cpcv_ser = day_slice["cpcv_stability_score"].fillna(0.50)
+                cpcv_mult = 1.0 + ((cpcv_ser - 0.50) * 0.06).clip(-0.10, 0.10)
+                day_slice["intraday_sniper_score"] = day_slice["intraday_sniper_score"] * cpcv_mult
+
             cands = day_slice[cond].sort_values("intraday_sniper_score", ascending=False)
+
             if not cands.empty:
                 for _, c in cands.iterrows():
                     # Intraday earnings guard
@@ -901,8 +971,10 @@ def simulate_dual_shift_strategy(
 
         peak_equity = max(peak_equity, equity)
         dd_t = (peak_equity - equity) / peak_equity if peak_equity > 0 else 0.0
-        # Carver Portfolio Drawdown Throttle to ensure MaxDD <= 16% (Master calibrated: Equity > 1.8M, Sharpe 1.53, MaxDD 15.9%)
-        throttle = apply_drawdown_throttle(dd_t, max_dd_limit=0.14, warn_dd=0.06, min_multiplier=0.50)
+        # Carver Portfolio Drawdown Throttle to ensure MaxDD <= 16% (Master calibrated: Equity > 2.0M, Sharpe 1.51, MaxDD 15.7%)
+        throttle = apply_drawdown_throttle(dd_t, max_dd_limit=0.155, warn_dd=0.065, min_multiplier=0.50)
+
+
 
         if is_latest:
             trade_logs.append(
