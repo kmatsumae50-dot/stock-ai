@@ -110,6 +110,11 @@ OVERNIGHT_CURATED_FEATURES = [
     "chan_kalman_spread",
     "chan_kalman_zscore",
     "chan_kalman_slope",
+    # 13. Andrew W. Lo & A. Craig MacKinlay Lead-Lag Network Spillover Features
+    "leadlag_spillover_alpha_1d",
+    "leadlag_spillover_alpha_3d",
+    "leadlag_leader_momentum_z",
+    "leadlag_lead_strength",
 ]
 
 
@@ -238,6 +243,7 @@ CROSS_SECTIONAL_FEATURES = [
     "cs_zscore_return_5d",
     "sector_relative_return_1d",
     "cs_rank_macro_sensitivity",
+    "cs_rank_leadlag_spillover",
 ]
 
 
@@ -338,6 +344,10 @@ def add_cross_sectional_overnight_features(pooled_df: pd.DataFrame) -> pd.DataFr
     # 7. Giuseppe Paleologo & Microstructure Daily Cross-Sectional Rank Normalization
     from stock_ai.features.microstructure_paleologo import add_cross_sectional_microstructure_features
     result = add_cross_sectional_microstructure_features(result)
+
+    # 8. Andrew W. Lo & A. Craig MacKinlay Lead-Lag Network Spillover Features
+    from stock_ai.features.lead_lag_network import add_cross_sectional_lead_lag_features
+    result = add_cross_sectional_lead_lag_features(result)
 
     return result
 

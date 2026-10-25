@@ -1330,6 +1330,22 @@ def predict_daytrade_sniper(
     else:
         adaptive_badge = "🧠 適応信頼度: 中立 (±0%)"
 
+    # =======================================================================
+    # Series #8 Andrew W. Lo & A. Craig MacKinlay Lead-Lag Network Spillover Alpha
+    # =======================================================================
+    from stock_ai.features.lead_lag_network import (
+        apply_lead_lag_forecast_adjustment,
+        get_lead_lag_insight_for_ticker,
+    )
+    ll_insight = get_lead_lag_insight_for_ticker(ticker, recent_pnl_or_ret=None)
+    spillover_score = float(ll_insight.get("leadlag_spillover_score", 0.0))
+    carver_forecast, eff_prob, ll_risk_flag = apply_lead_lag_forecast_adjustment(
+        carver_forecast, eff_prob, spillover_score
+    )
+    prob_up_pct = round(eff_prob * 100.0, 1)
+    if ll_risk_flag and ll_risk_flag not in risk_flags:
+        risk_flags.append(ll_risk_flag)
+
     return {
         "ticker": ticker,
         "name": name or ticker,
@@ -1389,6 +1405,13 @@ def predict_daytrade_sniper(
         "adaptive_credibility_badge": adaptive_badge,
         "adaptive_carver_adj": round(fail_carver_mult, 3),
         "adaptive_hedge_weight": round(adaptive_hedge_w, 3),
+        # Series #8 Lead-Lag Network Spillover Alpha Data
+        "top_leader_ticker": ll_insight["top_leader_ticker"],
+        "top_leader_name": ll_insight["top_leader_name"],
+        "top_leader_return_pct": ll_insight["top_leader_return_pct"],
+        "leadlag_spillover_score": ll_insight["leadlag_spillover_score"],
+        "leadlag_radar_text": ll_insight["leadlag_radar_text"],
+        "leadlag_status_desc": ll_insight["leadlag_status_desc"],
         # Backwards compatible alias keys
         "target_price": waveform_data["target_final_price"],
         "target_pct": waveform_data["target_final_pct"],
@@ -1430,7 +1453,9 @@ def get_daily_daytrade_rankings(
     if not df_results.empty:
         exp_bps_clean = pd.to_numeric(df_results.get("expected_return_bps", 0.0), errors="coerce").fillna(0.0).clip(lower=0.0)
         p_up_clean = pd.to_numeric(df_results.get("probability_up", 50.0), errors="coerce").fillna(50.0)
-        df_results["composite_score"] = p_up_clean * (1.0 + exp_bps_clean / 1000.0)
+        spill_scores = pd.to_numeric(df_results.get("leadlag_spillover_score", 0.0), errors="coerce").fillna(0.0)
+        spill_mult = 1.0 + (spill_scores * 0.08).clip(-0.25, 0.25)
+        df_results["composite_score"] = p_up_clean * (1.0 + exp_bps_clean / 1000.0) * spill_mult
         penalized_tickers = apply_paleologo_cluster_penalty(
             candidates_df=df_results,
             score_col="composite_score",

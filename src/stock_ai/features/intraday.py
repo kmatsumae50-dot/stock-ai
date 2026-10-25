@@ -87,6 +87,10 @@ INTRADAY_BASE_FEATURES = [
     "prior_paleo_idio_return_5d",
     "prior_paleo_idio_sharpe_20d",
     "prior_paleo_beta_neutral_score",
+    # 15. Andrew W. Lo & A. Craig MacKinlay Lead-Lag Network Spillover Features
+    "prior_leadlag_spillover_alpha_1d",
+    "prior_leadlag_leader_momentum_z",
+    "leadlag_opening_gap_divergence",
 ]
 
 INTRADAY_CROSS_SECTIONAL_FEATURES = [
@@ -112,6 +116,8 @@ INTRADAY_CROSS_SECTIONAL_FEATURES = [
     "cs_rank_prior_micro_upward_elasticity_10d",
     "cs_rank_prior_paleo_idio_sharpe_20d",
     "cs_rank_prior_paleo_beta_neutral_score",
+    # Lo & MacKinlay Lead-Lag Opening Gap Rank
+    "cs_rank_leadlag_opening_gap",
 ]
 
 ALL_INTRADAY_FEATURES = INTRADAY_BASE_FEATURES + INTRADAY_CROSS_SECTIONAL_FEATURES
@@ -363,6 +369,10 @@ def add_intraday_premarket_features(df: pd.DataFrame) -> pd.DataFrame:
     from stock_ai.features.microstructure_paleologo import add_premarket_microstructure_paleologo_features
     result = add_premarket_microstructure_paleologo_features(result)
 
+    # 10. Andrew W. Lo & A. Craig MacKinlay Lead-Lag Features (Pre-Market t-1 Lagged)
+    from stock_ai.features.lead_lag_network import add_premarket_lead_lag_features
+    result = add_premarket_lead_lag_features(result)
+
     return result
 
 
@@ -440,5 +450,11 @@ def add_cross_sectional_intraday_features(pooled_df: pd.DataFrame) -> pd.DataFra
     # Giuseppe Paleologo & Microstructure Pre-Market Cross-Sectional Ranks
     from stock_ai.features.microstructure_paleologo import add_cross_sectional_premarket_microstructure_features
     result = add_cross_sectional_premarket_microstructure_features(result)
+
+    # Lo & MacKinlay Lead-Lag Opening Gap Rank
+    if "leadlag_opening_gap_divergence" in result.columns:
+        result["cs_rank_leadlag_opening_gap"] = result.groupby("date")["leadlag_opening_gap_divergence"].rank(pct=True).fillna(0.5)
+    else:
+        result["cs_rank_leadlag_opening_gap"] = 0.5
 
     return result

@@ -974,6 +974,18 @@ def diagnose_portfolio_risk(
         if unrealized_pnl_pct <= -0.07:
             reasons.append(f"🛑 含み損拡大 ({unrealized_pnl_pct:.1%}) により損切り規律ライン接近")
 
+        # Series #8 Lead-Lag Network Spillover Insight
+        try:
+            from stock_ai.features.lead_lag_network import get_lead_lag_insight_for_ticker
+            ll_pos = get_lead_lag_insight_for_ticker(ticker)
+            spill_s = float(ll_pos.get("leadlag_spillover_score", 0.0))
+            if spill_s >= 0.8:
+                reasons.append(f"🔗 先導株波及: {ll_pos['top_leader_ticker']} {ll_pos['top_leader_name']} ({ll_pos['top_leader_return_pct']:+.1f}%) ➔ 出遅れ追随期待")
+            elif spill_s <= -0.8:
+                reasons.append(f"⚠️ 先導株波及: {ll_pos['top_leader_ticker']} {ll_pos['top_leader_name']} ({ll_pos['top_leader_return_pct']:+.1f}%) ➔ 連れ安・反落警戒")
+        except Exception:
+            pass
+
         # Grade determination
         if earnings_risk or p_up_val < 0.40 or unrealized_pnl_pct <= -0.07:
             grade = "RED"

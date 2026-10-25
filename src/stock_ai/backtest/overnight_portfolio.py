@@ -228,6 +228,10 @@ def collect_overnight_universe_predictions(
                 if "paleo_beta_neutral_score" in sub.columns
                 else 0.0
             )
+        if "leadlag_spillover_alpha_1d" not in sub.columns:
+            sub["leadlag_spillover_alpha_1d"] = 0.0
+        if "leadlag_leader_momentum_z" not in sub.columns:
+            sub["leadlag_leader_momentum_z"] = 0.0
 
         cols_to_keep = [
             "date",
@@ -258,6 +262,8 @@ def collect_overnight_universe_predictions(
             "prior_micro_upward_elasticity_10d",
             "prior_paleo_idio_sharpe_20d",
             "prior_paleo_beta_neutral_score",
+            "leadlag_spillover_alpha_1d",
+            "leadlag_leader_momentum_z",
         ]
         records.append(sub[cols_to_keep])
 
@@ -348,8 +354,15 @@ def simulate_overnight_strategy(
                 eligible = eligible[~eligible["earnings_risk"].fillna(False).astype(bool)]
             if "jumping_catch_risk" in eligible.columns:
                 eligible = eligible[~eligible["jumping_catch_risk"].fillna(False).astype(bool)]
+            # Series #8 Lead-Lag Spillover Alpha: filter out severe negative spillover divergence
+            if "leadlag_spillover_alpha_1d" in eligible.columns:
+                eligible = eligible[eligible["leadlag_spillover_alpha_1d"].fillna(0.0) > -1.5]
             sort_col = "p_cs" if has_cs else "p_up"
-            elites = eligible.sort_values(sort_col, ascending=False)
+            if "leadlag_spillover_alpha_1d" in eligible.columns:
+                spill_boost = 1.0 + (eligible["leadlag_spillover_alpha_1d"].fillna(0.0).clip(0.0, 2.0) * 0.05)
+                elites = eligible.assign(_sort_score=eligible[sort_col] * spill_boost).sort_values("_sort_score", ascending=False)
+            else:
+                elites = eligible.sort_values(sort_col, ascending=False)
             if not elites.empty:
                 long_picks = elites.head(2)["ticker"].tolist()
 
@@ -466,6 +479,13 @@ def simulate_overnight_strategy(
                     p_val = float(t_row["p_cs"].values[0]) if "p_cs" in t_row.columns and not t_row["p_cs"].empty else 0.55
                     raw_f = max(0.001, (p_val - 0.50))
                     capped_f = float(scale_and_cap_forecast(raw_f, target_abs_forecast=10.0, cap=20.0, default_abs_norm=0.05))
+                    # Lead-Lag Spillover forecast adjustment
+                    if "leadlag_spillover_alpha_1d" in t_row.columns and not t_row["leadlag_spillover_alpha_1d"].empty:
+                        s_val = float(t_row["leadlag_spillover_alpha_1d"].values[0])
+                        if s_val >= 0.8:
+                            capped_f = min(20.0, capped_f * (1.0 + min(0.20, (s_val - 0.8) * 0.10)))
+                        elif s_val <= -0.8:
+                            capped_f = max(2.0, capped_f * max(0.70, 1.0 - (abs(s_val) - 0.8) * 0.15))
                     pick_forecasts.append(capped_f)
 
                 # Carver Drawdown Throttle: soft warn at 7%, max limit at 15%
@@ -707,6 +727,12 @@ def simulate_intraday_strategy(
                     _, carver_pen, _ = compute_failure_similarity_penalty(cand_prof, cur_adapt_state.get("failure_archetypes", []))
                     cred_mults.append(c_mult * carver_pen)
                 day_slice["intraday_sniper_score"] = day_slice["intraday_sniper_score"] * np.array(cred_mults)
+
+            # Series #8 Lo & MacKinlay Lead-Lag Network Spillover Alpha
+            if "leadlag_spillover_alpha_1d" in day_slice.columns:
+                spill_s = day_slice["leadlag_spillover_alpha_1d"].fillna(0.0)
+                spill_mult = 1.0 + (spill_s * 0.08).clip(-0.25, 0.25)
+                day_slice["intraday_sniper_score"] = day_slice["intraday_sniper_score"] * spill_mult
 
             cands = day_slice[cond].sort_values("intraday_sniper_score", ascending=False)
             if not cands.empty:
