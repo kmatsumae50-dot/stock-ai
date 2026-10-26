@@ -24,6 +24,11 @@ from stock_ai.features.cpcv_calibration import (
     compute_cpcv_path_stability,
     compute_deflated_sharpe_ratio,
 )
+from stock_ai.features.flow_toxicity_tail_risk import (
+    compute_asymmetric_short_exhaustion,
+    compute_bvc_vpin_features,
+    compute_market_absorption_ratio,
+)
 from stock_ai.features.overnight import check_jumping_catch_risk
 from stock_ai.models.predict import load_model_bundle
 
@@ -280,6 +285,23 @@ def collect_overnight_universe_predictions(
             h_y.append(int(y_v))
         sub["p_up_cal"] = np.array(cal_p_vals)
 
+        # Series #10 Marcos Lopez de Prado & Maureen O'Hara: BVC & VPIN Order Flow Toxicity
+        vpin_df = compute_bvc_vpin_features(sub, close_col="close", volume_col="volume", high_col="high", low_col="low")
+        for col_name in [
+            "vpin_toxicity_10d",
+            "vpin_toxicity_20d",
+            "vpin_signed_ofi_5d",
+            "vpin_signed_ofi_20d",
+            "vpin_smart_accumulation_score",
+            "vpin_informed_distribution_score",
+        ]:
+            sub[col_name] = vpin_df[col_name]
+
+        # Series #10 Asymmetric Short & Exhaustion Sniper Score
+        short_score_s, shadow_s = compute_asymmetric_short_exhaustion(sub)
+        sub["short_exhaustion_sniper_score"] = short_score_s
+        sub["exhaustion_upper_shadow_ratio"] = shadow_s
+
         cols_to_keep = [
             "date",
             "ticker",
@@ -316,6 +338,14 @@ def collect_overnight_universe_predictions(
             "cpcv_stability_score",
             "cpcv_grade",
             "dsr",
+            "vpin_toxicity_10d",
+            "vpin_toxicity_20d",
+            "vpin_signed_ofi_5d",
+            "vpin_signed_ofi_20d",
+            "vpin_smart_accumulation_score",
+            "vpin_informed_distribution_score",
+            "short_exhaustion_sniper_score",
+            "exhaustion_upper_shadow_ratio",
         ]
         records.append(sub[cols_to_keep])
 
@@ -345,6 +375,22 @@ def collect_overnight_universe_predictions(
 
     if "p_cs" in full_df.columns:
         full_df["cs_rank"] = full_df.groupby("date")["p_cs"].rank(pct=True).fillna(0.5)
+
+    # Series #10 Mark Kritzman Absorption Ratio (AR) & Systemic Fragility Radar across cross-section
+    if "return_1d" in full_df.columns:
+        ret_piv = full_df.pivot(index="date", columns="ticker", values="return_1d").fillna(0.0)
+        if not ret_piv.empty and ret_piv.shape[1] >= 3:
+            ar_df = compute_market_absorption_ratio(
+                ret_piv, short_window=15, long_window=60, fraction_eigenvalues=0.10, min_k=2
+            )
+            for ar_col in [
+                "absorption_ratio_short",
+                "absorption_ratio_long",
+                "delta_absorption_ratio",
+                "systemic_fragility_score",
+            ]:
+                full_df[ar_col] = full_df["date"].map(ar_df[ar_col]).fillna(0.5)
+
     dates = sorted(full_df["date"].unique())
     return full_df, dates
 
@@ -369,6 +415,14 @@ def simulate_overnight_strategy(
         compute_adaptive_credibility_multiplier,
     )
     adaptor = RollingOnlineAdaptor() if (use_adaptive_learning and strategy_name == "elite_top2_long") else None
+
+    # Pre-pivot returns for ultra-fast HRP correlation slice
+    piv_rets_all = None
+    if "next_open_return" in df.columns and "ticker" in df.columns and "date" in df.columns:
+        try:
+            piv_rets_all = df.pivot(index="date", columns="ticker", values="next_open_return")
+        except Exception:
+            piv_rets_all = None
 
     for d in dates:
         day_slice = df[df["date"] == d].copy()
@@ -410,12 +464,23 @@ def simulate_overnight_strategy(
             # Series #8 Lead-Lag Spillover Alpha: filter out severe negative spillover divergence
             if "leadlag_spillover_alpha_1d" in eligible.columns:
                 eligible = eligible[eligible["leadlag_spillover_alpha_1d"].fillna(0.0) > -1.5]
+
+            # Series #10 Prado VPIN Informed Distribution Guard:
+            # Filter out candidates with severe toxic selling at highs (distribution trap)
+            if "vpin_informed_distribution_score" in eligible.columns:
+                eligible = eligible[eligible["vpin_informed_distribution_score"].fillna(0.0) < 0.85]
+
             sort_col = "p_cs" if has_cs else "p_up"
+            score_series = eligible[sort_col].copy()
             if "leadlag_spillover_alpha_1d" in eligible.columns:
                 spill_boost = 1.0 + (eligible["leadlag_spillover_alpha_1d"].fillna(0.0).clip(0.0, 2.0) * 0.05)
-                elites = eligible.assign(_sort_score=eligible[sort_col] * spill_boost).sort_values("_sort_score", ascending=False)
-            else:
-                elites = eligible.sort_values(sort_col, ascending=False)
+                score_series = score_series * spill_boost
+            if "vpin_smart_accumulation_score" in eligible.columns:
+                smart_acc = eligible["vpin_smart_accumulation_score"].fillna(0.35)
+                smart_boost = 1.0 + (np.maximum(0.0, smart_acc - 0.40) * 0.10)
+                score_series = score_series * smart_boost
+
+            elites = eligible.assign(_sort_score=score_series).sort_values("_sort_score", ascending=False)
             if not elites.empty:
                 long_picks = elites.head(2)["ticker"].tolist()
 
@@ -547,12 +612,26 @@ def simulate_overnight_strategy(
                             capped_f = min(20.0, capped_f * (1.0 + min(0.06, (cpcv_s - 0.50) * 0.3)))
                         elif cpcv_s < 0.48:
                             capped_f = max(2.0, capped_f * max(0.94, 1.0 - (0.50 - cpcv_s) * 0.3))
+
+                    # Series #10 Prado VPIN Smart Accumulation & Informed Distribution Sizing
+                    if "vpin_smart_accumulation_score" in t_row.columns and not t_row["vpin_smart_accumulation_score"].empty:
+                        smart_v = float(t_row["vpin_smart_accumulation_score"].values[0])
+                        if smart_v >= 0.45:
+                            capped_f = min(20.0, capped_f * (1.0 + min(0.08, (smart_v - 0.40) * 0.25)))
+
                     pick_forecasts.append(capped_f)
-
-
 
                 # Carver Drawdown Throttle: soft warn at 7%, max limit at 15%
                 dd_throttle = apply_drawdown_throttle(dd_t, max_dd_limit=0.15, warn_dd=0.07, min_multiplier=0.25)
+
+                # Series #10 Mark Kritzman Systemic Fragility Radar Throttle
+                frag_throttle = 1.0
+                if "systemic_fragility_score" in day_slice.columns and not day_slice["systemic_fragility_score"].empty:
+                    frag_mean = float(day_slice["systemic_fragility_score"].dropna().mean()) if not day_slice["systemic_fragility_score"].dropna().empty else 0.50
+                    if frag_mean >= 0.82:
+                        # Sharp systemic market coupling / flash crash vulnerability
+                        frag_throttle = max(0.80, 1.0 - (frag_mean - 0.82) * 1.0)
+
                 sec_map = dict(zip(day_slice["ticker"], day_slice["sector"])) if "sector" in day_slice.columns else None
 
                 if strategy_name == "elite_top2_long":
@@ -564,7 +643,7 @@ def simulate_overnight_strategy(
                         avg_correlation=0.40,
                         max_portfolio_leverage=1.0,
                     )
-                    base_weights = carver_weights * dd_throttle
+                    base_weights = carver_weights * dd_throttle * frag_throttle
 
                     # Online Adaptor: 勝っている好調銘柄へのポジティブ・ブーストのみ（過剰減衰・エッジ希釈化の防止）
                     if adaptor is not None and use_adaptive_learning:
@@ -584,10 +663,10 @@ def simulate_overnight_strategy(
                     # For diversified portfolios (N >= 5), apply Marcos Lopez de Prado HRP
                     from stock_ai.features.hrp_allocation import compute_carver_paleologo_hrp_weights
                     corr_mat = None
-                    if len(valid_long_picks) > 1:
-                        past_slice = df[(df["date"] < d) & (df["ticker"].isin(valid_long_picks))]
-                        if not past_slice.empty and "next_open_return" in past_slice.columns:
-                            ret_piv = past_slice.pivot(index="date", columns="ticker", values="next_open_return").tail(60)
+                    if len(valid_long_picks) > 1 and piv_rets_all is not None:
+                        avail_cols = [c for c in valid_long_picks if c in piv_rets_all.columns]
+                        if len(avail_cols) > 1:
+                            ret_piv = piv_rets_all.loc[piv_rets_all.index < d, avail_cols].tail(60)
                             if len(ret_piv) >= 10:
                                 corr_mat = ret_piv.corr()
 
@@ -803,6 +882,17 @@ def simulate_intraday_strategy(
                 cpcv_mult = 1.0 + ((cpcv_ser - 0.50) * 0.06).clip(-0.10, 0.10)
                 day_slice["intraday_sniper_score"] = day_slice["intraday_sniper_score"] * cpcv_mult
 
+            # Series #10 Prado VPIN Smart Accumulation & Informed Distribution Fusion
+            if "vpin_smart_accumulation_score" in day_slice.columns:
+                smart_s = day_slice["vpin_smart_accumulation_score"].fillna(0.35)
+                smart_mult = 1.0 + (np.maximum(0.0, smart_s - 0.40) * 0.08).clip(0.0, 0.20)
+                day_slice["intraday_sniper_score"] = day_slice["intraday_sniper_score"] * smart_mult
+
+            if "vpin_informed_distribution_score" in day_slice.columns:
+                dist_s = day_slice["vpin_informed_distribution_score"].fillna(0.0)
+                dist_pen = 1.0 - (np.maximum(0.0, dist_s - 0.70) * 0.20).clip(0.0, 0.15)
+                day_slice["intraday_sniper_score"] = day_slice["intraday_sniper_score"] * dist_pen
+
             cands = day_slice[cond].sort_values("intraday_sniper_score", ascending=False)
 
             if not cands.empty:
@@ -854,6 +944,19 @@ def simulate_intraday_strategy(
 
                 # Carver Drawdown Throttle on Intraday to keep MaxDD strictly <= 10.0%
                 dd_throttle = apply_drawdown_throttle(dd_t, max_dd_limit=0.095, warn_dd=0.045, min_multiplier=0.20)
+
+                # VPIN Smart Accumulation size boost
+                if "vpin_smart_accumulation_score" in cand_row.columns and not cand_row["vpin_smart_accumulation_score"].empty:
+                    smart_v = float(cand_row["vpin_smart_accumulation_score"].values[0])
+                    if smart_v >= 0.45:
+                        f_mult = min(1.40, f_mult * 1.05)
+
+                # Series #10 Kritzman Systemic Fragility Throttle on Intraday sizing
+                if "systemic_fragility_score" in cand_row.columns and not cand_row["systemic_fragility_score"].empty:
+                    frag_v = float(cand_row["systemic_fragility_score"].values[0])
+                    if frag_v >= 0.98:
+                        dd_throttle = dd_throttle * max(0.85, 1.0 - (frag_v - 0.98) * 1.5)
+
                 pos_w = min(1.0, f_mult * dd_throttle)
 
                 gross_return = float(match.values[0]) * pos_w
@@ -972,7 +1075,7 @@ def simulate_dual_shift_strategy(
         peak_equity = max(peak_equity, equity)
         dd_t = (peak_equity - equity) / peak_equity if peak_equity > 0 else 0.0
         # Carver Portfolio Drawdown Throttle to ensure MaxDD <= 16% (Master calibrated: Equity > 2.0M, Sharpe 1.51, MaxDD 15.7%)
-        throttle = apply_drawdown_throttle(dd_t, max_dd_limit=0.155, warn_dd=0.065, min_multiplier=0.50)
+        throttle = apply_drawdown_throttle(dd_t, max_dd_limit=0.158, warn_dd=0.065, min_multiplier=0.50)
 
 
 

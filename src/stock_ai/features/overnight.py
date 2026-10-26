@@ -231,6 +231,22 @@ def add_overnight_features(data: pd.DataFrame) -> pd.DataFrame:
     result["vix_spike_flag"] = ((vix_ret > 0.08) | (vix_cl > 25.0)).astype(float)
     result["vix_stress_score"] = (vix_ret / 0.10).clip(-3.0, 3.0)
 
+    # Series #10 Marcos Lopez de Prado Bulk Volume Classification & VPIN Toxicity & Asymmetric Short
+    try:
+        from stock_ai.features.flow_toxicity_tail_risk import (
+            compute_asymmetric_short_exhaustion,
+            compute_bvc_vpin_features,
+        )
+        vpin_feats = compute_bvc_vpin_features(result)
+        for col_name in vpin_feats.columns:
+            result[col_name] = vpin_feats[col_name]
+
+        short_score_s, shadow_s = compute_asymmetric_short_exhaustion(result)
+        result["short_exhaustion_sniper_score"] = short_score_s
+        result["exhaustion_upper_shadow_ratio"] = shadow_s
+    except Exception:
+        pass
+
     return result
 
 

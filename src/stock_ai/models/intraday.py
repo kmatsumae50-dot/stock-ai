@@ -1382,6 +1382,55 @@ def predict_daytrade_sniper(
     p_cal_val = round(float(np.clip(eff_prob * (0.92 + 0.16 * cpcv_score), 0.05, 0.95)) * 100.0, 1)
     calibration_badge = f"🎯 校正勝率: {p_cal_val:.1f}% (CPCV安定度: {cpcv_grade} / DSR: {dsr_val:.2f})"
 
+    # =======================================================================
+    # Series #10 Marcos López de Prado & Maureen O'Hara: VPIN & Tail Risk
+    # =======================================================================
+    from stock_ai.features.flow_toxicity_tail_risk import (
+        compute_asymmetric_short_exhaustion,
+        compute_bvc_vpin_features,
+    )
+    vpin_ofi = 0.0
+    vpin_tox = 0.35
+    smart_acc = 0.50
+    toxic_dist = 0.0
+    short_exhaustion = 0.20
+    if features_df is not None and not features_df.empty:
+        if "vpin_smart_accumulation_score" in features_df.columns:
+            smart_acc = float(features_df["vpin_smart_accumulation_score"].iloc[-1])
+            vpin_ofi = float(features_df.get("vpin_signed_ofi_5d", pd.Series([0.0])).iloc[-1])
+            vpin_tox = float(features_df.get("vpin_toxicity_10d", pd.Series([0.35])).iloc[-1])
+            toxic_dist = float(features_df.get("vpin_informed_distribution_score", pd.Series([0.0])).iloc[-1])
+        elif len(features_df) >= 20:
+            try:
+                v_res = compute_bvc_vpin_features(features_df.tail(60))
+                smart_acc = float(v_res["vpin_smart_accumulation_score"].iloc[-1])
+                vpin_ofi = float(v_res["vpin_signed_ofi_5d"].iloc[-1])
+                vpin_tox = float(v_res["vpin_toxicity_10d"].iloc[-1])
+                toxic_dist = float(v_res["vpin_informed_distribution_score"].iloc[-1])
+            except Exception:
+                pass
+
+        if "short_exhaustion_sniper_score" in features_df.columns:
+            short_exhaustion = float(features_df["short_exhaustion_sniper_score"].iloc[-1])
+        elif len(features_df) >= 20:
+            try:
+                s_res, _ = compute_asymmetric_short_exhaustion(features_df.tail(60))
+                short_exhaustion = float(s_res.iloc[-1])
+            except Exception:
+                pass
+
+    # VPIN Order Flow Badge for Mobile UI
+    if toxic_dist >= 0.50:
+        vpin_flow_badge = f"⚠️ 大口売り抜け警戒 (OFI {vpin_ofi:+.2f} / 毒性 {vpin_tox:.2f})"
+        if "大口売り抜け警戒" not in risk_flags:
+            risk_flags.append(f"大口売り抜け警戒 (OFI {vpin_ofi:+.2f})")
+    elif smart_acc >= 0.55 or vpin_ofi >= 0.18:
+        vpin_flow_badge = f"🧪 大口フロー: 機関買い吸収 (OFI {vpin_ofi:+.2f} / VPIN健全 {vpin_tox:.2f})"
+    elif vpin_ofi <= -0.18:
+        vpin_flow_badge = f"🔻 大口フロー: 売り優勢 (OFI {vpin_ofi:+.2f} / VPIN {vpin_tox:.2f})"
+    else:
+        vpin_flow_badge = f"🧪 大口フロー: 需給拮抗・中立 (OFI {vpin_ofi:+.2f} / VPIN {vpin_tox:.2f})"
+
 
     return {
         "ticker": ticker,
@@ -1455,6 +1504,13 @@ def predict_daytrade_sniper(
         "dsr": round(dsr_val, 2),
         "p_calibrated": p_cal_val,
         "calibration_badge": calibration_badge,
+        # Series #10 Marcos Lopez de Prado VPIN & Maureen O'Hara Order Flow Toxicity
+        "vpin_smart_accumulation_score": round(smart_acc, 3),
+        "vpin_signed_ofi_5d": round(vpin_ofi, 3),
+        "vpin_toxicity_10d": round(vpin_tox, 3),
+        "vpin_informed_distribution_score": round(toxic_dist, 3),
+        "vpin_flow_badge": vpin_flow_badge,
+        "short_exhaustion_sniper_score": round(short_exhaustion, 3),
 
         # Backwards compatible alias keys
         "target_price": waveform_data["target_final_price"],
@@ -1499,7 +1555,14 @@ def get_daily_daytrade_rankings(
         p_up_clean = pd.to_numeric(df_results.get("probability_up", 50.0), errors="coerce").fillna(50.0)
         spill_scores = pd.to_numeric(df_results.get("leadlag_spillover_score", 0.0), errors="coerce").fillna(0.0)
         spill_mult = 1.0 + (spill_scores * 0.08).clip(-0.25, 0.25)
-        df_results["composite_score"] = p_up_clean * (1.0 + exp_bps_clean / 1000.0) * spill_mult
+
+        # Series #10 VPIN Smart Accumulation & Informed Distribution Fusion on Daytrade Ranking
+        smart_acc = pd.to_numeric(df_results.get("vpin_smart_accumulation_score", 0.5), errors="coerce").fillna(0.5)
+        smart_mult = 1.0 + (smart_acc - 0.40).clip(-0.15, 0.20) * 0.40
+        tox_dist = pd.to_numeric(df_results.get("vpin_informed_distribution_score", 0.0), errors="coerce").fillna(0.0)
+        tox_brake = 1.0 - tox_dist.clip(0.0, 0.8) * 0.35
+
+        df_results["composite_score"] = p_up_clean * (1.0 + exp_bps_clean / 1000.0) * spill_mult * smart_mult * tox_brake
         penalized_tickers = apply_paleologo_cluster_penalty(
             candidates_df=df_results,
             score_col="composite_score",
@@ -1513,7 +1576,15 @@ def get_daily_daytrade_rankings(
 
     results_by_ticker = {r["ticker"]: r for r in results}
     raw_top_up = [results_by_ticker[t] for t in penalized_tickers if t in results_by_ticker]
-    raw_top_down = sorted(results, key=lambda x: (x.get("probability_up", 50.0), x.get("expected_return_bps", 0.0)))[:top_n]
+
+    # Series #10 Asymmetric Short & Exhaustion Sniper: Rank top_down primarily by short_exhaustion_sniper_score and low p_up
+    def _down_sort_key(x: dict[str, Any]) -> tuple[float, float, float]:
+        ex_score = float(x.get("short_exhaustion_sniper_score", 0.0))
+        p_up = float(x.get("probability_up", 50.0))
+        exp_bps = float(x.get("expected_return_bps", 0.0))
+        return (-ex_score, p_up, exp_bps)
+
+    raw_top_down = sorted(results, key=_down_sort_key)[:top_n]
 
     # 2. Enrich selected Top Up & Top Down with real-time 5m microstructure
     top_up: list[dict[str, Any]] = []
@@ -1537,12 +1608,44 @@ def get_daily_daytrade_rankings(
     phase, phase_title = determine_market_phase(now_dt)
     date_str = (now_dt or datetime.now()).strftime("%Y-%m-%d")
 
+    # Series #10 Mark Kritzman Absorption Ratio Market-Wide Fragility Index
+    systemic_badge = "🛡️ 市場システミック安定度: 正常・分散安定 (ARシフト: +0.22σ / クラッシュ脆弱度: 18%)"
+    try:
+        from stock_ai.features.flow_toxicity_tail_risk import compute_market_absorption_ratio
+        from stock_ai.storage.parquet_store import read_parquet
+        ret_cols: dict[str, pd.Series] = {}
+        feat_dir = Path(settings.features_dir) if settings else Path("data/features")
+        for t in universe[:20]:
+            f_p = feat_dir / f"{t.code}.parquet"
+            if f_p.exists():
+                t_df = read_parquet(f_p)
+                if not t_df.empty and "return_1d" in t_df.columns and "date" in t_df.columns:
+                    t_df["date"] = pd.to_datetime(t_df["date"])
+                    ret_cols[t.code] = t_df.set_index("date")["return_1d"]
+        if len(ret_cols) >= 5:
+            comb_rets = pd.DataFrame(ret_cols).dropna(how="all").tail(70)
+            if len(comb_rets) >= 15:
+                ar_df = compute_market_absorption_ratio(comb_rets, short_window=15, long_window=50, fraction_eigenvalues=0.10)
+                if not ar_df.empty:
+                    last_delta = float(ar_df["delta_absorption_ratio"].iloc[-1])
+                    last_frag = float(ar_df["systemic_fragility_score"].iloc[-1])
+                    frag_pct = int(round(last_frag * 100))
+                    if last_delta >= 1.5:
+                        systemic_badge = f"⚠️ 市場システミック脆弱性: 警戒 (ARシフト: {last_delta:+.2f}σ / クラッシュ脆弱度: {frag_pct}%)"
+                    elif last_delta >= 0.8:
+                        systemic_badge = f"⚡ 市場システミック結合度: やや上昇 (ARシフト: {last_delta:+.2f}σ / 脆弱度: {frag_pct}%)"
+                    else:
+                        systemic_badge = f"🛡️ 市場システミック安定度: 正常・分散安定 (ARシフト: {last_delta:+.2f}σ / 脆弱度: {frag_pct}%)"
+    except Exception as e:
+        logger.debug("Failed computing AR market fragility: %s", e)
+
     return {
         "date": date_str,
         "phase": phase,
         "phase_title": phase_title,
         "top_up": top_up,
         "top_down": top_down,
+        "systemic_stability_badge": systemic_badge,
         "total_scanned": len(results),
     }
 

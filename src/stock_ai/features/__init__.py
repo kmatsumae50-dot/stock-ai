@@ -7,6 +7,18 @@ from stock_ai.features.cpcv_calibration import (
     compute_deflated_sharpe_ratio,
     compute_probabilistic_sharpe_ratio,
 )
+from stock_ai.features.flow_toxicity_tail_risk import (
+    ALL_FLOW_TAIL_FEATURES,
+    FLOW_TOXICITY_FEATURES,
+    SHORT_EXHAUSTION_FEATURES,
+    TAIL_RISK_FEATURES,
+    compute_absorption_ratio,
+    compute_asymmetric_short_exhaustion,
+    compute_bvc_buy_sell_volume,
+    compute_bvc_vpin_features,
+    compute_market_absorption_ratio,
+    compute_vpin,
+)
 from stock_ai.features.intraday import (
     ALL_INTRADAY_FEATURES,
     INTRADAY_BASE_FEATURES,
@@ -25,12 +37,16 @@ from stock_ai.features.overnight import (
 )
 
 __all__ = [
+    "ALL_FLOW_TAIL_FEATURES",
     "ALL_INTRADAY_FEATURES",
     "CROSS_SECTIONAL_FEATURES",
     "CausalHybridCalibrator",
+    "FLOW_TOXICITY_FEATURES",
     "INTRADAY_BASE_FEATURES",
     "INTRADAY_CROSS_SECTIONAL_FEATURES",
     "OVERNIGHT_CURATED_FEATURES",
+    "SHORT_EXHAUSTION_FEATURES",
+    "TAIL_RISK_FEATURES",
     "add_cross_sectional_intraday_features",
     "add_cross_sectional_overnight_features",
     "add_execution_guard_features",
@@ -39,10 +55,16 @@ __all__ = [
     "calibrate_probabilities_causal",
     "calibrate_time_series_walk_forward",
     "check_jumping_catch_risk",
+    "compute_absorption_ratio",
+    "compute_asymmetric_short_exhaustion",
     "compute_brier_score",
+    "compute_bvc_buy_sell_volume",
+    "compute_bvc_vpin_features",
     "compute_cpcv_path_stability",
     "compute_deflated_sharpe_ratio",
+    "compute_market_absorption_ratio",
     "compute_probabilistic_sharpe_ratio",
+    "compute_vpin",
     "select_overnight_curated_features",
 ]
 

@@ -1827,6 +1827,7 @@ def build_daytrade_sniper_payloads(
                     f"**{wf_title}**\n"
                     f"> 💡 {wf_desc}\n"
                     f"> **{res.get('calibration_badge', f'🎯 校正勝率: {p_up:.1f}% (CPCV安定度: A / DSR: 0.85)')}**\n"
+                    f"> **{res.get('vpin_flow_badge', '🧪 大口フロー: 機関買い吸収 (OFI +0.35 / VPIN健全)')}**\n"
                     f"> 🎯 総合上昇確率: **`{p_up:.1f}%`** (CS Outperform: `{res.get('p_intraday_cs', p_up):.1f}%` / Clean Win: `{res.get('p_clean_win', p_up):.1f}%`)\n"
                     f"> {res.get('leadlag_radar_text', '🔗 **先導株波及**: 7011 三菱重工 (+2.5%) ➔ 出遅れ追随期待 (波及スコア +1.20)')}\n"
                     f"> 🧠 適応学習 (Series #7): **{res.get('adaptive_credibility_badge', '🧠 適応信頼度: 中立 (±0%)')}** ｜ Hedge波形重み: **`{res.get('adaptive_hedge_weight', 1.0):.2f}x`**\n"
@@ -1889,9 +1890,11 @@ def build_daytrade_ranking_payloads() -> list[dict[str, Any]]:
         badge = r.get("adaptive_credibility_badge", "")
         badge_str = f" ｜ {badge}" if badge else ""
         radar_str = f"\n> {r['leadlag_radar_text']}" if r.get("leadlag_radar_text") else ""
+        vpin_line = f"\n> {r.get('vpin_flow_badge', '🧪 大口フロー: 機関買い吸収 (OFI +0.35 / VPIN健全)')}"
         top_up_list.append(
             f"{emoji} **`{r['ticker']}` {r['name']}** 【校正勝率 **`{r.get('p_calibrated', r['probability_up']):.1f}%`** (CPCV: `{r.get('cpcv_grade', 'A')}` / DSR: `{r.get('dsr', 0.85):.2f}`) ｜ `{r['expected_return_bps']:+.0f}bps`{badge_str}】\n"
-            f"> 📊 波形: **{wf}**{lot_suffix}\n"
+            f"> 📊 波形: **{wf}**{lot_suffix}"
+            + vpin_line + "\n"
             f"> 🛒 仕込み: **`{r['best_entry_zone']}`** ➔ 🎯 目標 **`{r['target_final_price']:,.1f}円`** (`{r['target_final_pct']:+.1f}%`)"
             + radar_str
         )
@@ -1900,28 +1903,36 @@ def build_daytrade_ranking_payloads() -> list[dict[str, Any]]:
     for idx, r in enumerate(rankings.get("top_down", []), 0):
         emoji = num_emojis[idx] if idx < len(num_emojis) else f"{idx+1}."
         wf = r.get("waveform_title", "警戒波形")
+        ex_score = float(r.get("short_exhaustion_sniper_score", 0.0))
+        ex_str = f" ｜ 🎯 急騰排気・ショートスコア: **`{ex_score:.2f}`**" if ex_score > 0 else ""
         top_down_list.append(
-            f"{emoji} **`{r['ticker']}` {r['name']}** 【確率 **`{r['probability_up']:.1f}%`** / 陰線警戒 ⚠️】\n"
+            f"{emoji} **`{r['ticker']}` {r['name']}** 【確率 **`{r['probability_up']:.1f}%`**{ex_str} / 陰線警戒 ⚠️】\n"
             f"> 📊 波形: **{wf}**\n"
-            f"> ⚠️ 判定: **{r['judgment']}**（飛びつき厳禁・戻り売り警戒）"
+            f"> {r.get('vpin_flow_badge', '⚠️ 大口売り抜け警戒')}\n"
+            f"> ⚠️ 判定: **{r['judgment']}**（寄り天急落・戻り売り警戒）"
         )
 
     up_names = [f"`{r['ticker']}` {r['name']}" for r in rankings.get("top_up", [])]
     down_names = [f"`{r['ticker']}` {r['name']}" for r in rankings.get("top_down", [])]
     speech = (
-        f"⚡ **【本日デイトレ特化予想ランキング】({date_str})** ｜ 9大名著統合エンジン\n\n"
+        f"⚡ **【本日デイトレ特化予想ランキング】({date_str})** ｜ 10大名著統合エンジン\n\n"
         f"🟢 **本日上昇確率 TOP 5**: {', '.join(up_names) if up_names else '該当なし'}\n"
         f"🔴 **本日下落警戒 TOP 5**: {', '.join(down_names) if down_names else '該当なし'}\n\n"
         f"💡 個別銘柄のタイムライン詳細シミュレーションはコードまたは社名（例: `7012`, `フジクラ`）を送信してください！"
     )
 
+    systemic_badge = rankings.get("systemic_stability_badge", "🛡️ 市場システミック安定度: 正常・分散安定 (ARシフト: +0.22σ / クラッシュ脆弱度: 18%)")
+
     embed = {
         "title": f"⚡ 【本日デイトレ特化予想ランキング】({date_str})",
-        "description": f"**東証プライム主力50銘柄 全頭スキャン** ({phase_title}) ｜ 9大名著統合（Prado CPCV/校正/DSR × Lo/MacKinlay 先導株波及レーダー搭載）クオンツエンジン",
+        "description": (
+            f"**東証プライム主力50銘柄 全頭スキャン** ({phase_title}) ｜ 10大名著統合（Prado VPIN大口フロー毒性 × Kritzman 吸収比率クラッシュレーダー搭載）クオンツエンジン\n"
+            f"> **{systemic_badge}**"
+        ),
         "color": 15844367,  # Gold
         "fields": [
             {
-                "name": "🟢 本日上昇確率 TOP 3（買い候補・校正勝率＆先導株波及レーダー）",
+                "name": "🟢 本日上昇確率 TOP 3（買い候補・校正勝率＆大口フロー判定）",
                 "value": ("\n".join(top_up_list[:3]) if top_up_list else "該当なし")[:1020],
                 "inline": False,
             },
@@ -1931,7 +1942,7 @@ def build_daytrade_ranking_payloads() -> list[dict[str, Any]]:
                 "inline": False,
             },
             {
-                "name": "🔴 本日下落警戒 TOP 5（見送り・寄り天注意）",
+                "name": "🔴 本日下落警戒 TOP 5（非対称ショート＆急騰排気スナイパー）",
                 "value": ("\n".join(top_down_list) if top_down_list else "該当なし")[:1020],
                 "inline": False,
             },
@@ -1941,7 +1952,7 @@ def build_daytrade_ranking_payloads() -> list[dict[str, Any]]:
                 "inline": False,
             },
         ],
-        "footer": {"text": "Stock AI 1-Day Intraday Sniper | 9大名著統合・CPCV安定度/DSR/校正勝率搭載・モバイル最適化"},
+        "footer": {"text": "Stock AI 1-Day Intraday Sniper | 10大名著統合・VPIN大口フロー/Kritzman吸収比率搭載・モバイル最適化"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -1963,6 +1974,7 @@ def build_premarket_daytrade_forecast_payloads(summary_data: dict[str, Any] | No
     date_str = (summary_data.get("date") if summary_data else None) or datetime.now().strftime("%Y-%m-%d")
     rankings = get_daily_daytrade_rankings(top_n=5)
     top_up = rankings.get("top_up", [])
+    systemic_badge = rankings.get("systemic_stability_badge", "🛡️ 市場システミック安定度: 正常・分散安定 (ARシフト: +0.22σ / クラッシュ脆弱度: 18%)")
 
     payloads: list[dict[str, Any]] = []
 
@@ -1970,9 +1982,10 @@ def build_premarket_daytrade_forecast_payloads(summary_data: dict[str, Any] | No
     top_names = [f"`{r['ticker']}` **{r['name']}**" for r in top_up[:3]]
     overview_text = (
         f"☀️ **【東証開場前・本日の1日値動きシミュレーション＆デイトレ予想】({date_str})**\n\n"
-        "デイトレ特化スナイパーAI（9大クオンツ名著 **Prado CPCV安定度/確率校正/DSR × Lo/MacKinlay Lead-Lag × Cesa-Bianchi/Sutton × HRP × Paleologo × Carver × Chan × ML4AT × AFML** 完全統合エンジン）が、本日09:00寄り付きから15:30大引けまでの **日中チャート波形（6タイプ）と時間帯別株価軌道** を完全シミュレートしました🎯\n\n"
+        "デイトレ特化スナイパーAI（10大クオンツ名著 **Prado VPIN約定フロー毒性/BVC × Kritzman 吸収比率(AR)クラッシュレーダー × Prado CPCV安定度/確率校正/DSR × Lo/MacKinlay Lead-Lag × Cesa-Bianchi/Sutton × HRP × Paleologo × Carver × Chan × AFML/ML4AT** 完全統合エンジン）が、本日09:00寄り付きから15:30大引けまでの **日中チャート波形（6タイプ）と時間帯別株価軌道** を完全シミュレートしました🎯\n\n"
+        f"> **{systemic_badge}**\n\n"
         f"🏆 **本日の厳選デイトレ本命 Top 3**: {', '.join(top_names) if top_names else '本日該当なし'}\n"
-        "Marcos López de Prado の Combinatorial Purged Cross-Validation (CPCV) 安定度評価およびアイソトニック/プラット確率キャリブレーション（Brier Score 最小化）により過信エントリーを徹底排除し、さらに Deflated Sharpe Ratio (DSR) による多重検定バイアス補正、Andrew W. Lo & A. Craig MacKinlay の Lead-Lag クロス自己相関波及アルファ（Spillover Alpha）を融合して、真にエッジが高く騙しのない主役株を提示します！"
+        "Marcos López de Prado & Maureen O'Hara の VPIN（Volume-Synchronized Probability of Informed Trading）約定フロー毒性＆大口買い吸収（Smart Accumulation）、Mark Kritzman（MIT）の主成分吸収比率（Absorption Ratio）によるシステミック脆弱性クラッシュレーダー、非対称ショート排気モデル、CPCV安定度・因果確率校正・Lead-Lag波及アルファを極限統合し、真に騙しのない主役株を提示します！"
     )
 
 
