@@ -1,8 +1,8 @@
 {
   "metrics": {
-    "accuracy": 0.5024232633279483,
-    "f1": 0.5347432024169184,
-    "auc": 0.4848628892550809,
+    "accuracy": 0.5040387722132472,
+    "f1": 0.5355521936459909,
+    "auc": 0.4871868001859129,
     "rows": 619
   },
   "quantile_cutoffs": [
@@ -27,24 +27,24 @@
     {
       "quantile": "Q3",
       "min_p": 0.4953,
-      "max_p": 0.5027,
+      "max_p": 0.5028,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5203,
-      "description": "実績ギャップアップ率 52.0%（中立・推移注視）"
+      "historical_win_rate": 0.5242,
+      "description": "実績ギャップアップ率 52.4%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
       "min_p": 0.5028,
-      "max_p": 0.5131,
+      "max_p": 0.5132,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5565,
-      "description": "実績ギャップアップ率 55.6%（堅調）"
+      "historical_win_rate": 0.5484,
+      "description": "実績ギャップアップ率 54.8%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5132,
+      "min_p": 0.5135,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
