@@ -115,6 +115,10 @@ OVERNIGHT_CURATED_FEATURES = [
     "leadlag_spillover_alpha_3d",
     "leadlag_leader_momentum_z",
     "leadlag_lead_strength",
+    # 14. Ole E. Barndorff-Nielsen & Neil Shephard Realized Bipower Jump Decomposition
+    "jump_ratio_5d",
+    "jump_ratio_20d",
+    "continuous_trend_score",
 ]
 
 
@@ -244,6 +248,13 @@ def add_overnight_features(data: pd.DataFrame) -> pd.DataFrame:
         short_score_s, shadow_s = compute_asymmetric_short_exhaustion(result)
         result["short_exhaustion_sniper_score"] = short_score_s
         result["exhaustion_upper_shadow_ratio"] = shadow_s
+    except Exception:
+        pass
+
+    # Series #11 Barndorff-Nielsen & Shephard Bipower Jump Decomposition & Optimal Stopping
+    try:
+        from stock_ai.features.jump_bipower_optimal_stop import add_jump_bipower_features
+        result = add_jump_bipower_features(result)
     except Exception:
         pass
 

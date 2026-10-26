@@ -302,11 +302,22 @@ def collect_overnight_universe_predictions(
         sub["short_exhaustion_sniper_score"] = short_score_s
         sub["exhaustion_upper_shadow_ratio"] = shadow_s
 
+        # Series #11 Barndorff-Nielsen & Shephard Bipower Jump Decomposition
+        from stock_ai.features.jump_bipower_optimal_stop import compute_bipower_jump_decomposition
+        b_res = compute_bipower_jump_decomposition(sub)
+        sub["jump_ratio_5d"] = b_res["jump_ratio_5d"]
+        sub["jump_ratio_20d"] = b_res["jump_ratio_20d"]
+        sub["continuous_trend_score"] = b_res["continuous_trend_score"]
+        sub["fake_spike_exhaustion_flag"] = b_res["fake_spike_exhaustion_flag"]
+
         cols_to_keep = [
             "date",
             "ticker",
             "name",
             "sector",
+            "open",
+            "high",
+            "low",
             "close",
             "next_open_return",
             "next_open_binary",
@@ -346,6 +357,10 @@ def collect_overnight_universe_predictions(
             "vpin_informed_distribution_score",
             "short_exhaustion_sniper_score",
             "exhaustion_upper_shadow_ratio",
+            "jump_ratio_5d",
+            "jump_ratio_20d",
+            "continuous_trend_score",
+            "fake_spike_exhaustion_flag",
         ]
         records.append(sub[cols_to_keep])
 
@@ -833,6 +848,11 @@ def simulate_intraday_strategy(
                 regime_filter = (h_series >= 0.48) | (ou_series <= -1.5)
                 cond = cond & regime_filter
 
+            # Series #11 BNS Jump Decomposition Fake Spike Filter:
+            # Filter out discontinuous jump traps (fake spikes with high jump ratio and upper shadow/RSI exhaustion)
+            if "fake_spike_exhaustion_flag" in day_slice.columns:
+                cond = cond & (~day_slice["fake_spike_exhaustion_flag"].fillna(False).astype(bool))
+
             # Market Microstructure Vacuum Book (Upward Elasticity) & Paleologo Idio IR Enhancement
             if "prior_micro_upward_elasticity_10d" in day_slice.columns:
                 up_elast = day_slice["prior_micro_upward_elasticity_10d"].fillna(1.0).clip(0.60, 2.00)
@@ -892,6 +912,12 @@ def simulate_intraday_strategy(
                 dist_s = day_slice["vpin_informed_distribution_score"].fillna(0.0)
                 dist_pen = 1.0 - (np.maximum(0.0, dist_s - 0.70) * 0.20).clip(0.0, 0.15)
                 day_slice["intraday_sniper_score"] = day_slice["intraday_sniper_score"] * dist_pen
+
+            # Series #11 Barndorff-Nielsen Continuous Trend Boost for Daytrade
+            if "continuous_trend_score" in day_slice.columns:
+                cont_s = day_slice["continuous_trend_score"].fillna(0.50)
+                cont_mult = 1.0 + (np.maximum(0.0, cont_s - 0.50) * 0.08).clip(0.0, 0.15)
+                day_slice["intraday_sniper_score"] = day_slice["intraday_sniper_score"] * cont_mult
 
             cands = day_slice[cond].sort_values("intraday_sniper_score", ascending=False)
 
@@ -957,9 +983,35 @@ def simulate_intraday_strategy(
                     if frag_v >= 0.98:
                         dd_throttle = dd_throttle * max(0.85, 1.0 - (frag_v - 0.98) * 1.5)
 
-                pos_w = min(1.0, f_mult * dd_throttle)
+                # Series #11 Barndorff-Nielsen Continuous Trend Intraday Sizing Boost
+                if "continuous_trend_score" in cand_row.columns and not cand_row["continuous_trend_score"].empty:
+                    cont_val = float(cand_row["continuous_trend_score"].values[0])
+                    if cont_val >= 0.55:
+                        f_mult = min(1.40, f_mult * 1.04)
 
-                gross_return = float(match.values[0]) * pos_w
+                pos_w = min(1.0, f_mult * dd_throttle)
+                raw_intraday_ret = float(match.values[0])
+
+                # Series #11 Optimal Stopping Theory: Dynamic Exit Boundaries
+                exec_ret = raw_intraday_ret
+                if "volatility_20" in cand_row.columns and "prior_chan_hurst_20d" in cand_row.columns:
+                    from stock_ai.features.jump_bipower_optimal_stop import compute_optimal_stopping_barriers
+                    vol_v = float(cand_row["volatility_20"].values[0]) if pd.notna(cand_row["volatility_20"].values[0]) else 0.02
+                    h_v = float(cand_row["prior_chan_hurst_20d"].values[0]) if pd.notna(cand_row["prior_chan_hurst_20d"].values[0]) else 0.50
+                    j_v = float(cand_row["jump_ratio_5d"].values[0]) if ("jump_ratio_5d" in cand_row.columns and pd.notna(cand_row["jump_ratio_5d"].values[0])) else 0.15
+                    barriers = compute_optimal_stopping_barriers(pred_r, vol_v, h_v, j_v)
+                    sl_barrier = barriers["dynamic_stop_loss"]
+                    tp_barrier = barriers["dynamic_take_profit"]
+
+                    # Dynamic Exit Stop Loss & Trailing Take Profit Protection
+                    if raw_intraday_ret <= sl_barrier:
+                        exec_ret = sl_barrier
+                    elif raw_intraday_ret >= tp_barrier:
+                        exec_ret = tp_barrier
+                    else:
+                        exec_ret = raw_intraday_ret
+
+                gross_return = exec_ret * pos_w
                 applied_cost = cost * pos_w
 
                 # Update online adaptor strictly post-market for NEXT day's use (Zero Leakage)

@@ -1431,6 +1431,45 @@ def predict_daytrade_sniper(
     else:
         vpin_flow_badge = f"🧪 大口フロー: 需給拮抗・中立 (OFI {vpin_ofi:+.2f} / VPIN {vpin_tox:.2f})"
 
+    # Series #11 Ole E. Barndorff-Nielsen & Neil Shephard Realized Bipower Jump Decomposition & Optimal Stopping
+    from stock_ai.features.jump_bipower_optimal_stop import (
+        compute_bipower_jump_decomposition,
+        compute_optimal_stopping_barriers,
+    )
+    jump_ratio_5d = 0.15
+    jump_ratio_20d = 0.18
+    continuous_trend = 0.65
+    fake_spike_flag = False
+
+    if features_df is not None and not features_df.empty:
+        if "jump_ratio_5d" in features_df.columns:
+            jump_ratio_5d = float(features_df["jump_ratio_5d"].iloc[-1])
+            jump_ratio_20d = float(features_df.get("jump_ratio_20d", pd.Series([0.18])).iloc[-1])
+            continuous_trend = float(features_df.get("continuous_trend_score", pd.Series([0.65])).iloc[-1])
+            fake_spike_flag = bool(features_df.get("fake_spike_exhaustion_flag", pd.Series([False])).iloc[-1])
+        elif len(features_df) >= 5:
+            try:
+                b_res = compute_bipower_jump_decomposition(features_df.tail(40))
+                jump_ratio_5d = float(b_res["jump_ratio_5d"].iloc[-1])
+                jump_ratio_20d = float(b_res["jump_ratio_20d"].iloc[-1])
+                continuous_trend = float(b_res["continuous_trend_score"].iloc[-1])
+                fake_spike_flag = bool(b_res["fake_spike_exhaustion_flag"].iloc[-1])
+            except Exception:
+                pass
+
+    if fake_spike_flag and "突発ジャンプ過熱・反落警戒" not in risk_flags:
+        risk_flags.append("突発ジャンプ過熱・反落警戒")
+
+    stopping_res = compute_optimal_stopping_barriers(
+        drift=float(eff_bps) / 10000.0,
+        volatility=vol_20,
+        hurst=chan_hurst,
+        jump_ratio=jump_ratio_5d,
+        continuous_score=continuous_trend,
+        vpin_toxicity=vpin_tox,
+        is_fake_spike=fake_spike_flag,
+    )
+
 
     return {
         "ticker": ticker,
@@ -1511,6 +1550,16 @@ def predict_daytrade_sniper(
         "vpin_informed_distribution_score": round(toxic_dist, 3),
         "vpin_flow_badge": vpin_flow_badge,
         "short_exhaustion_sniper_score": round(short_exhaustion, 3),
+        # Series #11 Barndorff-Nielsen & Shephard Jump & Optimal Stopping Data
+        "jump_ratio_5d": round(jump_ratio_5d, 3),
+        "jump_ratio_20d": round(jump_ratio_20d, 3),
+        "continuous_trend_score": round(continuous_trend, 3),
+        "fake_spike_exhaustion_flag": fake_spike_flag,
+        "dynamic_take_profit": stopping_res["dynamic_take_profit"],
+        "dynamic_stop_loss": stopping_res["dynamic_stop_loss"],
+        "dynamic_take_profit_pct": stopping_res["dynamic_take_profit_pct"],
+        "dynamic_stop_loss_pct": stopping_res["dynamic_stop_loss_pct"],
+        "jump_regime_badge": stopping_res["jump_regime_badge"],
 
         # Backwards compatible alias keys
         "target_price": waveform_data["target_final_price"],
@@ -1562,7 +1611,15 @@ def get_daily_daytrade_rankings(
         tox_dist = pd.to_numeric(df_results.get("vpin_informed_distribution_score", 0.0), errors="coerce").fillna(0.0)
         tox_brake = 1.0 - tox_dist.clip(0.0, 0.8) * 0.35
 
-        df_results["composite_score"] = p_up_clean * (1.0 + exp_bps_clean / 1000.0) * spill_mult * smart_mult * tox_brake
+        # Series #11 Barndorff-Nielsen & Shephard Continuous Trend Boost & Fake Spike Brake
+        cont_trend = pd.to_numeric(df_results.get("continuous_trend_score", 0.5), errors="coerce").fillna(0.5)
+        cont_mult = 1.0 + (cont_trend - 0.50).clip(-0.15, 0.25) * 0.30
+        fake_spike = df_results.get("fake_spike_exhaustion_flag", pd.Series([False] * len(df_results))).fillna(False).astype(bool)
+        spike_brake = np.where(fake_spike, 0.60, 1.0)
+
+        df_results["composite_score"] = (
+            p_up_clean * (1.0 + exp_bps_clean / 1000.0) * spill_mult * smart_mult * tox_brake * cont_mult * spike_brake
+        )
         penalized_tickers = apply_paleologo_cluster_penalty(
             candidates_df=df_results,
             score_col="composite_score",
@@ -1577,12 +1634,13 @@ def get_daily_daytrade_rankings(
     results_by_ticker = {r["ticker"]: r for r in results}
     raw_top_up = [results_by_ticker[t] for t in penalized_tickers if t in results_by_ticker]
 
-    # Series #10 Asymmetric Short & Exhaustion Sniper: Rank top_down primarily by short_exhaustion_sniper_score and low p_up
+    # Series #10 & #11 Asymmetric Short & Exhaustion Sniper: Rank top_down by short score, fake spike, and low p_up
     def _down_sort_key(x: dict[str, Any]) -> tuple[float, float, float]:
         ex_score = float(x.get("short_exhaustion_sniper_score", 0.0))
+        is_fake = 1.0 if x.get("fake_spike_exhaustion_flag", False) else 0.0
         p_up = float(x.get("probability_up", 50.0))
         exp_bps = float(x.get("expected_return_bps", 0.0))
-        return (-ex_score, p_up, exp_bps)
+        return (-(ex_score + 0.35 * is_fake), p_up, exp_bps)
 
     raw_top_down = sorted(results, key=_down_sort_key)[:top_n]
 

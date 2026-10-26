@@ -19,6 +19,13 @@ from stock_ai.features.flow_toxicity_tail_risk import (
     compute_market_absorption_ratio,
     compute_vpin,
 )
+from stock_ai.features.jump_bipower_optimal_stop import (
+    add_jump_bipower_features,
+    compute_bipower_jump_decomposition,
+    compute_bipower_variation,
+    compute_optimal_stopping_barriers,
+    compute_rolling_bipower_jump,
+)
 from stock_ai.features.intraday import (
     ALL_INTRADAY_FEATURES,
     INTRADAY_BASE_FEATURES,
@@ -66,5 +73,10 @@ __all__ = [
     "compute_probabilistic_sharpe_ratio",
     "compute_vpin",
     "select_overnight_curated_features",
+    "compute_bipower_variation",
+    "compute_rolling_bipower_jump",
+    "compute_bipower_jump_decomposition",
+    "compute_optimal_stopping_barriers",
+    "add_jump_bipower_features",
 ]
 
