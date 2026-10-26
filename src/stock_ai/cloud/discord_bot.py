@@ -1829,6 +1829,7 @@ def build_daytrade_sniper_payloads(
                     f"> **{res.get('calibration_badge', f'🎯 校正勝率: {p_up:.1f}% (CPCV安定度: A / DSR: 0.85)')}**\n"
                     f"> **{res.get('vpin_flow_badge', '🧪 大口フロー: 機関買い吸収 (OFI +0.35 / VPIN健全)')}**\n"
                     f"> **{res.get('jump_regime_badge', '⚡ 変動構造: 連続トレンド優位 (Jump Ratio: 15% [クリーン]) ➔ 動的利確: +4.2% / 動的損切: -1.4%')}**\n"
+                    f"> **{res.get('insider_stealth_badge', '🕵️‍♂️ ステルス監視: 大口隠密買い集め検知 (吸収効率: S / 政策テーマ波及: 防衛・重工 +1.4σ)')}**\n"
                     f"> 🎯 総合上昇確率: **`{p_up:.1f}%`** (CS Outperform: `{res.get('p_intraday_cs', p_up):.1f}%` / Clean Win: `{res.get('p_clean_win', p_up):.1f}%`)\n"
                     f"> {res.get('leadlag_radar_text', '🔗 **先導株波及**: 7011 三菱重工 (+2.5%) ➔ 出遅れ追随期待 (波及スコア +1.20)')}\n"
                     f"> 🧠 適応学習 (Series #7): **{res.get('adaptive_credibility_badge', '🧠 適応信頼度: 中立 (±0%)')}** ｜ Hedge波形重み: **`{res.get('adaptive_hedge_weight', 1.0):.2f}x`**\n"
@@ -1873,11 +1874,11 @@ def build_daytrade_sniper_payloads(
     }]
 
 
-def build_daytrade_ranking_payloads() -> list[dict[str, Any]]:
+def build_daytrade_ranking_payloads(rankings_data: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Build Top 5 Up and Top 5 Down ranking response for the 1-Day Intraday Sniper."""
     from stock_ai.models.intraday import get_daily_daytrade_rankings
 
-    rankings = get_daily_daytrade_rankings(top_n=5)
+    rankings = rankings_data if rankings_data is not None else get_daily_daytrade_rankings(top_n=5)
     phase_title = rankings.get("phase_title", "⚡ 本日デイトレ予想ランキング")
     date_str = rankings.get("date", datetime.now().strftime("%Y-%m-%d"))
 
@@ -1893,11 +1894,13 @@ def build_daytrade_ranking_payloads() -> list[dict[str, Any]]:
         radar_str = f"\n> {r['leadlag_radar_text']}" if r.get("leadlag_radar_text") else ""
         vpin_line = f"\n> {r.get('vpin_flow_badge', '🧪 大口フロー: 機関買い吸収 (OFI +0.35 / VPIN健全)')}"
         jump_line = f"\n> {r.get('jump_regime_badge', '⚡ 変動構造: 連続トレンド優位 (Jump Ratio: 15% [クリーン]) ➔ 動的利確: +4.2% / 動的損切: -1.4%')}"
+        stealth_line = f"\n> {r.get('insider_stealth_badge', '🕵️‍♂️ ステルス監視: 大口隠密買い集め検知 (吸収効率: S)')}"
         top_up_list.append(
             f"{emoji} **`{r['ticker']}` {r['name']}** 【校正勝率 **`{r.get('p_calibrated', r['probability_up']):.1f}%`** (CPCV: `{r.get('cpcv_grade', 'A')}` / DSR: `{r.get('dsr', 0.85):.2f}`) ｜ `{r['expected_return_bps']:+.0f}bps`{badge_str}】\n"
             f"> 📊 波形: **{wf}**{lot_suffix}"
             + vpin_line
-            + jump_line + "\n"
+            + jump_line
+            + stealth_line + "\n"
             f"> 🛒 仕込み: **`{r['best_entry_zone']}`** ➔ 🎯 目標 **`{r['target_final_price']:,.1f}円`** (`{r['target_final_pct']:+.1f}%`)"
             + radar_str
         )
@@ -1912,13 +1915,14 @@ def build_daytrade_ranking_payloads() -> list[dict[str, Any]]:
             f"{emoji} **`{r['ticker']}` {r['name']}** 【確率 **`{r['probability_up']:.1f}%`**{ex_str} / 陰線警戒 ⚠️】\n"
             f"> 📊 波形: **{wf}**\n"
             f"> {r.get('vpin_flow_badge', '⚠️ 大口売り抜け警戒')}\n"
+            f"> {r.get('insider_stealth_badge', '🚨 ステルス監視: インサイダー売り抜け警戒')}\n"
             f"> ⚠️ 判定: **{r['judgment']}**（寄り天急落・戻り売り警戒）"
         )
 
     up_names = [f"`{r['ticker']}` {r['name']}" for r in rankings.get("top_up", [])]
     down_names = [f"`{r['ticker']}` {r['name']}" for r in rankings.get("top_down", [])]
     speech = (
-        f"⚡ **【本日デイトレ特化予想ランキング】({date_str})** ｜ 11大名著統合エンジン\n\n"
+        f"⚡ **【本日デイトレ特化予想ランキング】({date_str})** ｜ 12大名著統合エンジン\n\n"
         f"🟢 **本日上昇確率 TOP 5**: {', '.join(up_names) if up_names else '該当なし'}\n"
         f"🔴 **本日下落警戒 TOP 5**: {', '.join(down_names) if down_names else '該当なし'}\n\n"
         f"💡 個別銘柄のタイムライン詳細シミュレーションはコードまたは社名（例: `7012`, `フジクラ`）を送信してください！"
@@ -1985,10 +1989,10 @@ def build_premarket_daytrade_forecast_payloads(summary_data: dict[str, Any] | No
     top_names = [f"`{r['ticker']}` **{r['name']}**" for r in top_up[:3]]
     overview_text = (
         f"☀️ **【東証開場前・本日の1日値動きシミュレーション＆デイトレ予想】({date_str})**\n\n"
-        "デイトレ特化スナイパーAI（11大クオンツ名著 **Barndorff-Nielsen & Shephard実現双冪変動/ジャンプ分解 × 最適停止理論(Wald-Bellman動的エグジット) × Prado VPIN約定フロー毒性/BVC × Kritzman 吸収比率(AR)クラッシュレーダー × Prado CPCV安定度/確率校正/DSR × Lo/MacKinlay Lead-Lag × Cesa-Bianchi/Sutton × HRP × Paleologo × Carver × Chan × AFML/ML4AT** 完全統合エンジン）が、本日09:00寄り付きから15:30大引けまでの **日中チャート波形（6タイプ）と時間帯別株価軌道** を完全シミュレートしました🎯\n\n"
+        "デイトレ特化スナイパーAI（12大クオンツ名著 **Easley PIN & Augustin/Subrahmanyam ステルス・インサイダー買い集め検知 & 米国防・政策異常波及 × Barndorff-Nielsen & Shephard実現双冪変動/ジャンプ分解 × 最適停止理論(Wald-Bellman動的エグジット) × Prado VPIN約定フロー毒性/BVC × Kritzman 吸収比率(AR)クラッシュレーダー × Prado CPCV安定度/確率校正/DSR × Lo/MacKinlay Lead-Lag × Cesa-Bianchi/Sutton × HRP × Paleologo × Carver × Chan × AFML/ML4AT** 完全統合エンジン）が、本日09:00寄り付きから15:30大引けまでの **日中チャート波形（6タイプ）と時間帯別株価軌道** を完全シミュレートしました🎯\n\n"
         f"> **{systemic_badge}**\n\n"
         f"🏆 **本日の厳選デイトレ本命 Top 3**: {', '.join(top_names) if top_names else '本日該当なし'}\n"
-        "Ole E. Barndorff-Nielsen & Neil Shephard の実現双冪変動（Bipower Variation）による「見せかけの突発急騰（Fake Spike Exhaustion）」と「連続トレンド（Continuous Diffusion）」の分離、Wald-Bellman 最適停止理論による動的利確・損切りバリア、Prado & O'Hara の VPIN約定フロー毒性、Mark Kritzman の吸収比率クラッシュレーダーを極限統合し、真に騙しのない主役株を提示します！"
+        "Easley PINモデルによる大口隠密買い集め（異常出来高×値幅圧縮）、米国防・政策・戦略クラスターの異常波及、BNS双冪変動によるフェイク急騰排除、Wald-Bellman 最適停止理論による動的利確・損切りバリアを極限統合し、真に騙しのない主役株を提示します！"
     )
 
 
@@ -2008,7 +2012,7 @@ def build_premarket_daytrade_forecast_payloads(summary_data: dict[str, Any] | No
             payloads.extend(p_payloads)
 
     # 3. Overall Top 5 Ranking Summary
-    ranking_payloads = build_daytrade_ranking_payloads()
+    ranking_payloads = build_daytrade_ranking_payloads(rankings_data=rankings)
     payloads.extend(ranking_payloads)
 
     return payloads

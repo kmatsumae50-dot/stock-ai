@@ -26,6 +26,19 @@ from stock_ai.features.jump_bipower_optimal_stop import (
     compute_optimal_stopping_barriers,
     compute_rolling_bipower_jump,
 )
+from stock_ai.features.insider_stealth_detector import (
+    ALL_INSIDER_STEALTH_FEATURES,
+    INSIDER_DUMPING_FEATURES,
+    POLICY_SPILLOVER_FEATURES,
+    STEALTH_INSIDER_FEATURES,
+    STRATEGIC_POLICY_CLUSTERS,
+    add_insider_stealth_features,
+    compute_abnormal_volume_z,
+    compute_insider_dumping_risk,
+    compute_policy_defense_insider_spillover,
+    compute_stealth_absorption_efficiency,
+    compute_stealth_insider_features,
+)
 from stock_ai.features.intraday import (
     ALL_INTRADAY_FEATURES,
     INTRADAY_BASE_FEATURES,
@@ -78,5 +91,16 @@ __all__ = [
     "compute_bipower_jump_decomposition",
     "compute_optimal_stopping_barriers",
     "add_jump_bipower_features",
+    "ALL_INSIDER_STEALTH_FEATURES",
+    "INSIDER_DUMPING_FEATURES",
+    "POLICY_SPILLOVER_FEATURES",
+    "STEALTH_INSIDER_FEATURES",
+    "STRATEGIC_POLICY_CLUSTERS",
+    "add_insider_stealth_features",
+    "compute_abnormal_volume_z",
+    "compute_insider_dumping_risk",
+    "compute_policy_defense_insider_spillover",
+    "compute_stealth_absorption_efficiency",
+    "compute_stealth_insider_features",
 ]
 

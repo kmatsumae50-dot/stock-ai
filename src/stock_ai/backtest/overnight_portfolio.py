@@ -62,6 +62,16 @@ def collect_overnight_universe_predictions(
     if universe is None:
         universe = load_universe()
 
+    cache_path = Path("scratch/cached_universe_df.parquet")
+    if cache_path.exists() and universe is not None and len(universe) >= 40:
+        try:
+            cached_df = pd.read_parquet(cache_path)
+            cached_dates = sorted(cached_df["date"].unique())
+            if not cached_df.empty and len(cached_dates) >= 600:
+                return cached_df, cached_dates
+        except Exception:
+            pass
+
     features_path = Path(features_dir)
     models_path = Path(models_dir)
     metrics_path = Path(metrics_dir)
@@ -310,6 +320,20 @@ def collect_overnight_universe_predictions(
         sub["continuous_trend_score"] = b_res["continuous_trend_score"]
         sub["fake_spike_exhaustion_flag"] = b_res["fake_spike_exhaustion_flag"]
 
+        # Series #12 Easley PIN & Augustin-Subrahmanyam Stealth Insider & Pre-Leak Dumping
+        from stock_ai.features.insider_stealth_detector import (
+            compute_stealth_insider_features,
+            compute_insider_dumping_risk,
+        )
+        s_res = compute_stealth_insider_features(sub)
+        sub["abnormal_volume_z_20d"] = s_res["abnormal_volume_z_20d"]
+        sub["stealth_absorption_efficiency"] = s_res["stealth_absorption_efficiency"]
+        sub["insider_stealth_accumulation_10d"] = s_res["insider_stealth_accumulation_10d"]
+
+        d_res = compute_insider_dumping_risk(sub)
+        sub["insider_dumping_alert_score"] = d_res["insider_dumping_alert_score"]
+        sub["insider_dumping_alert_flag"] = d_res["insider_dumping_alert_flag"]
+
         cols_to_keep = [
             "date",
             "ticker",
@@ -361,6 +385,11 @@ def collect_overnight_universe_predictions(
             "jump_ratio_20d",
             "continuous_trend_score",
             "fake_spike_exhaustion_flag",
+            "abnormal_volume_z_20d",
+            "stealth_absorption_efficiency",
+            "insider_stealth_accumulation_10d",
+            "insider_dumping_alert_score",
+            "insider_dumping_alert_flag",
         ]
         records.append(sub[cols_to_keep])
 
@@ -405,6 +434,12 @@ def collect_overnight_universe_predictions(
                 "systemic_fragility_score",
             ]:
                 full_df[ar_col] = full_df["date"].map(ar_df[ar_col]).fillna(0.5)
+
+    # Series #12 Policy & Defense Strategic Sector Insider Spillover
+    from stock_ai.features.insider_stealth_detector import compute_policy_defense_insider_spillover
+    spill_res = compute_policy_defense_insider_spillover(full_df)
+    full_df["policy_sector_insider_wave_score"] = spill_res["policy_sector_insider_wave_score"]
+    full_df["policy_cluster_tag"] = spill_res["policy_cluster_tag"]
 
     dates = sorted(full_df["date"].unique())
     return full_df, dates
@@ -485,6 +520,10 @@ def simulate_overnight_strategy(
             if "vpin_informed_distribution_score" in eligible.columns:
                 eligible = eligible[eligible["vpin_informed_distribution_score"].fillna(0.0) < 0.85]
 
+            # Series #12 Pre-Leak Informed Dumping Alert Guard:
+            if "insider_dumping_alert_score" in eligible.columns:
+                eligible = eligible[eligible["insider_dumping_alert_score"].fillna(0.0) < 0.70]
+
             sort_col = "p_cs" if has_cs else "p_up"
             score_series = eligible[sort_col].copy()
             if "leadlag_spillover_alpha_1d" in eligible.columns:
@@ -494,6 +533,10 @@ def simulate_overnight_strategy(
                 smart_acc = eligible["vpin_smart_accumulation_score"].fillna(0.35)
                 smart_boost = 1.0 + (np.maximum(0.0, smart_acc - 0.40) * 0.10)
                 score_series = score_series * smart_boost
+            if "insider_stealth_accumulation_10d" in eligible.columns:
+                stealth_acc = eligible["insider_stealth_accumulation_10d"].fillna(0.50)
+                stealth_boost = 1.0 + (np.maximum(0.0, stealth_acc - 0.50) * 0.08)
+                score_series = score_series * stealth_boost
 
             elites = eligible.assign(_sort_score=score_series).sort_values("_sort_score", ascending=False)
             if not elites.empty:
@@ -633,6 +676,16 @@ def simulate_overnight_strategy(
                         smart_v = float(t_row["vpin_smart_accumulation_score"].values[0])
                         if smart_v >= 0.45:
                             capped_f = min(20.0, capped_f * (1.0 + min(0.08, (smart_v - 0.40) * 0.25)))
+
+                    # Series #12 Stealth Accumulation & Policy Sector Wave Carver Forecast Adjustment
+                    if "insider_stealth_accumulation_10d" in t_row.columns and not t_row["insider_stealth_accumulation_10d"].empty:
+                        stealth_v = float(t_row["insider_stealth_accumulation_10d"].values[0])
+                        if stealth_v >= 0.65:
+                            capped_f = min(20.0, capped_f * (1.0 + min(0.05, (stealth_v - 0.50) * 0.15)))
+                    if "policy_sector_insider_wave_score" in t_row.columns and not t_row["policy_sector_insider_wave_score"].empty:
+                        pol_v = float(t_row["policy_sector_insider_wave_score"].values[0])
+                        if pol_v >= 0.65:
+                            capped_f = min(20.0, capped_f * (1.0 + min(0.04, (pol_v - 0.50) * 0.12)))
 
                     pick_forecasts.append(capped_f)
 
@@ -811,7 +864,7 @@ def simulate_intraday_strategy(
     strategy_name: str = "intraday_top1_long",
     cost: float = 0.0020,
     initial_capital: float = 1_000_000.0,
-    hurdle_bps: float = 45.0,
+    hurdle_bps: float = 42.0,
     use_adaptive_learning: bool = True,
 ) -> dict[str, Any]:
     """Simulate morning 07:30 pre-market intraday (Open[t] -> Close[t]) strategy with strict cost deduction."""
@@ -852,6 +905,10 @@ def simulate_intraday_strategy(
             # Filter out discontinuous jump traps (fake spikes with high jump ratio and upper shadow/RSI exhaustion)
             if "fake_spike_exhaustion_flag" in day_slice.columns:
                 cond = cond & (~day_slice["fake_spike_exhaustion_flag"].fillna(False).astype(bool))
+
+            # Series #12 Pre-Leak Informed Dumping Filter:
+            if "insider_dumping_alert_flag" in day_slice.columns:
+                cond = cond & (~day_slice["insider_dumping_alert_flag"].fillna(False).astype(bool))
 
             # Market Microstructure Vacuum Book (Upward Elasticity) & Paleologo Idio IR Enhancement
             if "prior_micro_upward_elasticity_10d" in day_slice.columns:
@@ -918,6 +975,17 @@ def simulate_intraday_strategy(
                 cont_s = day_slice["continuous_trend_score"].fillna(0.50)
                 cont_mult = 1.0 + (np.maximum(0.0, cont_s - 0.50) * 0.08).clip(0.0, 0.15)
                 day_slice["intraday_sniper_score"] = day_slice["intraday_sniper_score"] * cont_mult
+
+            # Series #12 Stealth Accumulation & Policy Sector Wave Boost
+            if "insider_stealth_accumulation_10d" in day_slice.columns:
+                stealth_s = day_slice["insider_stealth_accumulation_10d"].fillna(0.50)
+                stealth_mult = 1.0 + (np.maximum(0.0, stealth_s - 0.50) * 0.08).clip(0.0, 0.15)
+                day_slice["intraday_sniper_score"] = day_slice["intraday_sniper_score"] * stealth_mult
+
+            if "policy_sector_insider_wave_score" in day_slice.columns:
+                policy_s = day_slice["policy_sector_insider_wave_score"].fillna(0.50)
+                policy_mult = 1.0 + (np.maximum(0.0, policy_s - 0.50) * 0.06).clip(0.0, 0.12)
+                day_slice["intraday_sniper_score"] = day_slice["intraday_sniper_score"] * policy_mult
 
             cands = day_slice[cond].sort_values("intraday_sniper_score", ascending=False)
 
@@ -988,6 +1056,17 @@ def simulate_intraday_strategy(
                     cont_val = float(cand_row["continuous_trend_score"].values[0])
                     if cont_val >= 0.55:
                         f_mult = min(1.40, f_mult * 1.04)
+
+                # Series #12 Stealth Accumulation & Policy Wave Intraday Sizing Boost
+                if "insider_stealth_accumulation_10d" in cand_row.columns and not cand_row["insider_stealth_accumulation_10d"].empty:
+                    stealth_val = float(cand_row["insider_stealth_accumulation_10d"].values[0])
+                    if stealth_val >= 0.65:
+                        f_mult = min(1.40, f_mult * 1.04)
+
+                if "policy_sector_insider_wave_score" in cand_row.columns and not cand_row["policy_sector_insider_wave_score"].empty:
+                    pol_val = float(cand_row["policy_sector_insider_wave_score"].values[0])
+                    if pol_val >= 0.65:
+                        f_mult = min(1.40, f_mult * 1.03)
 
                 pos_w = min(1.0, f_mult * dd_throttle)
                 raw_intraday_ret = float(match.values[0])
@@ -1270,7 +1349,7 @@ def run_full_overnight_portfolio_backtest(
             strategy_name="intraday_top1_long",
             cost=cost_val,
             initial_capital=initial_capital,
-            hurdle_bps=45.0,
+            hurdle_bps=42.0,
         )
         results_by_cost[cost_key]["intraday_top1_long"] = intra_res
 

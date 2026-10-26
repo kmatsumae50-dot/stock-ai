@@ -1470,6 +1470,55 @@ def predict_daytrade_sniper(
         is_fake_spike=fake_spike_flag,
     )
 
+    # Series #12 Easley PIN & Augustin-Subrahmanyam Stealth Insider Accumulation & Strategic Policy Spillover
+    from stock_ai.features.insider_stealth_detector import (
+        TICKER_TO_CLUSTER,
+        compute_insider_dumping_risk,
+        compute_stealth_insider_features,
+        _normalize_ticker_code,
+    )
+    abnormal_vol_z = 0.0
+    stealth_eff = 0.50
+    stealth_accum = 0.50
+    dumping_score = 0.20
+    dumping_flag = False
+    clean_code = _normalize_ticker_code(ticker)
+    policy_cluster = TICKER_TO_CLUSTER.get(clean_code, "一般")
+    policy_wave = 0.50
+
+    if features_df is not None and not features_df.empty:
+        if "insider_stealth_accumulation_10d" in features_df.columns:
+            abnormal_vol_z = float(features_df.get("abnormal_volume_z_20d", pd.Series([0.0])).iloc[-1])
+            stealth_eff = float(features_df.get("stealth_absorption_efficiency", pd.Series([0.50])).iloc[-1])
+            stealth_accum = float(features_df["insider_stealth_accumulation_10d"].iloc[-1])
+            dumping_score = float(features_df.get("insider_dumping_alert_score", pd.Series([0.20])).iloc[-1])
+            dumping_flag = bool(features_df.get("insider_dumping_alert_flag", pd.Series([False])).iloc[-1])
+            policy_wave = float(features_df.get("policy_sector_insider_wave_score", pd.Series([0.50])).iloc[-1])
+        elif len(features_df) >= 10:
+            try:
+                s_feat = compute_stealth_insider_features(features_df.tail(60))
+                abnormal_vol_z = float(s_feat["abnormal_volume_z_20d"].iloc[-1])
+                stealth_eff = float(s_feat["stealth_absorption_efficiency"].iloc[-1])
+                stealth_accum = float(s_feat["insider_stealth_accumulation_10d"].iloc[-1])
+                d_feat = compute_insider_dumping_risk(features_df.tail(60))
+                dumping_score = float(d_feat["insider_dumping_alert_score"].iloc[-1])
+                dumping_flag = bool(d_feat["insider_dumping_alert_flag"].iloc[-1])
+            except Exception:
+                pass
+
+    # Insider & Policy Stealth Badge
+    eff_grade = "S" if stealth_eff >= 2.0 else ("A" if stealth_eff >= 1.0 else "B")
+    cluster_wave_str = f" / 政策テーマ波及: {policy_cluster} +{round((policy_wave - 0.5) * 2.5, 1)}σ" if (policy_cluster != "一般" and policy_wave >= 0.55) else ""
+    if dumping_flag:
+        insider_stealth_badge = f"🚨 ステルス監視: インサイダー売り抜け警戒 (Dumping Risk: {int(dumping_score * 100)}%)"
+        if "インサイダー売り抜け警戒" not in risk_flags:
+            risk_flags.append(f"インサイダー売り抜け警戒 ({int(dumping_score * 100)}%)")
+    elif stealth_accum >= 0.65 or policy_wave >= 0.65:
+        insider_stealth_badge = f"🕵️‍♂️ ステルス監視: 大口隠密買い集め検知 (吸収効率: {eff_grade}{cluster_wave_str})"
+    elif stealth_eff >= 1.0:
+        insider_stealth_badge = f"🕵️‍♂️ ステルス監視: 買い集め進行中 (吸収効率: {eff_grade}{cluster_wave_str})"
+    else:
+        insider_stealth_badge = f"🕵️‍♂️ ステルス監視: 正常 (買い集め: {int(stealth_accum * 100)}% / 売り抜けリスク: 低)"
 
     return {
         "ticker": ticker,
@@ -1560,6 +1609,15 @@ def predict_daytrade_sniper(
         "dynamic_take_profit_pct": stopping_res["dynamic_take_profit_pct"],
         "dynamic_stop_loss_pct": stopping_res["dynamic_stop_loss_pct"],
         "jump_regime_badge": stopping_res["jump_regime_badge"],
+        # Series #12 Easley PIN & Augustin-Subrahmanyam Stealth Insider & Policy Spillover
+        "abnormal_volume_z_20d": round(abnormal_vol_z, 2),
+        "stealth_absorption_efficiency": round(stealth_eff, 2),
+        "insider_stealth_accumulation_10d": round(stealth_accum, 3),
+        "policy_sector_insider_wave_score": round(policy_wave, 3),
+        "policy_cluster_tag": policy_cluster,
+        "insider_dumping_alert_score": round(dumping_score, 3),
+        "insider_dumping_alert_flag": dumping_flag,
+        "insider_stealth_badge": insider_stealth_badge,
 
         # Backwards compatible alias keys
         "target_price": waveform_data["target_final_price"],
@@ -1617,8 +1675,16 @@ def get_daily_daytrade_rankings(
         fake_spike = df_results.get("fake_spike_exhaustion_flag", pd.Series([False] * len(df_results))).fillna(False).astype(bool)
         spike_brake = np.where(fake_spike, 0.60, 1.0)
 
+        # Series #12 Easley PIN & Augustin-Subrahmanyam Stealth Accumulation & Strategic Policy Wave
+        stealth_acc = pd.to_numeric(df_results.get("insider_stealth_accumulation_10d", 0.5), errors="coerce").fillna(0.5)
+        stealth_mult = 1.0 + (stealth_acc - 0.50).clip(-0.10, 0.25) * 0.35
+        pol_wave = pd.to_numeric(df_results.get("policy_sector_insider_wave_score", 0.5), errors="coerce").fillna(0.5)
+        policy_mult = 1.0 + (pol_wave - 0.50).clip(-0.10, 0.25) * 0.30
+        dump_alert = pd.to_numeric(df_results.get("insider_dumping_alert_score", 0.0), errors="coerce").fillna(0.0)
+        dump_brake = 1.0 - dump_alert.clip(0.0, 0.8) * 0.35
+
         df_results["composite_score"] = (
-            p_up_clean * (1.0 + exp_bps_clean / 1000.0) * spill_mult * smart_mult * tox_brake * cont_mult * spike_brake
+            p_up_clean * (1.0 + exp_bps_clean / 1000.0) * spill_mult * smart_mult * tox_brake * cont_mult * spike_brake * stealth_mult * policy_mult * dump_brake
         )
         penalized_tickers = apply_paleologo_cluster_penalty(
             candidates_df=df_results,
@@ -1634,13 +1700,14 @@ def get_daily_daytrade_rankings(
     results_by_ticker = {r["ticker"]: r for r in results}
     raw_top_up = [results_by_ticker[t] for t in penalized_tickers if t in results_by_ticker]
 
-    # Series #10 & #11 Asymmetric Short & Exhaustion Sniper: Rank top_down by short score, fake spike, and low p_up
+    # Series #10, #11 & #12 Asymmetric Short, Fake Spike & Insider Dumping Sniper
     def _down_sort_key(x: dict[str, Any]) -> tuple[float, float, float]:
         ex_score = float(x.get("short_exhaustion_sniper_score", 0.0))
         is_fake = 1.0 if x.get("fake_spike_exhaustion_flag", False) else 0.0
+        dump_score = float(x.get("insider_dumping_alert_score", 0.0))
         p_up = float(x.get("probability_up", 50.0))
         exp_bps = float(x.get("expected_return_bps", 0.0))
-        return (-(ex_score + 0.35 * is_fake), p_up, exp_bps)
+        return (-(ex_score + 0.35 * is_fake + 0.35 * dump_score), p_up, exp_bps)
 
     raw_top_down = sorted(results, key=_down_sort_key)[:top_n]
 

@@ -119,6 +119,11 @@ OVERNIGHT_CURATED_FEATURES = [
     "jump_ratio_5d",
     "jump_ratio_20d",
     "continuous_trend_score",
+    # 15. Easley PIN & Augustin-Subrahmanyam Stealth Insider Accumulation
+    "abnormal_volume_z_20d",
+    "stealth_absorption_efficiency",
+    "insider_stealth_accumulation_10d",
+    "insider_dumping_alert_score",
 ]
 
 
@@ -255,6 +260,13 @@ def add_overnight_features(data: pd.DataFrame) -> pd.DataFrame:
     try:
         from stock_ai.features.jump_bipower_optimal_stop import add_jump_bipower_features
         result = add_jump_bipower_features(result)
+    except Exception:
+        pass
+
+    # Series #12 Easley PIN & Augustin-Subrahmanyam Stealth Insider & Policy Spillover
+    try:
+        from stock_ai.features.insider_stealth_detector import add_insider_stealth_features
+        result = add_insider_stealth_features(result)
     except Exception:
         pass
 
