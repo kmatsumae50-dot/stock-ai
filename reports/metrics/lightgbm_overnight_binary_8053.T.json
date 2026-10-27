@@ -1,15 +1,15 @@
 {
   "metrics": {
-    "accuracy": 0.5589660743134087,
-    "f1": 0.7170984455958549,
-    "auc": 0.49424082661076885,
+    "accuracy": 0.5605815831987075,
+    "f1": 0.7184265010351967,
+    "auc": 0.4909147736904561,
     "rows": 619
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.5109,
+      "max_p": 0.5111,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
       "historical_win_rate": 0.5645,
@@ -17,39 +17,39 @@
     },
     {
       "quantile": "Q2",
-      "min_p": 0.5109,
-      "max_p": 0.5111,
+      "min_p": 0.5111,
+      "max_p": 0.5113,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.4878,
-      "description": "実績ギャップアップ率 48.8%（弱気）"
+      "historical_win_rate": 0.4797,
+      "description": "実績ギャップアップ率 48.0%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.5111,
-      "max_p": 0.5174,
+      "min_p": 0.5113,
+      "max_p": 0.5185,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.6452,
-      "description": "実績ギャップアップ率 64.5%（中立・推移注視）"
+      "historical_win_rate": 0.6613,
+      "description": "実績ギャップアップ率 66.1%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5174,
-      "max_p": 0.5174,
+      "min_p": 0.5185,
+      "max_p": 0.5185,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5366,
-      "description": "実績ギャップアップ率 53.7%（堅調）"
+      "historical_win_rate": 0.5528,
+      "description": "実績ギャップアップ率 55.3%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5174,
+      "min_p": 0.5185,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.6452,
-      "description": "実績ギャップアップ率 64.5%（最高勝率群）"
+      "historical_win_rate": 0.6129,
+      "description": "実績ギャップアップ率 61.3%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -139,10 +139,6 @@
       "importance": 3.0
     },
     {
-      "feature": "high_low_range",
-      "importance": 2.0
-    },
-    {
       "feature": "intraday_range_ratio",
       "importance": 2.0
     },
@@ -155,7 +151,15 @@
       "importance": 1.0
     },
     {
+      "feature": "high_low_range",
+      "importance": 1.0
+    },
+    {
       "feature": "close_vs_ma_25",
+      "importance": 1.0
+    },
+    {
+      "feature": "vol_adjusted_momentum_5d",
       "importance": 1.0
     },
     {
@@ -164,10 +168,6 @@
     },
     {
       "feature": "volatility_20",
-      "importance": 1.0
-    },
-    {
-      "feature": "sector_relative_return",
       "importance": 1.0
     }
   ]
