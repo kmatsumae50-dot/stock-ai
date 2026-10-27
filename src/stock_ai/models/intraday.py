@@ -1633,11 +1633,13 @@ def get_daily_daytrade_rankings(
     settings: Settings | None = None,
     top_n: int = 5,
     now_dt: datetime | None = None,
+    save_snapshot: bool = True,
 ) -> dict[str, Any]:
     """Scan all 50 universe tickers and generate Top 5 Up (buy candidates) and Top 5 Down (risk candidates).
 
     Optimized: Performs fast scan first, then enriches top focus tickers with 5m microstructure.
     Applies Paleologo cluster penalty to avoid sector crowding.
+    Automatically persists daily forecast snapshot to data/daytrade_snapshots/{date_str}.json for post-market auditing.
     """
     if universe is None:
         universe = load_universe()
@@ -1764,7 +1766,7 @@ def get_daily_daytrade_rankings(
     except Exception as e:
         logger.debug("Failed computing AR market fragility: %s", e)
 
-    return {
+    rankings_result = {
         "date": date_str,
         "phase": phase,
         "phase_title": phase_title,
@@ -1773,6 +1775,76 @@ def get_daily_daytrade_rankings(
         "systemic_stability_badge": systemic_badge,
         "total_scanned": len(results),
     }
+
+    # Automatically persist snapshot for daytime auditing & morning answer-checking
+    if save_snapshot:
+        try:
+            data_dir = getattr(settings.paths, "data_dir", PROJECT_ROOT / "data")
+            snapshot_dir = Path(data_dir) / "daytrade_snapshots"
+            snapshot_dir.mkdir(parents=True, exist_ok=True)
+            snap_file = snapshot_dir / f"{date_str}.json"
+            snap_file.write_text(json.dumps(rankings_result, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as snap_err:
+            logger.debug("Failed saving daytrade rankings snapshot for %s: %s", date_str, snap_err)
+
+    return rankings_result
+
+
+def get_previous_business_date(
+    as_of_dt: datetime | None = None,
+    snapshot_dir: Path | str | None = None,
+) -> str:
+    """Find the most recent past trading date strictly prior to as_of_dt.
+
+    Inspects persistent snapshot files first; falls back to business day arithmetic.
+    """
+    ref_dt = as_of_dt or datetime.now()
+    ref_date_str = ref_dt.strftime("%Y-%m-%d")
+
+    # 1. Search persistent daytrade snapshots
+    if snapshot_dir is not None:
+        p_dir = Path(snapshot_dir)
+        if p_dir.exists():
+            snaps = sorted(p_dir.glob("*.json"))
+            valid_dates = []
+            for s in snaps:
+                stem = s.stem
+                if stem.startswith("scorecard_"):
+                    stem = stem.replace("scorecard_", "")
+                if len(stem) == 10 and stem < ref_date_str:
+                    valid_dates.append(stem)
+            if valid_dates:
+                return sorted(valid_dates)[-1]
+
+    # 2. Calendar fallback (Mon-Fri)
+    candidate = ref_dt - timedelta(days=1)
+    while candidate.weekday() >= 5:  # 5=Sat, 6=Sun
+        candidate -= timedelta(days=1)
+    return candidate.strftime("%Y-%m-%d")
+
+
+def evaluate_previous_daytrade_scorecard(
+    as_of_dt: datetime | None = None,
+    settings: Settings | None = None,
+    save_snapshot: bool = True,
+) -> dict[str, Any]:
+    """Evaluate daytime trading recommendations for the most recent past business day.
+
+    Used by morning pre-market broadcast (07:30) to show yesterday's settled performance
+    and closed-loop online adaptation updates.
+    """
+    if settings is None:
+        settings = load_settings()
+    data_dir = getattr(settings.paths, "data_dir", PROJECT_ROOT / "data")
+    snapshot_dir = Path(data_dir) / "daytrade_snapshots"
+
+    prev_date = get_previous_business_date(as_of_dt=as_of_dt, snapshot_dir=snapshot_dir)
+    return evaluate_todays_daytrade_scorecard(
+        target_date=prev_date,
+        settings=settings,
+        save_snapshot=save_snapshot,
+        now_dt=as_of_dt,
+    )
 
 
 def evaluate_todays_daytrade_scorecard(
@@ -1889,36 +1961,51 @@ def evaluate_todays_daytrade_scorecard(
         act_low = min(act_low, act_open, act_close)
         cost_20bps_yen = act_open * 0.0020
 
-        # Outcome scoring
+        # 4-Stage Strict Outcome Scoring
+        # 1. Target Hit: high reaches target_1 (or short reaches low)
+        # 2. Win Close: target not reached, but net close return > +0.3%
+        # 3. Flat: +/- 0.3% minor oscillation
+        # 4. Stop / Loss: stop loss breached or net close return < -0.3%
         if act_high >= target_1:
             res_code = "TARGET_HIT"
             res_status = "WIN"
-            res_badge = "🎯 利確ターゲット到達"
+            res_badge = "🎯 利確目標到達"
             exit_price = target_1
             gross_pnl_share = target_1 - act_open
+            net_pnl_share = gross_pnl_share - cost_20bps_yen
+            net_return_pct = round((net_pnl_share / act_open) * 100.0, 2) if act_open > 0 else 0.0
         elif act_low <= stop_loss:
             res_code = "STOPPED_OUT"
             res_status = "LOSS"
-            res_badge = "🛡️ 損切ライン抵触"
+            res_badge = "🔴 損切り到達"
             exit_price = stop_loss
             gross_pnl_share = stop_loss - act_open
+            net_pnl_share = gross_pnl_share - cost_20bps_yen
+            net_return_pct = round((net_pnl_share / act_open) * 100.0, 2) if act_open > 0 else 0.0
         else:
             exit_price = act_close
             gross_pnl_share = act_close - act_open
-            net_temp = gross_pnl_share - cost_20bps_yen
-            if net_temp > 0:
-                res_code = "CLOSE_POSITIVE"
-                res_status = "WIN"
-                res_badge = "🟢 大引けプラス決済"
-            else:
-                res_code = "CLOSE_NEGATIVE"
-                res_status = "LOSS"
-                res_badge = "🛡️ 大引けマイナス決済"
+            net_pnl_share = gross_pnl_share - cost_20bps_yen
+            net_return_pct = round((net_pnl_share / act_open) * 100.0, 2) if act_open > 0 else 0.0
 
-        net_pnl_share = gross_pnl_share - cost_20bps_yen
+            if net_return_pct > 0.3:
+                res_code = "WIN_CLOSE"
+                res_status = "WIN"
+                res_badge = "🟢 予想通り上昇"
+            elif net_return_pct < -0.3:
+                res_code = "LOSS_CLOSE"
+                res_status = "LOSS"
+                if act_close <= act_open and act_high >= act_open * 1.008:
+                    res_badge = "🔴 寄り天失速"
+                else:
+                    res_badge = "🔴 予想外れ・マイナス引け"
+            else:
+                res_code = "FLAT"
+                res_status = "FLAT"
+                res_badge = "⚪ 引き分け・微損益"
+
         pnl_100_shares = int(round(net_pnl_share * 100))
         return_pct = round((gross_pnl_share / act_open) * 100.0, 2) if act_open > 0 else 0.0
-        net_return_pct = round((net_pnl_share / act_open) * 100.0, 2) if act_open > 0 else 0.0
 
         # Actual waveform classification
         hl_range = max(1e-6, act_high - act_low)
@@ -1964,8 +2051,10 @@ def evaluate_todays_daytrade_scorecard(
     # 3. Aggregate Summary Statistics
     total_trades = len(evaluated_trades)
     wins = sum(1 for t in evaluated_trades if t["result_status"] == "WIN")
-    losses = total_trades - wins
+    flats = sum(1 for t in evaluated_trades if t["result_status"] == "FLAT")
+    losses = sum(1 for t in evaluated_trades if t["result_status"] == "LOSS")
     win_rate = round((wins / total_trades) * 100.0, 1) if total_trades > 0 else 0.0
+    avg_return_pct = round(float(np.mean([t["net_return_pct"] for t in evaluated_trades])), 2) if evaluated_trades else 0.0
     total_pnl = sum(t["virtual_pnl_100_shares"] for t in evaluated_trades)
 
     mvp_trade = max(evaluated_trades, key=lambda x: x["virtual_pnl_100_shares"]) if evaluated_trades else None
@@ -1975,8 +2064,10 @@ def evaluate_todays_daytrade_scorecard(
         "evaluation_timestamp": datetime.now(timezone.utc).isoformat(),
         "total_trades": total_trades,
         "wins": wins,
+        "flats": flats,
         "losses": losses,
         "win_rate_pct": win_rate,
+        "avg_return_pct": avg_return_pct,
         "total_virtual_pnl_yen": total_pnl,
         "mvp": mvp_trade,
         "trades": evaluated_trades,

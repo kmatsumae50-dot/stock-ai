@@ -1975,13 +1975,28 @@ def build_premarket_daytrade_forecast_payloads(summary_data: dict[str, Any] | No
     """Build pre-market automatic broadcast for ⚡｜当日デイトレ特化予想.
 
     Simulates the top 2-3 focus stocks with full 09:00-15:30 waveform trajectory and rankings.
+    Automatically incorporates yesterday's answer-checking review & AI closed-loop learning feedback.
     """
-    from stock_ai.models.intraday import get_daily_daytrade_rankings, predict_daytrade_sniper
+    from stock_ai.features.adaptive_online_learning import format_daytrade_reflection_overview
+    from stock_ai.models.intraday import (
+        evaluate_previous_daytrade_scorecard,
+        get_daily_daytrade_rankings,
+        predict_daytrade_sniper,
+    )
 
     date_str = (summary_data.get("date") if summary_data else None) or datetime.now().strftime("%Y-%m-%d")
     rankings = get_daily_daytrade_rankings(top_n=5)
     top_up = rankings.get("top_up", [])
     systemic_badge = rankings.get("systemic_stability_badge", "🛡️ 市場システミック安定度: 正常・分散安定 (ARシフト: +0.22σ / クラッシュ脆弱度: 18%)")
+
+    # Evaluate settled scorecard for previous business day
+    reflection_section = ""
+    try:
+        prev_scorecard = evaluate_previous_daytrade_scorecard()
+        if prev_scorecard and prev_scorecard.get("trades"):
+            reflection_section = format_daytrade_reflection_overview(prev_scorecard)
+    except Exception as ref_err:
+        logger.debug("Failed building previous daytrade reflection overview: %s", ref_err)
 
     payloads: list[dict[str, Any]] = []
 
@@ -1991,10 +2006,15 @@ def build_premarket_daytrade_forecast_payloads(summary_data: dict[str, Any] | No
         f"☀️ **【東証開場前・本日の1日値動きシミュレーション＆デイトレ予想】({date_str})**\n\n"
         "デイトレ特化スナイパーAI（12大クオンツ名著 **Easley PIN & Augustin/Subrahmanyam ステルス・インサイダー買い集め検知 & 米国防・政策異常波及 × Barndorff-Nielsen & Shephard実現双冪変動/ジャンプ分解 × 最適停止理論(Wald-Bellman動的エグジット) × Prado VPIN約定フロー毒性/BVC × Kritzman 吸収比率(AR)クラッシュレーダー × Prado CPCV安定度/確率校正/DSR × Lo/MacKinlay Lead-Lag × Cesa-Bianchi/Sutton × HRP × Paleologo × Carver × Chan × AFML/ML4AT** 完全統合エンジン）が、本日09:00寄り付きから15:30大引けまでの **日中チャート波形（6タイプ）と時間帯別株価軌道** を完全シミュレートしました🎯\n\n"
         f"> **{systemic_badge}**\n\n"
+    )
+
+    if reflection_section:
+        overview_text += f"{reflection_section}\n\n"
+
+    overview_text += (
         f"🏆 **本日の厳選デイトレ本命 Top 3**: {', '.join(top_names) if top_names else '本日該当なし'}\n"
         "Easley PINモデルによる大口隠密買い集め（異常出来高×値幅圧縮）、米国防・政策・戦略クラスターの異常波及、BNS双冪変動によるフェイク急騰排除、Wald-Bellman 最適停止理論による動的利確・損切りバリアを極限統合し、真に騙しのない主役株を提示します！"
     )
-
 
     overview_payload = {
         "username": "⚡ デイトレ特化スナイパー AI",
@@ -2020,38 +2040,53 @@ def build_premarket_daytrade_forecast_payloads(summary_data: dict[str, Any] | No
 
 def build_daytrade_scorecard_payloads(scorecard_data: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Build mobile-first Post-Market Scorecard UI card: 🎯 【本日のAIデイトレ答え合わせ通信簿】."""
-    from stock_ai.models.intraday import evaluate_todays_daytrade_scorecard
+    from stock_ai.features.adaptive_online_learning import (
+        DEFAULT_WAVEFORM_KEYS,
+        load_adaptation_state,
+    )
+    from stock_ai.models.intraday import (
+        evaluate_previous_daytrade_scorecard,
+        evaluate_todays_daytrade_scorecard,
+    )
 
     if scorecard_data is None:
-        scorecard_data = evaluate_todays_daytrade_scorecard()
+        now_hour = datetime.now().hour
+        now_min = datetime.now().minute
+        is_post_market = (now_hour > 15) or (now_hour == 15 and now_min >= 30)
+        if not is_post_market:
+            scorecard_data = evaluate_previous_daytrade_scorecard()
+        else:
+            scorecard_data = evaluate_todays_daytrade_scorecard()
 
     date_str = scorecard_data.get("date", datetime.now().strftime("%Y-%m-%d"))
     total_trades = scorecard_data.get("total_trades", 0)
     wins = scorecard_data.get("wins", 0)
+    flats = scorecard_data.get("flats", 0)
     losses = scorecard_data.get("losses", 0)
     win_rate = scorecard_data.get("win_rate_pct", 0.0)
+    avg_return_pct = scorecard_data.get("avg_return_pct", 0.0)
     total_pnl = scorecard_data.get("total_virtual_pnl_yen", 0)
     mvp = scorecard_data.get("mvp")
     trades = scorecard_data.get("trades", [])
 
     pnl_sign = "+" if total_pnl > 0 else ""
     pnl_color = 3066993 if total_pnl > 0 else (15158332 if total_pnl < 0 else 15844367)
-    summary_line = f"通算勝率: **`{win_rate:.1f}%`** ({wins}勝 {losses}敗) ｜ 100株合計仮想損益: **`{pnl_sign}{total_pnl:,}円`**"
+    summary_line = f"通算勝率: **`{win_rate:.1f}%`** ({wins}勝 {losses}敗) ｜ 100株合計仮想損益: **`{pnl_sign}{total_pnl:,}円`** (平均 `{avg_return_pct:+.2f}%`)"
 
     speech = (
-        f"🎯 **【本日のAIデイトレ答え合わせ通信簿 ({date_str})】**\n\n"
-        f"本日大引け（15:30）の実際の日中株価軌道と朝のAIデイトレ推奨を完全自動照合しました！\n"
-        f"📊 **本日の通算戦績**: {summary_line}\n"
+        f"🎯 **【AIデイトレ答え合わせ通信簿・実績見返し ({date_str})】**\n\n"
+        f"大引けの実際の日中株価軌道と朝のAIデイトレ推奨を完全自動照合しました！\n"
+        f"📊 **通算戦績**: {summary_line}\n"
     )
 
     trade_fields = []
     # Summary Field
     mvp_text = f"🏆 **MVP**: `{mvp['ticker']}` **{mvp['name']}** ({'+' if mvp['virtual_pnl_100_shares'] > 0 else ''}{mvp['virtual_pnl_100_shares']:,}円 / {mvp['waveform_verdict']})" if mvp else "なし"
     trade_fields.append({
-        "name": "📊 【本日のAIデイトレ総合判定】",
+        "name": "📊 【AIデイトレ総合判定】",
         "value": (
-            f"> 🎯 **通算勝率**: **`{win_rate:.1f}%`** ({wins}勝 {losses}敗 / 全{total_trades}銘柄)\n"
-            f"> 💰 **100株あたり合計仮想損益**: **`{pnl_sign}{total_pnl:,}円`** (往復20bps控除後)\n"
+            f"> 🎯 **通算勝率**: **`{win_rate:.1f}%`** ({wins}勝 {losses}敗 / 引き分け {flats}件)\n"
+            f"> 💰 **100株あたり合計仮想損益**: **`{pnl_sign}{total_pnl:,}円`** (平均 `{avg_return_pct:+.2f}%`)\n"
             f"> {mvp_text}"
         ),
         "inline": False,
@@ -2086,32 +2121,60 @@ def build_daytrade_scorecard_payloads(scorecard_data: dict[str, Any] | None = No
             "inline": False,
         })
 
+    # Waveform Pattern Hedge Weights Field
+    try:
+        adapt_state = load_adaptation_state()
+        reg_weights = adapt_state.get("regime_expert_weights", {})
+        wf_names = {
+            "gu_rebound_high": "🚀 GU朝押し型",
+            "gd_v_shape": "📈 窓埋め反発型",
+            "trend_breakout": "🚀 ORBブレイク型",
+            "yoriten_fade": "⚠️ 寄り天失速警戒",
+            "gd_downtrend": "📉 一段安下落型",
+            "box_range": "📊 ボックス反発型",
+        }
+        w_lines = []
+        for k in DEFAULT_WAVEFORM_KEYS:
+            w_val = float(reg_weights.get(k, 1.0))
+            label = wf_names.get(k, k)
+            tag = "好調ブースト中" if w_val >= 1.05 else ("リスク抑制ペナルティ適用" if w_val <= 0.95 else "安定中立")
+            w_lines.append(f"・{label}: **`{w_val:.2f}倍`** ({tag})")
+
+        trade_fields.append({
+            "name": "⚖️ 【AI波形パターン信頼度ウェイト一覧 (Hedge Weights)】",
+            "value": "\n".join(w_lines),
+            "inline": False,
+        })
+    except Exception as w_err:
+        logger.debug("Failed building hedge weights field: %s", w_err)
+
     # Series #7 Closed-Loop Online Self-Evolution Reflection Section
     reflection_summary = scorecard_data.get("reflection_summary", [])
     if reflection_summary:
         ref_text = "\n".join(f"> {line}" for line in reflection_summary)
         trade_fields.append({
-            "name": "🧠 【AI自己反省 ＆ 明日の重み自動補正（閉ループ学習）】",
+            "name": "🧠 【AI自己反省 ＆ 翌日の重み自動補正（閉ループ学習）】",
             "value": ref_text,
             "inline": False,
         })
 
     trade_fields.append({
-        "name": "🛡️ 答え合わせ採点ルール（往復20bps控除後）",
+        "name": "🛡️ 答え合わせ採点ルール（4段階厳密判定・往復20bps控除後）",
         "value": (
-            "・🎯 **利確到達**: 日中高値が推奨利確ラインに到達（損切り前に利確約定）\n"
-            "・🟢 **大引けプラス**: ターゲット未達だが15:30大引け時点でプラス決済\n"
-            "・🛡️ **損切り/マイナス引け**: 推奨損切ライン抵触、または大引けマイナス手仕舞い"
+            "・🎯 **利確目標到達**: 日中高値が推奨利確ターゲット `target_1` に到達\n"
+            "・🟢 **予想通り上昇**: 利確未達だがエントリー基準よりプラス引け (net > +0.3%)\n"
+            "・⚪ **引き分け・微損益**: +/-0.3% 以内の小動き\n"
+            "・🔴 **損切り到達 / 寄り天失速**: 損切りライン到達またはマイナス引け (net < -0.3%)"
         ),
         "inline": False,
     })
 
     embed = {
-        "title": f"🎯 【本日のAIデイトレ答え合わせ通信簿】({date_str})",
-        "description": f"**大引け後（15:35）自動採点システム** ｜ 7大名著統合（強化学習TD誤差＆Hedgeオンライン適応閉ループ）",
+        "title": f"🎯 【AIデイトレ答え合わせ通信簿・実績見返し】({date_str})",
+        "description": f"**日中株価軌道自動採点 ＆ AI閉ループ学習フィードバック** ｜ Cesa-Bianchi Hedge & Sutton TD誤差自己進化",
         "color": pnl_color,
         "fields": trade_fields,
-        "footer": {"text": "Stock AI Closed-Loop Self-Evolution | 毎日15:35自動学習更新 / いつでも「通信簿」で確認可能"},
+        "footer": {"text": "Stock AI Closed-Loop Self-Evolution | いつでも「見返し」「通信簿」で確認可能"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -2423,9 +2486,10 @@ class DiscordPollingBot:
         if clean_lower in ("ランキング", "top", "順位", "注目", "ranking"):
             return build_ranking_payloads()
 
-        # 3b. Post-Market Scorecard inquiry (答え合わせ / 通信簿)
+        # 3b. Post-Market Scorecard inquiry (答え合わせ / 通信簿 / 見返し)
         scorecard_keywords = [
             "答え合わせ", "通信簿", "スコアカード", "採点", "scorecard",
+            "見返し", "みかえし", "見返して", "振り返り", "ふりかえり", "反省", "学習",
             "勝敗", "デイトレ結果", "今日の成績", "本日の成績", "トレード結果", "今日の勝敗", "結果", "せいせき",
         ]
         if any(k in clean_lower for k in scorecard_keywords):

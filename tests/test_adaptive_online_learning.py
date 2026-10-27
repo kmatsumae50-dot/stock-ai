@@ -335,3 +335,69 @@ def test_scorecard_reflection_summary_generation(tmp_path: Path):
     loaded = json.loads(state_file.read_text(encoding="utf-8"))
     assert loaded["total_updates"] == 1
     assert len(loaded["failure_archetypes"]) == 1
+
+
+def test_four_stage_outcome_and_daytrade_reflection_formatting():
+    """Verify 4-stage outcome scoring integration and mobile-first reflection text formatting."""
+    from stock_ai.features.adaptive_online_learning import format_daytrade_reflection_overview
+
+    mock_scorecard = {
+        "date": "2026-10-26",
+        "total_trades": 3,
+        "wins": 2,
+        "flats": 0,
+        "losses": 1,
+        "win_rate_pct": 66.7,
+        "avg_return_pct": 1.42,
+        "total_virtual_pnl_yen": 42500,
+        "trades": [
+            {
+                "ticker": "7011.T",
+                "name": "三菱重工業",
+                "predicted_waveform": "🚀【GU寄り付き急伸 ➔ 朝押し反発型】",
+                "waveform_key": "gu_rebound_high",
+                "result_status": "WIN",
+                "result_code": "TARGET_HIT",
+                "result_badge": "🎯 利確目標到達",
+                "net_return_pct": 3.15,
+            },
+            {
+                "ticker": "5803.T",
+                "name": "フジクラ",
+                "predicted_waveform": "📈【GD寄り付き ➔ 窓埋めV字反発型】",
+                "waveform_key": "gd_v_shape",
+                "result_status": "WIN",
+                "result_code": "WIN_CLOSE",
+                "result_badge": "🟢 予想通り上昇",
+                "net_return_pct": 1.28,
+            },
+            {
+                "ticker": "8035.T",
+                "name": "東京エレクトロン",
+                "predicted_waveform": "🚀【寄り付き突破 ➔ 終日トレンド独歩高型】",
+                "waveform_key": "trend_breakout",
+                "result_status": "LOSS",
+                "result_code": "LOSS_CLOSE",
+                "result_badge": "🔴 寄り天失速",
+                "actual_waveform": "寄り天・前場急伸後失速陰線",
+                "net_return_pct": -0.18,
+            },
+        ],
+    }
+
+    overview_text = format_daytrade_reflection_overview(mock_scorecard)
+
+    # 1. Headline section
+    assert "📋 **【前日予想の答え合わせ見返し (10/26実績)】**" in overview_text
+    assert "推奨トップ3成績: **2勝1敗** (勝率 **66.7%** ｜ 平均リターン **+1.42%**)" in overview_text
+
+    # 2. Top 3 stock rows
+    assert "1. `7011` **三菱重工業** (予想: 🚀GU朝押し型) ➔ **🎯 利確目標到達** (+3.15%)" in overview_text
+    assert "2. `5803` **フジクラ** (予想: 📈窓埋め反発型) ➔ **🟢 予想通り上昇** (+1.28%)" in overview_text
+    assert "3. `8035` **東京エレクトロン** (予想: 🚀ORBブレイク型) ➔ **🔴 寄り天失速** (-0.18%)" in overview_text
+
+    # 3. AI Closed-Loop Learning Feedback
+    assert "🧠 **【前日からのAI学習・本日の補正】**" in overview_text
+    assert "前日の寄り天失速(TD誤差" in overview_text
+    assert "「高Jump Ratio(フェイク急騰)」への警戒ペナルティを強化" in overview_text
+    assert "「大口ステルス買い集め×連続トレンド型」の重みを引き上げて" in overview_text

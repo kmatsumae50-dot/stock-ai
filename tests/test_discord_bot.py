@@ -382,3 +382,165 @@ def test_daytrade_channel_and_keyword_routing() -> None:
         assert "本日デイトレ特化予想ランキング" in res_rank[0]["embeds"][0]["title"]
 
 
+def test_daytrade_premarket_forecast_incorporates_yesterday_reflection():
+    """Verify build_premarket_daytrade_forecast_payloads injects yesterday's reflection and closed-loop feedback."""
+    from stock_ai.cloud.discord_bot import build_premarket_daytrade_forecast_payloads
+
+    mock_prev_scorecard = {
+        "date": "2026-10-26",
+        "total_trades": 3,
+        "wins": 2,
+        "flats": 0,
+        "losses": 1,
+        "win_rate_pct": 66.7,
+        "avg_return_pct": 1.42,
+        "total_virtual_pnl_yen": 42500,
+        "trades": [
+            {
+                "ticker": "7011.T",
+                "name": "三菱重工",
+                "predicted_waveform": "🚀GU朝押し型",
+                "result_status": "WIN",
+                "result_code": "TARGET_HIT",
+                "result_badge": "🎯 利確目標到達",
+                "net_return_pct": 3.15,
+            },
+            {
+                "ticker": "5803.T",
+                "name": "フジクラ",
+                "predicted_waveform": "📈窓埋め反発型",
+                "result_status": "WIN",
+                "result_code": "WIN_CLOSE",
+                "result_badge": "🟢 予想通り上昇",
+                "net_return_pct": 1.28,
+            },
+            {
+                "ticker": "8035.T",
+                "name": "東エレク",
+                "predicted_waveform": "🚀ORBブレイク型",
+                "result_status": "LOSS",
+                "result_code": "LOSS_CLOSE",
+                "result_badge": "🔴 寄り天失速",
+                "net_return_pct": -0.18,
+            },
+        ],
+    }
+
+    mock_rankings = {
+        "top_up": [
+            {
+                "ticker": "7011.T",
+                "name": "三菱重工",
+                "probability_up": 65.0,
+                "expected_return_bps": 120.0,
+                "best_entry_zone": "寄付直後",
+                "target_final_price": 2500.0,
+                "target_final_pct": 3.5,
+            },
+            {
+                "ticker": "5803.T",
+                "name": "フジクラ",
+                "probability_up": 60.0,
+                "expected_return_bps": 90.0,
+                "best_entry_zone": "寄付直後",
+                "target_final_price": 4500.0,
+                "target_final_pct": 2.8,
+            },
+            {
+                "ticker": "8035.T",
+                "name": "東エレク",
+                "probability_up": 58.0,
+                "expected_return_bps": 80.0,
+                "best_entry_zone": "寄付直後",
+                "target_final_price": 26000.0,
+                "target_final_pct": 2.2,
+            },
+        ],
+        "top_down": [],
+        "systemic_stability_badge": "🛡️ 市場システミック安定度: 正常・分散安定",
+    }
+
+    with patch("stock_ai.models.intraday.evaluate_previous_daytrade_scorecard", return_value=mock_prev_scorecard), \
+         patch("stock_ai.models.intraday.get_daily_daytrade_rankings", return_value=mock_rankings), \
+         patch("stock_ai.models.intraday.predict_daytrade_sniper", return_value=None):
+        payloads = build_premarket_daytrade_forecast_payloads(summary_data={"date": "2026-10-27"})
+
+    assert len(payloads) >= 1
+    overview = payloads[0]["content"]
+    assert "☀️ **【東証開場前・本日の1日値動きシミュレーション＆デイトレ予想】(2026-10-27)**" in overview
+    assert "📋 **【前日予想の答え合わせ見返し (10/26実績)】**" in overview
+    assert "推奨トップ3成績: **2勝1敗** (勝率 **66.7%** ｜ 平均リターン **+1.42%**)" in overview
+    assert "1. `7011` **三菱重工**" in overview
+    assert "🎯 利確目標到達" in overview
+    assert "2. `5803` **フジクラ**" in overview
+    assert "🟢 予想通り上昇" in overview
+    assert "3. `8035` **東エレク**" in overview
+    assert "🔴 寄り天失速" in overview
+    assert "🧠 **【前日からのAI学習・本日の補正】**" in overview
+    assert "前日の寄り天失速(TD誤差" in overview
+    assert "「高Jump Ratio(フェイク急騰)」への警戒ペナルティを強化" in overview
+
+
+def test_daytrade_scorecard_payloads_structure_and_hedge_weights():
+    """Verify scorecard payload includes Hedge weights and 4-stage scoring rules."""
+    from stock_ai.cloud.discord_bot import build_daytrade_scorecard_payloads
+
+    mock_scorecard = {
+        "date": "2026-10-26",
+        "total_trades": 2,
+        "wins": 1,
+        "flats": 0,
+        "losses": 1,
+        "win_rate_pct": 50.0,
+        "avg_return_pct": 0.85,
+        "total_virtual_pnl_yen": 25000,
+        "mvp": {
+            "ticker": "7011.T",
+            "name": "三菱重工業",
+            "virtual_pnl_100_shares": 50000,
+            "waveform_verdict": "🎯 波形的中",
+        },
+        "trades": [
+            {
+                "ticker": "7011.T",
+                "name": "三菱重工業",
+                "result_badge": "🎯 利確目標到達",
+                "waveform_verdict": "🎯 波形的中",
+                "virtual_pnl_100_shares": 50000,
+                "net_return_pct": 2.50,
+                "actual_open": 2000.0,
+                "exit_price": 2050.0,
+                "actual_high": 2060.0,
+                "actual_low": 1990.0,
+                "predicted_waveform": "GU朝押し型",
+                "actual_waveform": "前場高値引け陽線",
+            }
+        ],
+    }
+
+    payloads = build_daytrade_scorecard_payloads(mock_scorecard)
+    assert len(payloads) == 1
+    embed = payloads[0]["embeds"][0]
+    field_names = [f["name"] for f in embed["fields"]]
+
+    assert any("AI波形パターン信頼度ウェイト一覧 (Hedge Weights)" in name for name in field_names)
+    assert any("答え合わせ採点ルール（4段階厳密判定・往復20bps控除後）" in name for name in field_names)
+
+
+def test_daytrade_scorecard_routing_keywords():
+    """Verify '見返し', '答え合わせ', '通信簿' route to daytrade scorecard payload."""
+    from stock_ai.cloud.discord_bot import DiscordPollingBot
+
+    with patch.object(DiscordPollingBot, "__init__", lambda self: None):
+        bot = DiscordPollingBot()
+        bot.monitored_channels = []
+
+        for kw in ["見返し", "答え合わせ", "通信簿", "デイトレ結果", "今日の成績"]:
+            with patch("stock_ai.cloud.discord_bot.build_daytrade_scorecard_payloads") as mock_build:
+                mock_build.return_value = [{"content": "scorecard_test"}]
+                res = bot._handle_user_message(kw)
+                assert res == [{"content": "scorecard_test"}]
+                mock_build.assert_called_once()
+
+
+
