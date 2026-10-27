@@ -1,11 +1,11 @@
 # TSE Quant Sniper — 全12弾・完全数理仕様書＆アーキテクチャ・ホワイトペーパー
 ## 日本株日経225特化・マイクロストラクチャー＆因果推論クオンツ予測エンジン
 
-**バージョン**: 12.0 (Series #1 - #12 Master Integrated Edition)  
-**コードステータス**: Code Freeze / Production Frozen  
-**対象ユニバース**: 日経225銘柄群＋プライム高流動性50銘柄  
-**著者**: Antigravity Quant Team  
-**日付**: 2026年10月26日  
+**バージョン**: 12.1 (Series #1 - #12 Master Integrated & Closed-Loop Answer-Checking Edition)  
+**コミットID**: `bc1df7d` (Code Freeze / Production Frozen)  
+**対象ユニバース**: 日経225構成銘柄群＋東証プライム高流動性50銘柄  
+**著者**: Antigravity Quant Engineering Team  
+**日付**: 2026年10月27日  
 
 ---
 
@@ -23,8 +23,12 @@
    - [Series 10: Prado & O'Hara VPIN（約定フロー毒性）& Kritzman 吸収比率](#series-10-prado--ohara-vpin約定フロー毒性-kritzman-吸収比率)
    - [Series 11: Barndorff-Nielsen 双冪変動ジャンプ分解 & 最適停止動的バリア](#series-11-barndorff-nielsen-双冪変動ジャンプ分解--最適停止動的バリア)
    - [Series 12: Easley PIN ステルス買い集め & 政策波及 & 売り抜けガード](#series-12-easley-pin-ステルス買い集め--政策波及--売り抜けガード)
-3. [データパイプラインとゼロリーク（Zero-Leakage）因果律設計](#3-データパイプラインとゼロリークzero-leakage因果律設計)
-4. [実戦フォワード運用時の監視チェックリスト＆トラブルシューティング](#4-実戦フォワード運用時の監視チェックリストトラブルシューティング)
+3. [前日予想の厳密答え合わせ（4段階照合）＆閉ループAI自己進化アーキテクチャ](#3-前日予想の厳密答え合わせ4段階照合閉ループai自己進化アーキテクチャ)
+   - [4段階厳密リターン照合アルゴリズム](#4段階厳密リターン照合アルゴリズム)
+   - [Hedge波形信頼度ウェイト＆TD学習更新方程式](#hedge波形信頼度ウェイトtd学習更新方程式)
+   - [朝のデイトレレポート先頭表示＆Discord対話コマンド仕様](#朝のデイトレレポート先頭表示discord対話コマンド仕様)
+4. [データパイプラインとゼロリーク（Zero-Leakage）因果律設計](#4-データパイプラインとゼロリークzero-leakage因果律設計)
+5. [実戦フォワード運用時の監視チェックリスト＆トラブルシューティング](#5-実戦フォワード運用時の監視チェックリストトラブルシューティング)
 
 ---
 
@@ -132,8 +136,8 @@
 - **著者 / 論文**: Richard S. Sutton & Andrew G. Barto (2018), *Reinforcement Learning*; Nicolo Cesa-Bianchi & Gabor Lugosi (2006), *Prediction, Learning, and Games*.
 - **数理定義**:
   - **TD誤差（Temporal Difference Error）フィードバック**:
-    $$\delta_t = R_t - \hat{R}_t$$
-    $$V_{t+1}(S_i) = V_t(S_i) + \alpha \delta_t$$
+    $$\delta_{i, t} = R_{\text{actual}, i, t} - R_{\text{expected}, i, t}$$
+    $$V_{t+1}(S_i) = V_t(S_i) + \alpha \delta_{i, t}$$
   - **Cesa-Bianchi 指数ウェイト信用度マルチプライヤー**:
     $$C_{i, t+1} = C_{i, t} \cdot \exp\left(\eta \cdot \text{clip}(\delta_{i,t}, -0.03, +0.03)\right)$$
   - **失敗アーキタイプ・マハラノビス制動（Failure Archetype Mahalanobis Distance）**:
@@ -223,7 +227,50 @@
 
 ---
 
-## 3. データパイプラインとゼロリーク（Zero-Leakage）因果律設計
+## 3. 前日予想の厳密答え合わせ（4段階照合）＆閉ループAI自己進化アーキテクチャ
+
+本システムは、毎朝配信するデイトレ推奨の「当たり外れ」を曖昧に放置せず、大引け後（15:35）および翌朝（07:30）の双方で、実際の OHLCV 確定データと完全自動照合して履歴を永続化し、AIの波形選択アルゴリズムへ即座にオンライン学習フィードバックする**閉ループ自己進化機構（Closed-Loop Self-Evolution）**を備えています。
+
+### 4段階厳密リターン照合アルゴリズム
+各推奨銘柄に対し、往復 20bps の執行摩擦コストを厳密控除した上で、以下の優先順位に従って判定コードを決定します：
+
+1. **`🎯 利確目標到達 (Target Hit)`**:
+   - ロング: $P_{\text{high}, t} \ge T^*_1$
+   - ショート: $P_{\text{low}, t} \le T^*_1$
+   - 日中最大値幅が推奨利確ラインに到達（損切り前に利確約定）。
+2. **`🟢 予想通り上昇・プラス引け (Win Close)`**:
+   - 利確目標には未到達だが、往復 20bps 控除後の実効収支がプラスで大引けを迎えた状態：
+   - $R_{\text{net}, t} > +0.3\%$
+3. **`⚪ 引き分け・微損益 (Flat)`**:
+   - コスト控除後のリターンが $\pm 0.3\%$ 以内の揉み合い・小動き：
+   - $-0.3\% \le R_{\text{net}, t} \le +0.3\%$
+4. **`🔴 予想外れ・損切り到達 (Stop / Loss)`**:
+   - 損切りラインに抵触 ($P_{\text{low}, t} \le S^*$)、またはマイナス引け ($R_{\text{net}, t} < -0.3\%$)。
+   - 特に前場急伸後に失速した陰線に対しては `🔴 寄り天失速` と明示分類。
+
+### Hedge波形信頼度ウェイト＆TD学習更新方程式
+確定した4段階スコアカードから、Cesa-Bianchi Hedge アルゴリズムを用いて6大日中波形専門家（Experts）の重み $w_{m, t}$ を逐次更新します：
+
+$$L_{i, t} = \begin{cases} 
+  \min(0.10, 0.50 - 0.50 \cdot \text{norm}(R_{\text{net}})) & (\text{Target Hit}) \\
+  \min(0.25, 0.50 - 0.50 \cdot \text{norm}(R_{\text{net}})) & (\text{Win Close}) \\
+  0.50 & (\text{Flat}) \\
+  \max(0.85, 0.50 - 0.50 \cdot \text{norm}(R_{\text{net}})) & (\text{Stop / Loss})
+\end{cases}$$
+
+$$w_{m, t+1} = \text{clip}\left(w_{m, t} \cdot \exp\left(-\eta \cdot (\bar{L}_{m, t} - 0.50)\right), 0.60, 1.40\right) \quad (\eta = 0.20)$$
+
+- **学習効果**: 前日外した波形パターン（例: 寄り天失速型）にはペナルティがかかり、前日利確に到達した波形（例: 大口ステルス買い集め×連続トレンド型、GU朝押し型）の信頼度ウェイトが引き上げられ、翌日の銘柄スクリーニング順位が自動補正されます。
+
+### 朝のデイトレレポート先頭表示＆Discord対話コマンド仕様
+- **朝 07:30 デイトレレポート (`⚡｜当日デイトレ特化予想`)**:
+  - 市場環境サマリー直下に「📋 前日予想の答え合わせ見返し」および「🧠 前日からのAI学習・本日の補正」を自動出力。ユーザーは1秒で昨日の勝敗と今日のAI選定理由を把握可能。
+- **Discord 対話コマンド**:
+  - ユーザーが `見返し`、`答え合わせ`、`通信簿`、`振り返り` のいずれかを送信すると、直近前営業日の詳細な個別実績カードおよび現在の `⚖️ 【AI波形パターン信頼度ウェイト一覧 (Hedge Weights)】` を即座に返信。
+
+---
+
+## 4. データパイプラインとゼロリーク（Zero-Leakage）因果律設計
 
 ### タイムライン確定値マッピング
 本システムにおける全取引・全特徴量は、以下の時間軸因果律（Causal Timeline）を厳密に遵守しています：
@@ -232,11 +279,13 @@
 [Day t-1]
 15:30 JST: 前日大引け確定値 (Close[t-1], High[t-1], Low[t-1], Volume[t-1])
 15:35 JST: 当日取引のTD誤差・オンライン学習更新 (Adaptor Update for Day t-1)
+           - Day t-1 のスコアカード確定＆Hedge重み永続化
 16:00 JST: 翌朝寄前 Overnight 予測エンジン実行 (Features calculated using <= t-1 only)
            ➔ Strategy B 候補選定 (翌朝 09:00 Open[t] 成行買いシグナル生成)
 
 [Day t]
 07:30 JST: 当日寄前 Intraday デイトレ予測エンジン実行 (Open[t] 確定前のため <= t-1 のみ参照)
+           - 前営業日 (Day t-1) の答え合わせ見返し＆AI学習補正をレポート先頭に自動出力
 09:00 JST: 前場寄付き (Open[t] 確定)
            - Strategy B ポジション約定 (15:30 前日引け値とのオーバーナイト差分)
            - Strategy D デイトレポジション約定 (Open[t] で成行エントリー)
@@ -244,6 +293,7 @@
            - Strategy D デイトレポジション強制手仕舞い (Close[t] で完全クローズ)
            - Day t の OHLCV 確定値が Parquet/DB に格納される
 15:35 JST: Day t の実行結果を用いて Online Adaptor が初めて更新される (Zero Leakage)
+           - 4段階判定による Day t スコアカード確定
 ```
 
 ### 未来情報ゼロリークの数理的証明
@@ -256,7 +306,7 @@
 
 ---
 
-## 4. 実戦フォワード運用時の監視チェックリスト＆トラブルシューティング
+## 5. 実戦フォワード運用時の監視チェックリスト＆トラブルシューティング
 
 本番運用時において、日次パフォーマンスやシステム挙動に異常が生じた際、即座に原因を切り分けるための**緊急診断プロトコル**です。
 
@@ -265,7 +315,8 @@
 - [ ] **Kritzman Absorption Ratio**: $\Delta \text{AR}_t < +2.0\sigma$（システミック・クラッシュ警戒域にないこと）。
 - [ ] **Informed Dumping Alert**: Strategy B/D の採用銘柄に Dumping Score $\ge 0.70$ が存在しないこと。
 - [ ] **Execution Slippage**: 実約定値と寄付き始値（Open）の乖離が 10bps 以内に収まっていること。
-- [ ] **Online Adaptor State**: Ticker TD State の過剰適応（単一銘柄の信用度が 1.40 を超えていないか）の確認。
+- [ ] **Online Adaptor State**: Ticker TD State の過剰適応（単一銘柄の信用度が 1.40 を超えていないか、Hedge 重みが極端な偏りを見せていないか）の確認。
+- [ ] **4段階スコアカード勝率**: 直近5営業日の通算勝率が $40\%$ を下回った場合、相場レジームの転換（Mean-Reverting vs Trend）を確認。
 
 ### 🚨 異常兆候とパラメータ疑義の優先調査ツリー
 
@@ -276,6 +327,7 @@
 | **特定セクターへの偏重・連鎖負け** | Series #4: Paleologo Sector Clustering Penalty | `microstructure_paleologo.py` (`penalty_factor`) | ペナルティ係数を 1.0 から 1.5 へ引き上げ、セクター分散を強制する。 |
 | **連敗時の過大なドローダウン** | Series #5: Carver Drawdown Throttle | `carver_systematic.py` (`apply_drawdown_throttle`) | 警告DD閾値（`warn_dd=0.07`）および限界DD閾値（`max_dd_limit=0.15`）の作動状況を確認。 |
 | **地政学・防衛株の急騰乗り遅れ** | Series #12: Policy Sector Wave Score | `insider_stealth_detector.py` (`compute_policy_defense_insider_spillover`) | クラスター構成銘柄の出来高Zスコア閾値（`abnormal_volume_z_20d`）の感度を確認。 |
+| **寄り天・高値掴みの連続発生** | Series #11: Fake Spike Exhaustion Flag / Series #6: Hedge Waveform Weights | `jump_bipower_optimal_stop.py` & `adaptive_online_learning.py` | `yoriten_fade` への警戒ペナルティ係数を引き上げ、始値ジャンプ率 $\ge 2.5\%$ のエントリーを一時停止。 |
 
 ---
-*TSE Quant Sniper Architecture Document — Fully Audited and Verified (2026-10-26)*
+*TSE Quant Sniper Architecture Document — Fully Audited and Verified (2026-10-27)*
