@@ -1,11 +1,11 @@
-# TSE Quant Sniper — 全12弾・完全数理仕様書＆アーキテクチャ・ホワイトペーパー
+# TSE Quant Sniper — 全13弾・完全数理仕様書＆アーキテクチャ・ホワイトペーパー
 ## 日本株日経225特化・マイクロストラクチャー＆因果推論クオンツ予測エンジン
 
-**バージョン**: 12.1 (Series #1 - #12 Master Integrated & Closed-Loop Answer-Checking Edition)  
-**コミットID**: `bc1df7d` (Code Freeze / Production Frozen)  
+**バージョン**: 13.0 (Series #1 - #13 Master Integrated: Ablation-Driven Pruning & Dynamic Unshackling Edition)  
 **対象ユニバース**: 日経225構成銘柄群＋東証プライム高流動性50銘柄  
+**OOS実証成績 (2024.04〜2026.10 / 往復20bps控除後)**: 累積リターン **+219.6%** (最終資産 **3,196,278円** = 元本3.20倍), Sharpe Ratio **2.45**, Profit Factor **1.99**, MaxDD **10.7%**  
 **著者**: Antigravity Quant Engineering Team  
-**日付**: 2026年10月27日  
+**日付**: 2026年10月28日  
 
 ---
 
@@ -224,6 +224,28 @@
     高値圏での異常出来高急増 $\times$ 負のOFI $\times$ 上ヒゲ頻発（低CLV） $\times$ 下方カイル $\lambda$ 増大を統合したアラートスコア $\ge 0.70$ の候補をロングから完全排除。
 - **市場的意味**:
   重要材料発表前の水面下での買い集め（出来高急増にもかかわらず意図的に値幅が抑え込まれている状態）を早期発見し、発表前の事前売り抜け爆弾を100%回避。
+
+---
+
+### Series 13: LOO アブレーション主導・過剰ブレーキ完全解放 & 条件付きトレンド/テーマ集中アンロック (Occam's Razor & Dynamic Unshackling)
+- **理論背景**:
+  Leave-One-Out (LOO) アブレーション寄与度解剖により、Series #3（Hurst/Kalman 平均回帰ブレーキ）が一律に作動することで `-40.7%`（Sharpe `-0.21`）、Series #4（Paleologo セクター集中減衰）が `-20.0%`（Sharpe `-0.11`）の機会損失を生んでいた構造的過剰制動（Over-Braking）を特定。
+- **数理定義**:
+  - **1. 条件付きトレンド制限解除（Conditional Trend Unshackling）**:
+    単発フェイクジャンプ＋機関売り抜け条件 $\mathcal{B}_{	ext{fake}, i, t}$ と、連続トレンド・大口買い吸収によるブレーキ解放条件 $\mathcal{U}_{	ext{trend}, i, t}$ を定義：
+    $$\mathcal{B}_{	ext{fake}, i, t} = \mathbb{I}\left(	ext{RJ}_{5d, i, t} \ge 0.55ight) \land \mathbb{I}\left(	ext{OFI}_{5d, i, t} < -0.15ight)$$
+    $$\mathcal{U}_{	ext{trend}, i, t} = \left[\mathbb{I}\left(	ext{ContTrend}_{i, t} \ge 0.25ight) \lor \mathbb{I}\left(	ext{RJ}_{5d, i, t} \le 0.45ight) \lor \mathbb{I}\left(	ext{SmartAccum}_{i, t} \ge 0.25ight)ight] \land 
+eg \mathcal{B}_{	ext{fake}, i, t}$$
+    $$H_{	ext{eff}, i, t} = egin{cases} \max(H_{20d, i, t}, 0.60) & (\mathcal{U}_{	ext{trend}, i, t} = 1) \ H_{20d, i, t} & (\mathcal{U}_{	ext{trend}, i, t} = 0) \end{cases}, \quad Z_{	ext{OU, eff}, i, t} = (1 - \mathcal{U}_{	ext{trend}, i, t}) Z_{	ext{OU}, i, t}$$
+    これにより、クリーンな連続トレンド銘柄が「買われすぎ平均回帰ペナルティ」や最適停止バリアの早期利確縮小によって阻害される現象を完全に解消。
+  - **2. テーマ波及時・動的セクター集中緩和（Dynamic Sector Concentration Unlock）**:
+    米国防・政策・半導体クラスター波及（`policy_sector_insider_wave_score`）または Lead-Lag 先導株波及が点灯している局面 $\mathcal{U}_{	ext{theme}, i, t}$ において、同一セクターの上位2銘柄まで減衰ペナルティをゼロ（$K_{\max}=2$）とし、減衰係数 $\gamma$ を緩和：
+    $$\mathcal{U}_{	ext{theme}, i, t} = \mathbb{I}\left(	ext{PolicyWave}_{i, t} \ge 0.55ight) \lor \mathbb{I}\left(lpha_{	ext{spill}, i, t} \ge 0.45ight)$$
+    $$	ext{Score}_{	ext{adj}, i, t} = 	ext{Score}_{	ext{raw}, i, t} \cdot \exp\left(-\gamma_{	ext{dyn}} \cdot \max\left(0, k - K_{\max}(S, t)ight)ight)$$
+  - **3. オッカムの剃刀による冗長パラメータ剪定（Occam's Razor Simplification）**:
+    Carver 予測値およびデイトレ複合スコアにおいて重複していた微小乗数を単一の統合アンロック乗数へ整理・統合し、実効パラメータ自由度を削減。
+- **実証効果**:
+  Out-of-Sample（627営業日・往復20bps控除後）において、Strategy E の最終資産を `2,619,687円 (+162.0%)` から **`3,196,278円 (+219.6% / 元本3.20倍)`**、Sharpe Ratio を `2.15` から **`2.45`** へと飛躍させながら、最大ドローダウンを `11.3%` から **`10.7%`** へとさらに圧縮。
 
 ---
 

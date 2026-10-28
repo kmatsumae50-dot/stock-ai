@@ -474,8 +474,10 @@ def simulate_overnight_strategy(
         except Exception:
             piv_rets_all = None
 
+    day_groups = {dt: grp for dt, grp in df.groupby("date")}
+
     for d in dates:
-        day_slice = df[df["date"] == d].copy()
+        day_slice = day_groups[d].copy() if d in day_groups else df[df["date"] == d].copy()
         is_latest = d == dates[-1]
         peak_equity = max(peak_equity, equity)
         dd_t = (peak_equity - equity) / peak_equity if peak_equity > 0 else 0.0
@@ -663,29 +665,19 @@ def simulate_overnight_strategy(
                         elif s_val <= -0.8:
                             capped_f = max(2.0, capped_f * max(0.70, 1.0 - (abs(s_val) - 0.8) * 0.15))
 
-                    # Series #9 CPCV Stability & DSR Multiple-Testing Confidence
-                    if "cpcv_stability_score" in t_row.columns and not t_row["cpcv_stability_score"].empty:
-                        cpcv_s = float(t_row["cpcv_stability_score"].values[0])
-                        if cpcv_s >= 0.52:
-                            capped_f = min(20.0, capped_f * (1.0 + min(0.06, (cpcv_s - 0.50) * 0.3)))
-                        elif cpcv_s < 0.48:
-                            capped_f = max(2.0, capped_f * max(0.94, 1.0 - (0.50 - cpcv_s) * 0.3))
+                    # Series #13 Occam's Razor Simplification & Conditional Trend/Theme Unshackling:
+                    # Consolidate 4 redundant micro-multipliers into a unified unshackled momentum boost
+                    # and single-shot fake-jump + negative OFI brake, reducing degrees of freedom.
+                    cont_v = float(t_row["continuous_trend_score"].values[0]) if "continuous_trend_score" in t_row.columns and not t_row["continuous_trend_score"].empty else 0.50
+                    jr_v = float(t_row["jump_ratio_5d"].values[0]) if "jump_ratio_5d" in t_row.columns and not t_row["jump_ratio_5d"].empty else 0.15
+                    smart_v = float(t_row["vpin_smart_accumulation_score"].values[0]) if "vpin_smart_accumulation_score" in t_row.columns and not t_row["vpin_smart_accumulation_score"].empty else 0.35
+                    pol_v = float(t_row["policy_sector_insider_wave_score"].values[0]) if "policy_sector_insider_wave_score" in t_row.columns and not t_row["policy_sector_insider_wave_score"].empty else 0.50
+                    ofi_v = float(t_row["vpin_signed_ofi_5d"].values[0]) if "vpin_signed_ofi_5d" in t_row.columns and not t_row["vpin_signed_ofi_5d"].empty else 0.0
 
-                    # Series #10 Prado VPIN Smart Accumulation & Informed Distribution Sizing
-                    if "vpin_smart_accumulation_score" in t_row.columns and not t_row["vpin_smart_accumulation_score"].empty:
-                        smart_v = float(t_row["vpin_smart_accumulation_score"].values[0])
-                        if smart_v >= 0.45:
-                            capped_f = min(20.0, capped_f * (1.0 + min(0.08, (smart_v - 0.40) * 0.25)))
-
-                    # Series #12 Stealth Accumulation & Policy Sector Wave Carver Forecast Adjustment
-                    if "insider_stealth_accumulation_10d" in t_row.columns and not t_row["insider_stealth_accumulation_10d"].empty:
-                        stealth_v = float(t_row["insider_stealth_accumulation_10d"].values[0])
-                        if stealth_v >= 0.65:
-                            capped_f = min(20.0, capped_f * (1.0 + min(0.05, (stealth_v - 0.50) * 0.15)))
-                    if "policy_sector_insider_wave_score" in t_row.columns and not t_row["policy_sector_insider_wave_score"].empty:
-                        pol_v = float(t_row["policy_sector_insider_wave_score"].values[0])
-                        if pol_v >= 0.65:
-                            capped_f = min(20.0, capped_f * (1.0 + min(0.04, (pol_v - 0.50) * 0.12)))
+                    if (cont_v >= 0.55 or jr_v <= 0.25) and (smart_v >= 0.40 or pol_v >= 0.60):
+                        capped_f = min(20.0, capped_f * 1.15)
+                    elif jr_v >= 0.45 and ofi_v < 0.0:
+                        capped_f = max(2.0, capped_f * 0.75)
 
                     pick_forecasts.append(capped_f)
 
@@ -881,8 +873,10 @@ def simulate_intraday_strategy(
     )
     adaptor = RollingOnlineAdaptor() if use_adaptive_learning else None
 
+    day_groups = {dt: grp for dt, grp in df.groupby("date")}
+
     for d in dates:
-        day_slice = df[df["date"] == d].copy()
+        day_slice = day_groups[d].copy() if d in day_groups else df[df["date"] == d].copy()
         is_latest = d == dates[-1]
         peak_equity = max(peak_equity, equity)
         dd_t = (peak_equity - equity) / peak_equity if peak_equity > 0 else 0.0
@@ -893,12 +887,24 @@ def simulate_intraday_strategy(
             if "p_intraday_cs" in day_slice.columns:
                 cond = cond & (day_slice["p_intraday_cs"] >= 0.50)
 
-            # Ernest Chan Regime Confirmation Filter:
-            # Either trend persistence (Hurst >= 0.48) OR extreme oversold bounce (OU Z-score <= -1.5)
+            # Series #13 Conditional Trend Unshackling for Ernest Chan Regime Confirmation Filter:
+            # Unlock Hurst/OU/Kalman mean-reversion brakes during clean BNS continuous trends or VPIN smart accumulation;
+            # restrict brake strictly to single-shot fake jump + institutional negative OFI dumping.
             if "prior_chan_hurst_20d" in day_slice.columns:
-                h_series = day_slice["prior_chan_hurst_20d"].fillna(0.50)
-                ou_series = day_slice["prior_chan_ou_zscore"].fillna(0.0) if "prior_chan_ou_zscore" in day_slice.columns else pd.Series(0.0, index=day_slice.index)
-                regime_filter = (h_series >= 0.48) | (ou_series <= -1.5)
+                from stock_ai.features.chan_quant import compute_conditional_trend_unshackled_chan
+                unshackled_chan = compute_conditional_trend_unshackled_chan(
+                    hurst=day_slice["prior_chan_hurst_20d"],
+                    ou_zscore=day_slice["prior_chan_ou_zscore"] if "prior_chan_ou_zscore" in day_slice.columns else 0.0,
+                    continuous_trend_score=day_slice["continuous_trend_score"] if "continuous_trend_score" in day_slice.columns else 0.50,
+                    jump_ratio_5d=day_slice["jump_ratio_5d"] if "jump_ratio_5d" in day_slice.columns else 0.0,
+                    vpin_smart_accumulation_score=day_slice["vpin_smart_accumulation_score"] if "vpin_smart_accumulation_score" in day_slice.columns else 0.35,
+                    vpin_signed_ofi_5d=day_slice["vpin_signed_ofi_5d"] if "vpin_signed_ofi_5d" in day_slice.columns else 0.0,
+                )
+                eff_h_series = unshackled_chan["effective_hurst"]
+                eff_ou_series = unshackled_chan["effective_ou_zscore"]
+                day_slice["_eff_chan_hurst"] = eff_h_series
+                day_slice["_is_trend_unshackled"] = unshackled_chan["is_trend_unshackled"]
+                regime_filter = (eff_h_series >= 0.48) | (eff_ou_series <= -1.5)
                 cond = cond & regime_filter
 
             # Series #11 BNS Jump Decomposition Fake Spike Filter:
@@ -911,15 +917,23 @@ def simulate_intraday_strategy(
                 cond = cond & (~day_slice["insider_dumping_alert_flag"].fillna(False).astype(bool))
 
             # Market Microstructure Vacuum Book (Upward Elasticity) & Paleologo Idio IR Enhancement
+            # with Series #13 Dynamic Sector/Theme Unshackling Floor during extreme policy or lead-lag waves
             if "prior_micro_upward_elasticity_10d" in day_slice.columns:
+                from stock_ai.features.microstructure_paleologo import compute_dynamic_sector_concentration_unlock
+                theme_unlock = compute_dynamic_sector_concentration_unlock(
+                    policy_wave_score=day_slice["policy_sector_insider_wave_score"] if "policy_sector_insider_wave_score" in day_slice.columns else pd.Series(0.50, index=day_slice.index),
+                    leadlag_spillover_score=day_slice["leadlag_spillover_alpha_1d"] if "leadlag_spillover_alpha_1d" in day_slice.columns else pd.Series(0.0, index=day_slice.index),
+                )
+                is_extreme_theme = theme_unlock["is_extreme_theme"]
                 up_elast = day_slice["prior_micro_upward_elasticity_10d"].fillna(1.0).clip(0.60, 2.00)
                 idio_ir = (
                     day_slice["prior_paleo_idio_sharpe_20d"].fillna(0.0).clip(-1.5, 1.5)
                     if "prior_paleo_idio_sharpe_20d" in day_slice.columns
-                    else 0.0
+                    else pd.Series(0.0, index=day_slice.index)
                 )
-                elast_mult = (up_elast / 1.0).clip(0.85, 1.25)
-                idio_mult = 1.0 + 0.10 * idio_ir
+                elast_mult = np.where(is_extreme_theme, np.maximum(1.0, (up_elast / 1.0).clip(0.85, 1.25)), (up_elast / 1.0).clip(0.85, 1.25))
+                idio_mult = np.where(is_extreme_theme, np.maximum(1.0, 1.0 + 0.10 * idio_ir), 1.0 + 0.10 * idio_ir)
+                day_slice["_is_theme_unlocked"] = theme_unlock["is_theme_unlocked"]
                 day_slice["intraday_sniper_score"] = day_slice["pred_intraday_ret"] * elast_mult * idio_mult
             else:
                 day_slice["intraday_sniper_score"] = day_slice["pred_intraday_ret"]
@@ -935,7 +949,7 @@ def simulate_intraday_strategy(
                         c_tick, c_sec, cur_adapt_state["ticker_td_state"], cur_adapt_state["sector_td_state"]
                     )
                     vol_val = float(r_cand.get("volatility_20", 0.02)) if "volatility_20" in r_cand and pd.notna(r_cand["volatility_20"]) else 0.02
-                    h_val = float(r_cand.get("prior_chan_hurst_20d", 0.50)) if "prior_chan_hurst_20d" in r_cand and pd.notna(r_cand["prior_chan_hurst_20d"]) else 0.50
+                    h_val = float(r_cand.get("_eff_chan_hurst", r_cand.get("prior_chan_hurst_20d", 0.50)))
                     u_val = float(r_cand.get("prior_micro_upward_elasticity_10d", 1.00)) if "prior_micro_upward_elasticity_10d" in r_cand and pd.notna(r_cand["prior_micro_upward_elasticity_10d"]) else 1.00
                     cand_prof = {
                         "gap_to_atr": 0.50,
@@ -1076,7 +1090,7 @@ def simulate_intraday_strategy(
                 if "volatility_20" in cand_row.columns and "prior_chan_hurst_20d" in cand_row.columns:
                     from stock_ai.features.jump_bipower_optimal_stop import compute_optimal_stopping_barriers
                     vol_v = float(cand_row["volatility_20"].values[0]) if pd.notna(cand_row["volatility_20"].values[0]) else 0.02
-                    h_v = float(cand_row["prior_chan_hurst_20d"].values[0]) if pd.notna(cand_row["prior_chan_hurst_20d"].values[0]) else 0.50
+                    h_v = float(cand_row["_eff_chan_hurst"].values[0]) if "_eff_chan_hurst" in cand_row.columns else (float(cand_row["prior_chan_hurst_20d"].values[0]) if pd.notna(cand_row["prior_chan_hurst_20d"].values[0]) else 0.50)
                     j_v = float(cand_row["jump_ratio_5d"].values[0]) if ("jump_ratio_5d" in cand_row.columns and pd.notna(cand_row["jump_ratio_5d"].values[0])) else 0.15
                     barriers = compute_optimal_stopping_barriers(pred_r, vol_v, h_v, j_v)
                     sl_barrier = barriers["dynamic_stop_loss"]
@@ -1110,7 +1124,7 @@ def simulate_intraday_strategy(
                         "actual_close": 1000.0 * (1.0 + raw_ret),
                         "predicted_waveform": "🔥【寄り付き突破 ➔ 終日トレンド独歩高型】" if pred_r >= 0.005 else "🚀【GU朝押し ➔ 後場高値引け型】",
                         "gap_to_atr": 0.50,
-                        "chan_hurst": float(cand_row["prior_chan_hurst_20d"].values[0]) if "prior_chan_hurst_20d" in cand_row.columns else 0.50,
+                        "chan_hurst": float(cand_row["_eff_chan_hurst"].values[0]) if "_eff_chan_hurst" in cand_row.columns else (float(cand_row["prior_chan_hurst_20d"].values[0]) if "prior_chan_hurst_20d" in cand_row.columns else 0.50),
                         "micro_upward_elasticity": float(cand_row["prior_micro_upward_elasticity_10d"].values[0]) if "prior_micro_upward_elasticity_10d" in cand_row.columns else 1.00,
                         "prior_clv": 0.50,
                     }

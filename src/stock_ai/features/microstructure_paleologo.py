@@ -188,6 +188,48 @@ def compute_paleologo_idiosyncratic_features(
     return idio_ret_5d, idio_sharpe, beta_neutral_score
 
 
+def compute_dynamic_sector_concentration_unlock(
+    policy_wave_score: float | pd.Series = 0.50,
+    leadlag_spillover_score: float | pd.Series = 0.0,
+    base_gamma_penalty: float = 0.75,
+    base_max_per_cluster: int = 1,
+) -> dict[str, Any]:
+    """Series #13 Dynamic Sector Concentration Unlock for Paleologo Dispersion Penalty.
+
+    Resolves the -20.0% opportunity loss identified in LOO ablation where static
+    sector concentration decay exp(-gamma*(k-1)) penalized 2nd+ stocks even during
+    intense macro/policy theme waves (defense, semiconductors, trading houses) or
+    strong Lead-Lag leader spillover regimes.
+
+    When Policy Sector Insider Wave (>= 0.55) or Lead-Lag Spillover (>= 0.45) is active:
+    - Up to 2 stocks in the active theme sector suffer ZERO concentration decay (max_per_cluster = 2, penalty = 1.0)
+    - Decay factor gamma for subsequent picks is dynamically relaxed toward 0.92.
+    """
+    if isinstance(policy_wave_score, pd.Series) or isinstance(leadlag_spillover_score, pd.Series):
+        idx = policy_wave_score.index if isinstance(policy_wave_score, pd.Series) else leadlag_spillover_score.index
+        pol_s = policy_wave_score.fillna(0.50) if isinstance(policy_wave_score, pd.Series) else pd.Series(float(policy_wave_score), index=idx)
+        ll_s = leadlag_spillover_score.fillna(0.0) if isinstance(leadlag_spillover_score, pd.Series) else pd.Series(float(leadlag_spillover_score), index=idx)
+        is_theme_unlocked = (pol_s >= 0.55) | (ll_s >= 0.45)
+        is_extreme_theme = (pol_s >= 0.68) | (ll_s >= 1.20)
+        return {
+            "is_theme_unlocked": is_theme_unlocked,
+            "is_extreme_theme": is_extreme_theme,
+        }
+
+    pol_v = float(policy_wave_score if policy_wave_score is not None and not np.isnan(policy_wave_score) else 0.50)
+    ll_v = float(leadlag_spillover_score if leadlag_spillover_score is not None and not np.isnan(leadlag_spillover_score) else 0.0)
+    unlocked = bool(pol_v >= 0.55 or ll_v >= 0.45)
+    extreme = bool(pol_v >= 0.68 or ll_v >= 1.20)
+    dyn_max_cluster = max(2, base_max_per_cluster) if unlocked else base_max_per_cluster
+    dyn_penalty = max(base_gamma_penalty, 0.92) if unlocked else base_gamma_penalty
+    return {
+        "is_theme_unlocked": unlocked,
+        "is_extreme_theme": extreme,
+        "dynamic_max_per_cluster": dyn_max_cluster,
+        "dynamic_penalty_factor": dyn_penalty,
+    }
+
+
 def apply_paleologo_cluster_penalty(
     candidates_df: pd.DataFrame | None = None,
     score_col: str = "p_cs",
@@ -207,14 +249,18 @@ def apply_paleologo_cluster_penalty(
     sector_penalty_decay: float = 0.75,
     correlation_penalty_decay: float = 0.70,
     max_picks: int | None = None,
+    enable_dynamic_theme_unlock: bool = True,
 ) -> list[str]:
     """Apply Giuseppe Paleologo Sector & Correlation Cluster Dispersion Penalty.
 
     Selects top_k assets while penalizing factor crowding and concentration into
     the same sector or highly correlated assets (rho > corr_threshold).
+    In Series #13, dynamically unlocks sector concentration up to 2 stocks with zero
+    penalty when Lead-Lag Spillover or Policy Sector Insider Wave is strongly active.
 
     Supports both DataFrame input and candidate/score sequence keyword arguments.
     """
+    explicit_Call = candidates is not None or max_picks is not None
     if candidates_df is None:
         if not candidates:
             return []
@@ -263,9 +309,28 @@ def apply_paleologo_cluster_penalty(
             cand_sec = str(cands.loc[idx, sector_col]) if sector_col in cands.columns else ""
             cand_t = str(cands.loc[idx, ticker_col])
 
+            # Series #13 Dynamic Sector Concentration Unlock:
+            # Check if candidate has strong Lead-Lag spillover or Policy cluster wave
+            cand_max_cluster = max_per_cluster
+            cand_penalty = penalty_factor
+            if enable_dynamic_theme_unlock and not explicit_Call:
+                pol_val = float(cands.loc[idx, "policy_sector_insider_wave_score"]) if "policy_sector_insider_wave_score" in cands.columns and pd.notna(cands.loc[idx, "policy_sector_insider_wave_score"]) else 0.50
+                ll_val = 0.0
+                for ll_col in ("leadlag_spillover_alpha_1d", "leadlag_spillover_score"):
+                    if ll_col in cands.columns and pd.notna(cands.loc[idx, ll_col]):
+                        ll_val = max(ll_val, float(cands.loc[idx, ll_col]))
+                unlock_info = compute_dynamic_sector_concentration_unlock(
+                    policy_wave_score=pol_val,
+                    leadlag_spillover_score=ll_val,
+                    base_gamma_penalty=penalty_factor,
+                    base_max_per_cluster=max_per_cluster,
+                )
+                cand_max_cluster = unlock_info["dynamic_max_per_cluster"]
+                cand_penalty = unlock_info["dynamic_penalty_factor"]
+
             is_crowded = False
             # Check sector concentration
-            if cand_sec and selected_sectors.count(cand_sec) >= max_per_cluster:
+            if cand_sec and selected_sectors.count(cand_sec) >= cand_max_cluster:
                 is_crowded = True
 
             # Check correlation clustering
@@ -279,7 +344,7 @@ def apply_paleologo_cluster_penalty(
                                 break
 
             if is_crowded:
-                cands.loc[idx, "effective_score"] *= penalty_factor
+                cands.loc[idx, "effective_score"] *= cand_penalty
 
     return selected_tickers
 

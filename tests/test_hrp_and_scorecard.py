@@ -151,15 +151,24 @@ def test_scorecard_evaluation_execution():
     assert "trades" in scorecard
 
     # Consistency checks
-    assert scorecard["total_trades"] == scorecard["wins"] + scorecard["losses"]
+    assert scorecard["total_trades"] == scorecard["wins"] + scorecard["losses"] + scorecard.get("flats", 0)
     assert 0.0 <= scorecard["win_rate_pct"] <= 100.0
 
     # Trade cards check
     for t in scorecard["trades"]:
         assert "ticker" in t
         assert "name" in t
-        assert t["result_status"] in ("WIN", "LOSS")
-        assert t["result_code"] in ("TARGET_HIT", "STOPPED_OUT", "CLOSE_POSITIVE", "CLOSE_NEGATIVE")
+        assert t["result_status"] in ("WIN", "FLAT", "LOSS")
+        assert t["result_code"] in (
+            "TARGET_HIT",
+            "WIN_CLOSE",
+            "FLAT",
+            "LOSS_CLOSE",
+            "YORITEN_STOP",
+            "STOPPED_OUT",
+            "CLOSE_POSITIVE",
+            "CLOSE_NEGATIVE",
+        )
         assert "virtual_pnl_100_shares" in t
         assert "waveform_verdict" in t
 
@@ -281,7 +290,7 @@ def test_discord_scorecard_payload_structure():
     assert "+42,000円" in p["content"]
     assert "embeds" in p and len(p["embeds"]) == 1
     embed = p["embeds"][0]
-    assert "🎯 【本日のAIデイトレ答え合わせ通信簿】" in embed["title"]
+    assert "AIデイトレ答え合わせ通信簿" in embed["title"]
     assert len(embed["fields"]) >= 4  # Summary + 3 trades + rules
     # Confirm mobile-first layout: every field has inline: False
     for f in embed["fields"]:

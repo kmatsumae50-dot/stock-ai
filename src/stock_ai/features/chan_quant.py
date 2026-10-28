@@ -281,6 +281,83 @@ def calculate_half_kelly_fraction(
     return f_star
 
 
+def compute_conditional_trend_unshackled_chan(
+    hurst: pd.Series | float,
+    ou_zscore: pd.Series | float = 0.0,
+    kalman_zscore: pd.Series | float = 0.0,
+    continuous_trend_score: pd.Series | float = 0.50,
+    jump_ratio_5d: pd.Series | float = 0.15,
+    vpin_smart_accumulation_score: pd.Series | float = 0.35,
+    vpin_signed_ofi_5d: pd.Series | float = 0.0,
+) -> dict[str, Any]:
+    """Series #13 Conditional Trend Unshackling for Ernest Chan Hurst / OU / Kalman Regime.
+
+    Resolves the -40.7% opportunity loss identified in LOO ablation where unconditional
+    mean-reversion brakes (low Hurst or positive Kalman/OU deviation) prematurely capped
+    clean momentum trends.
+
+    Mathematical Specification:
+    1. Single-Shot Fake Jump + Institutional Dumping Condition (Brake Trigger):
+       B_fake_dump = I(JumpRatio_5d >= 0.55) AND I(SignedOFI_5d < -0.15)
+    2. Conditional Trend Unshackling Condition (Unlock Trigger):
+       U_trend = (I(ContTrend >= 0.25) OR I(JumpRatio_5d <= 0.45) OR I(SmartAccum >= 0.25))
+                 AND NOT B_fake_dump
+    3. When U_trend is True:
+       - Effective Hurst is unshackled to max(H_raw, 0.60)
+       - OU & Kalman overbought mean-reversion penalties are completely unlocked (0.0 / 1.0x)
+    """
+    if isinstance(hurst, pd.Series):
+        idx = hurst.index
+        h_s = hurst.fillna(0.50)
+        ou_s = ou_zscore.fillna(0.0) if isinstance(ou_zscore, pd.Series) else pd.Series(float(ou_zscore), index=idx)
+        kz_s = kalman_zscore.fillna(0.0) if isinstance(kalman_zscore, pd.Series) else pd.Series(float(kalman_zscore), index=idx)
+        cont_s = continuous_trend_score.fillna(0.50) if isinstance(continuous_trend_score, pd.Series) else pd.Series(float(continuous_trend_score), index=idx)
+        jr_s = jump_ratio_5d.fillna(0.0) if isinstance(jump_ratio_5d, pd.Series) else pd.Series(float(jump_ratio_5d), index=idx)
+        smart_s = vpin_smart_accumulation_score.fillna(0.35) if isinstance(vpin_smart_accumulation_score, pd.Series) else pd.Series(float(vpin_smart_accumulation_score), index=idx)
+        ofi_s = vpin_signed_ofi_5d.fillna(0.0) if isinstance(vpin_signed_ofi_5d, pd.Series) else pd.Series(float(vpin_signed_ofi_5d), index=idx)
+
+        is_fake_jump_dump = (jr_s >= 0.55) & (ofi_s < -0.15)
+        is_unshackled = ((cont_s >= 0.25) | (jr_s <= 0.45) | (smart_s >= 0.25)) & (~is_fake_jump_dump)
+
+        eff_hurst = pd.Series(np.where(is_unshackled, np.maximum(h_s, 0.60), h_s), index=idx, dtype=float)
+        eff_ou_z = pd.Series(np.where(is_unshackled, 0.0, ou_s), index=idx, dtype=float)
+        kalman_brake_mult = pd.Series(
+            np.where(is_fake_jump_dump & (kz_s > 1.5), 0.75, 1.0),
+            index=idx,
+            dtype=float,
+        )
+        return {
+            "effective_hurst": eff_hurst,
+            "effective_ou_zscore": eff_ou_z,
+            "kalman_brake_multiplier": kalman_brake_mult,
+            "is_trend_unshackled": is_unshackled,
+            "is_fake_jump_dump": is_fake_jump_dump,
+        }
+
+    h_val = float(hurst if hurst is not None and not np.isnan(hurst) else 0.50)
+    ou_val = float(ou_zscore if ou_zscore is not None and not np.isnan(ou_zscore) else 0.0)
+    kz_val = float(kalman_zscore if kalman_zscore is not None and not np.isnan(kalman_zscore) else 0.0)
+    cont_val = float(continuous_trend_score if continuous_trend_score is not None and not np.isnan(continuous_trend_score) else 0.50)
+    jr_val = float(jump_ratio_5d if jump_ratio_5d is not None and not np.isnan(jump_ratio_5d) else 0.15)
+    smart_val = float(vpin_smart_accumulation_score if vpin_smart_accumulation_score is not None and not np.isnan(vpin_smart_accumulation_score) else 0.35)
+    ofi_val = float(vpin_signed_ofi_5d if vpin_signed_ofi_5d is not None and not np.isnan(vpin_signed_ofi_5d) else 0.0)
+
+    is_fake_dump = bool(jr_val >= 0.55 and ofi_val < -0.15)
+    is_unshackled_b = bool((cont_val >= 0.25 or jr_val <= 0.45 or smart_val >= 0.25) and not is_fake_dump)
+
+    eff_h = max(h_val, 0.60) if is_unshackled_b else h_val
+    eff_ou = 0.0 if is_unshackled_b else ou_val
+    k_mult = 0.75 if (is_fake_dump and kz_val > 1.5) else 1.0
+
+    return {
+        "effective_hurst": eff_h,
+        "effective_ou_zscore": eff_ou,
+        "kalman_brake_multiplier": k_mult,
+        "is_trend_unshackled": is_unshackled_b,
+        "is_fake_jump_dump": is_fake_dump,
+    }
+
+
 def add_chan_quant_features(df: pd.DataFrame) -> pd.DataFrame:
     """Add all 8 Ernest Chan quantitative features to a multi-ticker or single-ticker DataFrame.
 

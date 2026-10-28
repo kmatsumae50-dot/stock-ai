@@ -1460,10 +1460,24 @@ def predict_daytrade_sniper(
     if fake_spike_flag and "突発ジャンプ過熱・反落警戒" not in risk_flags:
         risk_flags.append("突発ジャンプ過熱・反落警戒")
 
+    # Series #13 Conditional Trend Unshackling (Chan Hurst / OU / Kalman Brake Unlock)
+    from stock_ai.features.chan_quant import compute_conditional_trend_unshackled_chan
+    unshackled_chan = compute_conditional_trend_unshackled_chan(
+        hurst=chan_hurst if chan_hurst is not None else 0.50,
+        ou_zscore=chan_ou_z if chan_ou_z is not None else 0.0,
+        continuous_trend_score=continuous_trend,
+        jump_ratio_5d=jump_ratio_5d,
+        vpin_smart_accumulation_score=smart_acc,
+        vpin_signed_ofi_5d=vpin_ofi,
+    )
+    eff_chan_hurst = float(unshackled_chan["effective_hurst"])
+    is_trend_unshackled = bool(unshackled_chan["is_trend_unshackled"])
+    is_fake_jump_dump = bool(unshackled_chan["is_fake_jump_dump"])
+
     stopping_res = compute_optimal_stopping_barriers(
         drift=float(eff_bps) / 10000.0,
         volatility=vol_20,
-        hurst=chan_hurst,
+        hurst=eff_chan_hurst,
         jump_ratio=jump_ratio_5d,
         continuous_score=continuous_trend,
         vpin_toxicity=vpin_tox,
@@ -1519,6 +1533,35 @@ def predict_daytrade_sniper(
         insider_stealth_badge = f"🕵️‍♂️ ステルス監視: 買い集め進行中 (吸収効率: {eff_grade}{cluster_wave_str})"
     else:
         insider_stealth_badge = f"🕵️‍♂️ ステルス監視: 正常 (買い集め: {int(stealth_accum * 100)}% / 売り抜けリスク: 低)"
+
+    # Series #13 Dynamic Sector/Theme Concentration Unlock & Full Alpha Mode Badge
+    from stock_ai.features.microstructure_paleologo import compute_dynamic_sector_concentration_unlock
+    theme_unlock_info = compute_dynamic_sector_concentration_unlock(
+        policy_wave_score=policy_wave,
+        leadlag_spillover_score=spillover_score,
+    )
+    is_theme_unlocked = bool(theme_unlock_info["is_theme_unlocked"])
+    unshackled_mode_active = bool((is_trend_unshackled or is_theme_unlocked) and not (dumping_flag or fake_spike_flag or is_fake_jump_dump))
+
+    if is_fake_jump_dump or dumping_flag:
+        unshackled_badge = "🛑 平均回帰ブレーキ発動: 単発フェイクジャンプ×大口売り抜け警戒"
+        carver_forecast = max(2.0, round(carver_forecast * 0.75, 1))
+    elif is_trend_unshackled and (is_theme_unlocked or policy_cluster != "一般"):
+        unshackled_badge = "🔓 ブレーキ解除: 連続トレンド×国策テーマ集中 (Full Alpha Mode)"
+        carver_forecast = min(20.0, round(carver_forecast * 1.15, 1))
+        bet_size = min(1.0, round(bet_size * 1.10, 2))
+    elif is_trend_unshackled:
+        unshackled_badge = "🔓 ブレーキ解除: 連続トレンド×大口買い吸収 (Full Alpha Mode)"
+        carver_forecast = min(20.0, round(carver_forecast * 1.10, 1))
+        bet_size = min(1.0, round(bet_size * 1.05, 2))
+    elif is_theme_unlocked:
+        unshackled_badge = "🔓 ブレーキ解除: 国策テーマ・先導株波及集中 (Full Alpha Mode)"
+        carver_forecast = min(20.0, round(carver_forecast * 1.10, 1))
+    else:
+        unshackled_badge = "⚖️ ブレーキ制御: 標準リスク管理モード"
+
+    if bet_size >= 0.70:
+        lot_recommendation = "🔥 推奨ロット: 100%（AFML強気フルサイズ）"
 
     return {
         "ticker": ticker,
@@ -1618,6 +1661,12 @@ def predict_daytrade_sniper(
         "insider_dumping_alert_score": round(dumping_score, 3),
         "insider_dumping_alert_flag": dumping_flag,
         "insider_stealth_badge": insider_stealth_badge,
+        # Series #13 Ablation-Driven Pruning & Dynamic Trend/Sector Unshackling
+        "effective_chan_hurst": round(eff_chan_hurst, 2),
+        "is_trend_unshackled": is_trend_unshackled,
+        "is_theme_unlocked": is_theme_unlocked,
+        "unshackled_mode_active": unshackled_mode_active,
+        "unshackled_badge": unshackled_badge,
 
         # Backwards compatible alias keys
         "target_price": waveform_data["target_final_price"],
@@ -1685,8 +1734,19 @@ def get_daily_daytrade_rankings(
         dump_alert = pd.to_numeric(df_results.get("insider_dumping_alert_score", 0.0), errors="coerce").fillna(0.0)
         dump_brake = 1.0 - dump_alert.clip(0.0, 0.8) * 0.35
 
+        # Series #13 Occam's Razor Parameter Simplification:
+        # Consolidate redundant positive multipliers into a unified unshackled alpha boost
+        # and unified tail/dumping brake, preventing over-parameterized noise multiplication.
+        unshackled_alpha_boost = (
+            1.0
+            + 0.35 * (spill_mult - 1.0)
+            + 0.35 * (cont_mult - 1.0)
+            + 0.30 * (smart_mult * stealth_mult * policy_mult - 1.0)
+        ).clip(0.80, 1.45)
+        unified_tail_brake = (tox_brake * spike_brake * dump_brake).clip(0.45, 1.0)
+
         df_results["composite_score"] = (
-            p_up_clean * (1.0 + exp_bps_clean / 1000.0) * spill_mult * smart_mult * tox_brake * cont_mult * spike_brake * stealth_mult * policy_mult * dump_brake
+            p_up_clean * (1.0 + exp_bps_clean / 1000.0) * unshackled_alpha_boost * unified_tail_brake
         )
         penalized_tickers = apply_paleologo_cluster_penalty(
             candidates_df=df_results,
