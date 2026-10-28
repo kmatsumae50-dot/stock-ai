@@ -1560,6 +1560,37 @@ def predict_daytrade_sniper(
     else:
         unshackled_badge = "⚖️ ブレーキ制御: 標準リスク管理モード"
 
+    # =======================================================================
+    # Series #14 Opening Gap-to-ATR Asymmetric Entry & Sizing Optimization
+    # =======================================================================
+    signed_gap_pct = ((open_p - prev_c) / prev_c) if prev_c > 0 else 0.0
+    signed_gap_to_atr = float(signed_gap_pct / max(0.008, vol_20))
+    gap_atr_info = compute_gap_atr_entry_adjustment(
+        gap_to_atr=signed_gap_to_atr,
+        continuous_trend_score=continuous_trend,
+        vpin_smart_accumulation_score=smart_acc,
+        policy_wave_score=policy_wave,
+    )
+    gap_atr_badge = str(gap_atr_info["gap_atr_badge"])
+    if gap_atr_info["is_sweet_spot_gap"]:
+        carver_forecast = min(20.0, round(carver_forecast * float(gap_atr_info["score_multiplier"]), 1))
+        bet_size = min(1.0, round(bet_size * float(gap_atr_info["sizing_multiplier"]), 2))
+        eff_bps = round(eff_bps * 1.08, 1)
+    elif gap_atr_info["is_v_rebound_gap"]:
+        carver_forecast = min(20.0, round(carver_forecast * float(gap_atr_info["score_multiplier"]), 1))
+        eff_bps = round(eff_bps * 1.04, 1)
+    elif gap_atr_info["is_yoriten_gap_trap"]:
+        carver_forecast = max(2.0, round(carver_forecast * float(gap_atr_info["score_multiplier"]), 1))
+        bet_size = max(0.10, round(bet_size * float(gap_atr_info["sizing_multiplier"]), 2))
+        short_exhaustion = min(1.0, round(short_exhaustion + 0.25, 3))
+        if "過剰GU・寄り天警戒" not in risk_flags:
+            risk_flags.append(f"⚠️ 過剰GU・寄り天警戒 (Gap/ATR {signed_gap_to_atr:+.2f})")
+    elif gap_atr_info["is_panic_crash_trap"]:
+        carver_forecast = max(2.0, round(carver_forecast * float(gap_atr_info["score_multiplier"]), 1))
+        bet_size = max(0.10, round(bet_size * float(gap_atr_info["sizing_multiplier"]), 2))
+        if "パニックGD警戒" not in risk_flags:
+            risk_flags.append(f"⚠️ パニックGD警戒 (Gap/ATR {signed_gap_to_atr:+.2f})")
+
     if bet_size >= 0.70:
         lot_recommendation = "🔥 推奨ロット: 100%（AFML強気フルサイズ）"
 
@@ -1667,6 +1698,13 @@ def predict_daytrade_sniper(
         "is_theme_unlocked": is_theme_unlocked,
         "unshackled_mode_active": unshackled_mode_active,
         "unshackled_badge": unshackled_badge,
+        # Series #14 Dynamic Night-Day Regime Allocation & Gap-ATR Entry Optimization
+        "gap_to_atr": round(signed_gap_to_atr, 2),
+        "is_sweet_spot_gap": bool(gap_atr_info["is_sweet_spot_gap"]),
+        "is_v_rebound_gap": bool(gap_atr_info["is_v_rebound_gap"]),
+        "is_yoriten_gap_trap": bool(gap_atr_info["is_yoriten_gap_trap"]),
+        "is_panic_crash_trap": bool(gap_atr_info["is_panic_crash_trap"]),
+        "gap_atr_badge": gap_atr_badge,
 
         # Backwards compatible alias keys
         "target_price": waveform_data["target_final_price"],
@@ -1674,6 +1712,140 @@ def predict_daytrade_sniper(
         "support_price": waveform_data["target_1_price"],
         "stop_loss_pct": waveform_data["stop_loss_pct"],
         "tactical_comment": waveform_data["waveform_description"],
+    }
+
+
+def compute_gap_atr_entry_adjustment(
+    gap_to_atr: float,
+    continuous_trend_score: float = 0.50,
+    vpin_smart_accumulation_score: float = 0.35,
+    policy_wave_score: float = 0.50,
+    market_gap_atr: float = 0.0,
+    systemic_fragility_score: float = 0.50,
+) -> dict[str, Any]:
+    """Series #14: Compute asymmetric entry & sizing adjustment based on Opening Gap-to-ATR ratio.
+
+    Let G_ATR = (Open_t - Close_{t-1}) / (Close_{t-1} * Volatility_{20, t-1}).
+    1. Sweet Spot (0.15 <= G_ATR <= 1.35 with continuous trend >= 0.50 or VPIN smart accumulation >= 0.25):
+       Institutional morning execution momentum persists -> boost conviction, size (+6%), and take-profit barrier (+12%).
+    2. V-Rebound Pullback (-2.05 <= G_ATR < -0.25 with strong continuous trend >= 0.60, VPIN accumulation >= 0.25, or policy wave >= 0.55):
+       Healthy dip-buying opportunity in an ongoing uptrend -> boost conviction (+5%).
+    3. Unbacked Excessive Gap-Up / Yoriten Trap ((G_ATR > 1.80 & smart_acc < 0.35) or (G_ATR >= 0.55 & cont_trend < 0.48 & smart_acc < 0.25)):
+       High probability of opening-bell exhaustion (Yoriten fade) -> filter out long or route to Short Exhaustion.
+    4. Unbacked Panic Crash Gap-Down:
+       Filter out falling-knife gap-downs when neither continuous trend nor smart accumulation supports rebound.
+    """
+    g = float(gap_to_atr)
+    cont = float(continuous_trend_score)
+    smart = float(vpin_smart_accumulation_score)
+    pol = float(policy_wave_score)
+    mkt_g = float(market_gap_atr)
+    frag = float(systemic_fragility_score)
+
+    is_yoriten_gap_trap = bool(
+        (g > 1.80 and smart < 0.35)
+        or (g >= 0.55 and cont < 0.48 and smart < 0.25)
+    )
+    is_panic_crash_trap = bool(
+        (g < -2.20 and cont < 0.48 and smart < 0.25)
+        or (mkt_g < -1.50 and frag >= 0.95 and cont < 0.45 and smart < 0.20)
+    )
+    is_sweet_spot_gap = bool(
+        (0.15 <= g <= 1.35)
+        and (cont >= 0.50 or smart >= 0.25)
+        and not is_yoriten_gap_trap
+    )
+    is_v_rebound_gap = bool(
+        (-2.05 <= g < -0.25)
+        and (cont >= 0.60 or smart >= 0.25 or pol >= 0.55)
+        and not is_panic_crash_trap
+    )
+
+    if is_yoriten_gap_trap:
+        score_mult = 0.70
+        sizing_mult = 0.65
+        tp_mult = 0.90
+        badge = f"⚠️ 寄付きGap/ATR判定: {g:+.2f} ATR [過剰GU・寄り天警戒 (ロング抑制/ショート優位)]"
+    elif is_panic_crash_trap:
+        score_mult = 0.70
+        sizing_mult = 0.60
+        tp_mult = 0.90
+        badge = f"⚠️ 寄付きGap/ATR判定: {g:+.2f} ATR [パニックGD・落ちるナイフ警戒]"
+    elif is_sweet_spot_gap:
+        score_mult = 1.08
+        sizing_mult = 1.06
+        tp_mult = 1.12
+        badge = f"📐 寄付きGap/ATR判定: {g:+.2f} ATR [順張りスイートスポット・目標伸長 +12%]"
+    elif is_v_rebound_gap:
+        score_mult = 1.05
+        sizing_mult = 1.02
+        tp_mult = 1.05
+        badge = f"📐 寄付きGap/ATR判定: {g:+.2f} ATR [強トレンド朝押し・V字窓埋め優位]"
+    else:
+        score_mult = 1.00
+        sizing_mult = 1.00
+        tp_mult = 1.00
+        badge = f"📐 寄付きGap/ATR判定: {g:+.2f} ATR [適正寄付きレンジ・標準執行]"
+
+    return {
+        "gap_to_atr": round(g, 3),
+        "is_sweet_spot_gap": is_sweet_spot_gap,
+        "is_v_rebound_gap": is_v_rebound_gap,
+        "is_yoriten_gap_trap": is_yoriten_gap_trap,
+        "is_panic_crash_trap": is_panic_crash_trap,
+        "score_multiplier": score_mult,
+        "sizing_multiplier": sizing_mult,
+        "tp_barrier_multiplier": tp_mult,
+        "gap_atr_badge": badge,
+    }
+
+
+def compute_night_day_regime_allocation(
+    drawdown_t: float = 0.0,
+    systemic_fragility_score: float = 0.50,
+    market_volatility_20: float = 0.02,
+    has_day_alpha_pick: bool = True,
+) -> dict[str, Any]:
+    """Series #14: Compute Dynamic Night-to-Day Regime Capital Allocation for Dual-Shift 2毛作.
+
+    - Overnight leg (15:30 -> 09:00) carries macro gap risk during drawdown or elevated systemic fragility:
+      tighten Overnight throttle (warn_dd=4.0%, max_dd=10.0%, min_mult=0.20) and scale down when systemic fragility & vol spike.
+    - Intraday leg (09:00 -> 15:30) has ultra-high capital efficiency (PF > 3.10, MaxDD < 4.0%):
+      dynamically boost Intraday utilization (1.10x) when Full Alpha Mode / continuous trend / Gap-ATR sweet spot is active.
+    """
+    from stock_ai.features.carver_systematic import apply_drawdown_throttle
+
+    dd = max(0.0, float(drawdown_t))
+    frag = float(systemic_fragility_score)
+    mvol = float(market_volatility_20)
+
+    night_w = float(apply_drawdown_throttle(dd, max_dd_limit=0.100, warn_dd=0.040, min_multiplier=0.20))
+    if dd >= 0.040 and frag >= 0.85 and mvol >= 0.025:
+        night_w = max(0.20, night_w * 0.90)
+
+    day_base = float(apply_drawdown_throttle(dd, max_dd_limit=0.145, warn_dd=0.075, min_multiplier=0.55))
+    day_boost = 1.12 if has_day_alpha_pick else 1.00
+    day_w = round(day_base * day_boost, 3)
+    night_w = round(night_w, 3)
+
+    if frag >= 0.80 or dd >= 0.040:
+        regime_code = "DAY_FOCUS"
+        regime_badge = (
+            f"⚖️ 2毛作シフト判定: 日中トレンド集中モード "
+            f"(Overnight {night_w:.2f}x 抑制 ⇄ Intraday {day_w:.2f}x 重点配分)"
+        )
+    else:
+        regime_code = "BALANCED_COMPOUND"
+        regime_badge = (
+            f"⚖️ 2毛作シフト判定: 昼夜高効率複利モード "
+            f"(Overnight {night_w:.2f}x × Intraday {day_w:.2f}x フル稼働)"
+        )
+
+    return {
+        "night_allocation_weight": night_w,
+        "day_allocation_weight": day_w,
+        "regime_mode_code": regime_code,
+        "night_day_regime_badge": regime_badge,
     }
 
 
@@ -1745,8 +1917,19 @@ def get_daily_daytrade_rankings(
         ).clip(0.80, 1.45)
         unified_tail_brake = (tox_brake * spike_brake * dump_brake).clip(0.45, 1.0)
 
+        # Series #14 Opening Gap-to-ATR Sweet Spot & Yoriten Trap Adjustment
+        is_sweet_gap = df_results.get("is_sweet_spot_gap", pd.Series([False] * len(df_results))).fillna(False).astype(bool)
+        is_v_reb_gap = df_results.get("is_v_rebound_gap", pd.Series([False] * len(df_results))).fillna(False).astype(bool)
+        is_yori_trap = df_results.get("is_yoriten_gap_trap", pd.Series([False] * len(df_results))).fillna(False).astype(bool)
+        is_panic_trap = df_results.get("is_panic_crash_trap", pd.Series([False] * len(df_results))).fillna(False).astype(bool)
+        gap_atr_mult = np.where(
+            is_yori_trap | is_panic_trap,
+            0.65,
+            np.where(is_sweet_gap, 1.08, np.where(is_v_reb_gap, 1.05, 1.0)),
+        )
+
         df_results["composite_score"] = (
-            p_up_clean * (1.0 + exp_bps_clean / 1000.0) * unshackled_alpha_boost * unified_tail_brake
+            p_up_clean * (1.0 + exp_bps_clean / 1000.0) * unshackled_alpha_boost * unified_tail_brake * gap_atr_mult
         )
         penalized_tickers = apply_paleologo_cluster_penalty(
             candidates_df=df_results,
@@ -1762,14 +1945,15 @@ def get_daily_daytrade_rankings(
     results_by_ticker = {r["ticker"]: r for r in results}
     raw_top_up = [results_by_ticker[t] for t in penalized_tickers if t in results_by_ticker]
 
-    # Series #10, #11 & #12 Asymmetric Short, Fake Spike & Insider Dumping Sniper
+    # Series #10, #11, #12 & #14 Asymmetric Short, Fake Spike, Insider Dumping & Yoriten Gap-Up Sniper
     def _down_sort_key(x: dict[str, Any]) -> tuple[float, float, float]:
         ex_score = float(x.get("short_exhaustion_sniper_score", 0.0))
         is_fake = 1.0 if x.get("fake_spike_exhaustion_flag", False) else 0.0
         dump_score = float(x.get("insider_dumping_alert_score", 0.0))
+        is_yori = 1.0 if x.get("is_yoriten_gap_trap", False) else 0.0
         p_up = float(x.get("probability_up", 50.0))
         exp_bps = float(x.get("expected_return_bps", 0.0))
-        return (-(ex_score + 0.35 * is_fake + 0.35 * dump_score), p_up, exp_bps)
+        return (-(ex_score + 0.35 * is_fake + 0.35 * dump_score + 0.25 * is_yori), p_up, exp_bps)
 
     raw_top_down = sorted(results, key=_down_sort_key)[:top_n]
 
@@ -1795,8 +1979,10 @@ def get_daily_daytrade_rankings(
     phase, phase_title = determine_market_phase(now_dt)
     date_str = (now_dt or datetime.now()).strftime("%Y-%m-%d")
 
-    # Series #10 Mark Kritzman Absorption Ratio Market-Wide Fragility Index
+    # Series #10 Mark Kritzman Absorption Ratio Market-Wide Fragility Index & Series #14 Night-Day Regime Shift
     systemic_badge = "🛡️ 市場システミック安定度: 正常・分散安定 (ARシフト: +0.22σ / クラッシュ脆弱度: 18%)"
+    last_frag = 0.18
+    mkt_vol_mean = float(np.mean([r.get("volatility_20", 0.02) for r in results])) if results else 0.02
     try:
         from stock_ai.features.flow_toxicity_tail_risk import compute_market_absorption_ratio
         from stock_ai.storage.parquet_store import read_parquet
@@ -1826,6 +2012,19 @@ def get_daily_daytrade_rankings(
     except Exception as e:
         logger.debug("Failed computing AR market fragility: %s", e)
 
+    has_day_alpha = any(
+        bool(r.get("unshackled_mode_active", False))
+        or float(r.get("continuous_trend_score", 0.50)) >= 0.45
+        or bool(r.get("is_sweet_spot_gap", False))
+        for r in top_up[:2]
+    )
+    regime_alloc = compute_night_day_regime_allocation(
+        drawdown_t=0.0,
+        systemic_fragility_score=last_frag,
+        market_volatility_20=mkt_vol_mean,
+        has_day_alpha_pick=has_day_alpha,
+    )
+
     rankings_result = {
         "date": date_str,
         "phase": phase,
@@ -1833,6 +2032,10 @@ def get_daily_daytrade_rankings(
         "top_up": top_up,
         "top_down": top_down,
         "systemic_stability_badge": systemic_badge,
+        "night_day_regime_badge": regime_alloc["night_day_regime_badge"],
+        "night_allocation_weight": regime_alloc["night_allocation_weight"],
+        "day_allocation_weight": regime_alloc["day_allocation_weight"],
+        "regime_mode_code": regime_alloc["regime_mode_code"],
         "total_scanned": len(results),
     }
 

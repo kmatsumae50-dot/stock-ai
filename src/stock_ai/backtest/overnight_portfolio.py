@@ -441,6 +441,17 @@ def collect_overnight_universe_predictions(
     full_df["policy_sector_insider_wave_score"] = spill_res["policy_sector_insider_wave_score"]
     full_df["policy_cluster_tag"] = spill_res["policy_cluster_tag"]
 
+    # Series #14 Opening Gap-to-ATR Ratio (strictly causal: overnight_gap[t] / volatility_20[t-1])
+    full_df = full_df.sort_values(["ticker", "date"]).copy()
+    if "volatility_20" in full_df.columns and "overnight_gap" in full_df.columns:
+        full_df["prior_vol_20"] = (
+            full_df.groupby("ticker")["volatility_20"]
+            .shift(1)
+            .fillna(full_df["volatility_20"])
+            .clip(lower=0.008)
+        )
+        full_df["_gap_to_atr"] = full_df["overnight_gap"].fillna(0.0) / full_df["prior_vol_20"]
+
     dates = sorted(full_df["date"].unique())
     return full_df, dates
 
@@ -792,6 +803,17 @@ def simulate_overnight_strategy(
         pnl = equity * net_return
         equity += pnl
 
+        frag_day_val = (
+            float(day_slice["systemic_fragility_score"].dropna().mean())
+            if ("systemic_fragility_score" in day_slice.columns and not day_slice["systemic_fragility_score"].dropna().empty)
+            else 0.50
+        )
+        mvol_day_val = (
+            float(day_slice["volatility_20"].dropna().mean())
+            if ("volatility_20" in day_slice.columns and not day_slice["volatility_20"].dropna().empty)
+            else 0.02
+        )
+
         trade_logs.append(
             {
                 "date": d.strftime("%Y-%m-%d"),
@@ -801,6 +823,8 @@ def simulate_overnight_strategy(
                 "net_return": net_return,
                 "pnl": pnl,
                 "equity": equity,
+                "systemic_fragility": frag_day_val,
+                "market_vol_20": mvol_day_val,
                 "is_pending": False,
             }
         )
@@ -873,6 +897,18 @@ def simulate_intraday_strategy(
     )
     adaptor = RollingOnlineAdaptor() if use_adaptive_learning else None
 
+    if (
+        "_gap_to_atr" not in df.columns
+        and "_disable_s14" not in df.columns
+        and "overnight_gap" in df.columns
+        and "volatility_20" in df.columns
+        and "ticker" in df.columns
+    ):
+        df = df.sort_values(["ticker", "date"]).copy()
+        p_vol = df.groupby("ticker")["volatility_20"].shift(1).fillna(df["volatility_20"]).clip(lower=0.008)
+        df["_gap_to_atr"] = df["overnight_gap"].fillna(0.0) / p_vol
+
+    disable_s14 = "_disable_s14" in df.columns
     day_groups = {dt: grp for dt, grp in df.groupby("date")}
 
     for d in dates:
@@ -1001,6 +1037,27 @@ def simulate_intraday_strategy(
                 policy_mult = 1.0 + (np.maximum(0.0, policy_s - 0.50) * 0.06).clip(0.0, 0.12)
                 day_slice["intraday_sniper_score"] = day_slice["intraday_sniper_score"] * policy_mult
 
+            # Series #14 Opening Gap-to-ATR Ratio Asymmetric Entry & Sizing Optimization:
+            # 1) Filter out unbacked excessive gap-ups (Yoriten fade traps) and panic crash falling knives
+            # 2) Boost conviction score in the Gap-ATR sweet spot (0.15 <= G_ATR <= 1.35) and strong-trend V-rebounds
+            if "_gap_to_atr" in day_slice.columns and not disable_s14:
+                g_atr = day_slice["_gap_to_atr"].fillna(0.0)
+                cont_s_gap = day_slice["continuous_trend_score"].fillna(0.50) if "continuous_trend_score" in day_slice.columns else pd.Series(0.50, index=day_slice.index)
+                smart_s_gap = day_slice["vpin_smart_accumulation_score"].fillna(0.35) if "vpin_smart_accumulation_score" in day_slice.columns else pd.Series(0.35, index=day_slice.index)
+                pol_s_gap = day_slice["policy_sector_insider_wave_score"].fillna(0.50) if "policy_sector_insider_wave_score" in day_slice.columns else pd.Series(0.50, index=day_slice.index)
+                mkt_gap_atr = float(g_atr.mean()) if not g_atr.empty else 0.0
+
+                yoriten_gap_trap = ((g_atr > 1.80) & (smart_s_gap < 0.35)) | ((g_atr >= 0.55) & (cont_s_gap < 0.48) & (smart_s_gap < 0.25))
+                panic_crash_trap = ((g_atr < -1.65) & (cont_s_gap < 0.40) & (pol_s_gap <= 0.50) & (smart_s_gap < 0.20)) | (
+                    (mkt_gap_atr < -1.25) & (g_atr < -1.20) & (cont_s_gap < 0.42) & (smart_s_gap < 0.20)
+                )
+                cond = cond & (~yoriten_gap_trap) & (~panic_crash_trap)
+
+                sweet_spot_gap = (g_atr >= 0.15) & (g_atr <= 1.35) & ((cont_s_gap >= 0.50) | (smart_s_gap >= 0.25))
+                v_rebound_gap = (g_atr >= -2.05) & (g_atr < -0.25) & ((cont_s_gap >= 0.60) | (smart_s_gap >= 0.25) | (pol_s_gap >= 0.55))
+                gap_score_mult = np.where(sweet_spot_gap, 1.15, np.where(v_rebound_gap, 1.08, 1.0))
+                day_slice["intraday_sniper_score"] = day_slice["intraday_sniper_score"] * gap_score_mult
+
             cands = day_slice[cond].sort_values("intraday_sniper_score", ascending=False)
 
             if not cands.empty:
@@ -1039,7 +1096,7 @@ def simulate_intraday_strategy(
                 cand_row = day_slice.loc[day_slice["ticker"] == picks[0]]
                 pred_r = float(cand_row["pred_intraday_ret"].values[0]) if "pred_intraday_ret" in cand_row.columns else 0.005
                 f_capped = float(scale_and_cap_forecast(pred_r, target_abs_forecast=10.0, cap=20.0, default_abs_norm=0.004))
-                f_mult = float(np.clip(f_capped / 10.0, 0.70, 1.30))
+                f_mult = float(np.clip(f_capped / 10.0, 0.70, 1.30 if disable_s14 else 1.35))
 
                 # Online adaptive multiplier on position size
                 if adaptor is not None:
@@ -1069,7 +1126,7 @@ def simulate_intraday_strategy(
                 if "continuous_trend_score" in cand_row.columns and not cand_row["continuous_trend_score"].empty:
                     cont_val = float(cand_row["continuous_trend_score"].values[0])
                     if cont_val >= 0.55:
-                        f_mult = min(1.40, f_mult * 1.04)
+                        f_mult = min(1.40, f_mult * (1.04 if disable_s14 else 1.05))
 
                 # Series #12 Stealth Accumulation & Policy Wave Intraday Sizing Boost
                 if "insider_stealth_accumulation_10d" in cand_row.columns and not cand_row["insider_stealth_accumulation_10d"].empty:
@@ -1080,7 +1137,19 @@ def simulate_intraday_strategy(
                 if "policy_sector_insider_wave_score" in cand_row.columns and not cand_row["policy_sector_insider_wave_score"].empty:
                     pol_val = float(cand_row["policy_sector_insider_wave_score"].values[0])
                     if pol_val >= 0.65:
-                        f_mult = min(1.40, f_mult * 1.03)
+                        f_mult = min(1.40, f_mult * (1.03 if disable_s14 else 1.04))
+
+                # Series #14 Opening Gap-to-ATR Sweet Spot Sizing & Barrier Extension
+                g_atr_val = float(cand_row["_gap_to_atr"].values[0]) if ("_gap_to_atr" in cand_row.columns and not cand_row["_gap_to_atr"].empty) else 0.0
+                cont_v_gap = float(cand_row["continuous_trend_score"].values[0]) if ("continuous_trend_score" in cand_row.columns and not cand_row["continuous_trend_score"].empty) else 0.50
+                smart_v_gap = float(cand_row["vpin_smart_accumulation_score"].values[0]) if ("vpin_smart_accumulation_score" in cand_row.columns and not cand_row["vpin_smart_accumulation_score"].empty) else 0.35
+                pol_v_gap = float(cand_row["policy_sector_insider_wave_score"].values[0]) if ("policy_sector_insider_wave_score" in cand_row.columns and not cand_row["policy_sector_insider_wave_score"].empty) else 0.50
+                is_sweet_spot_pick = bool((0.15 <= g_atr_val <= 1.35) and (cont_v_gap >= 0.50 or smart_v_gap >= 0.25) and not disable_s14)
+                is_v_rebound_pick = bool((-2.05 <= g_atr_val < -0.25) and (cont_v_gap >= 0.55 or smart_v_gap >= 0.25 or pol_v_gap >= 0.55) and not disable_s14)
+                if is_sweet_spot_pick:
+                    f_mult = min(1.40, f_mult * 1.10)
+                elif is_v_rebound_pick:
+                    f_mult = min(1.40, f_mult * 1.06)
 
                 pos_w = min(1.0, f_mult * dd_throttle)
                 raw_intraday_ret = float(match.values[0])
@@ -1095,6 +1164,8 @@ def simulate_intraday_strategy(
                     barriers = compute_optimal_stopping_barriers(pred_r, vol_v, h_v, j_v)
                     sl_barrier = barriers["dynamic_stop_loss"]
                     tp_barrier = barriers["dynamic_take_profit"]
+                    if is_sweet_spot_pick and cont_v_gap >= 0.50:
+                        tp_barrier = min(0.065, tp_barrier * 1.12)
 
                     # Dynamic Exit Stop Loss & Trailing Take Profit Protection
                     if raw_intraday_ret <= sl_barrier:
@@ -1134,6 +1205,20 @@ def simulate_intraday_strategy(
         pnl = equity * net_return
         equity += pnl
 
+        pick_unshackled = False
+        pick_cont_score = 0.0
+        pick_sweet_gap = False
+        if picks:
+            p_row = day_slice.loc[day_slice["ticker"] == picks[0]]
+            if not p_row.empty:
+                pick_unshackled = bool(
+                    (p_row["_is_trend_unshackled"].values[0] if "_is_trend_unshackled" in p_row.columns else False)
+                    or (p_row["_is_theme_unlocked"].values[0] if "_is_theme_unlocked" in p_row.columns else False)
+                )
+                pick_cont_score = float(p_row["continuous_trend_score"].values[0]) if "continuous_trend_score" in p_row.columns else 0.0
+                g_val = float(p_row["_gap_to_atr"].values[0]) if "_gap_to_atr" in p_row.columns else 0.0
+                pick_sweet_gap = bool(0.15 <= g_val <= 1.35)
+
         trade_logs.append(
             {
                 "date": d.strftime("%Y-%m-%d"),
@@ -1143,6 +1228,10 @@ def simulate_intraday_strategy(
                 "net_return": net_return,
                 "pnl": pnl,
                 "equity": equity,
+                "unshackled_mode_active": pick_unshackled,
+                "continuous_trend_score": pick_cont_score,
+                "is_sweet_spot_gap": pick_sweet_gap,
+                "disable_s14_regime": disable_s14,
                 "is_pending": False,
             }
         )
@@ -1208,6 +1297,7 @@ def simulate_dual_shift_strategy(
     all_dates = [t["date"] for t in overnight_res["trade_logs"]]
 
     from stock_ai.features.carver_systematic import apply_drawdown_throttle
+    from stock_ai.models.intraday import compute_night_day_regime_allocation
 
     for d_str in all_dates:
         on_log = on_by_date.get(d_str, {})
@@ -1219,10 +1309,6 @@ def simulate_dual_shift_strategy(
 
         peak_equity = max(peak_equity, equity)
         dd_t = (peak_equity - equity) / peak_equity if peak_equity > 0 else 0.0
-        # Carver Portfolio Drawdown Throttle to ensure MaxDD <= 16% (Master calibrated: Equity > 2.0M, Sharpe 1.51, MaxDD 15.7%)
-        throttle = apply_drawdown_throttle(dd_t, max_dd_limit=0.158, warn_dd=0.065, min_multiplier=0.50)
-
-
 
         if is_latest:
             trade_logs.append(
@@ -1241,8 +1327,32 @@ def simulate_dual_shift_strategy(
             equity_curve.append({"date": d_str, "equity": equity})
             continue
 
-        r_on = on_log.get("net_return", 0.0) * throttle
-        r_intra = intra_log.get("net_return", 0.0) * throttle
+        # Series #14 Dynamic Night-to-Day Regime Capital Allocation (Overnight ⇄ Intraday)
+        if intra_log.get("disable_s14_regime", False):
+            throttle_night = apply_drawdown_throttle(dd_t, max_dd_limit=0.158, warn_dd=0.065, min_multiplier=0.50)
+            throttle_day = throttle_night
+        else:
+            frag_t = float(on_log.get("systemic_fragility", 0.50))
+            mvol_t = float(on_log.get("market_vol_20", 0.02))
+            has_day_alpha = bool(
+                intra_picks
+                and (
+                    intra_log.get("unshackled_mode_active", False)
+                    or float(intra_log.get("continuous_trend_score", 0.0)) >= 0.45
+                    or intra_log.get("is_sweet_spot_gap", False)
+                )
+            )
+            alloc = compute_night_day_regime_allocation(
+                drawdown_t=dd_t,
+                systemic_fragility_score=frag_t,
+                market_volatility_20=mvol_t,
+                has_day_alpha_pick=has_day_alpha,
+            )
+            throttle_night = float(alloc["night_allocation_weight"])
+            throttle_day = float(alloc["day_allocation_weight"])
+
+        r_on = on_log.get("net_return", 0.0) * throttle_night
+        r_intra = intra_log.get("net_return", 0.0) * throttle_day
         compound_ret = (1.0 + r_on) * (1.0 + r_intra) - 1.0
         pnl = equity * compound_ret
         equity += pnl

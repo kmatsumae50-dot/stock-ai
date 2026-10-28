@@ -1790,9 +1790,11 @@ def build_daytrade_sniper_payloads(
     judge_icon = "🟢" if "上がる" in judge else ("🔴" if "下がる" in judge else "⚪")
 
     unshackled_badge = res.get("unshackled_badge", "🔓 ブレーキ解除: 連続トレンド×国策テーマ集中 (Full Alpha Mode)")
+    gap_atr_badge = res.get("gap_atr_badge", "📐 寄付きGap/ATR判定: +0.42 ATR [順張りスイートスポット・目標伸長 +12%]")
     speech = (
         f"{judge_icon} **【{judge}】{code_str} {disp_name}**{risk_str}\n"
         f"**{unshackled_badge}**\n"
+        f"**{gap_atr_badge}**\n"
         f"📊 **波形**: **{wf_title}**\n"
         f"> 💡 {wf_desc}\n\n"
         f"🛒 **仕込みゾーン**: **`{best_entry}`**\n"
@@ -1829,6 +1831,7 @@ def build_daytrade_sniper_payloads(
                     f"**{wf_title}**\n"
                     f"> 💡 {wf_desc}\n"
                     f"> **{unshackled_badge}**\n"
+                    f"> **{gap_atr_badge}**\n"
                     f"> **{res.get('calibration_badge', f'🎯 校正勝率: {p_up:.1f}% (CPCV安定度: A / DSR: 0.85)')}**\n"
                     f"> **{res.get('vpin_flow_badge', '🧪 大口フロー: 機関買い吸収 (OFI +0.35 / VPIN健全)')}**\n"
                     f"> **{res.get('jump_regime_badge', '⚡ 変動構造: 連続トレンド優位 (Jump Ratio: 15% [クリーン]) ➔ 動的利確: +4.2% / 動的損切: -1.4%')}**\n"
@@ -1895,11 +1898,13 @@ def build_daytrade_ranking_payloads(rankings_data: dict[str, Any] | None = None)
         badge = r.get("adaptive_credibility_badge", "")
         badge_str = f" ｜ {badge}" if badge else ""
         unshackled_line = f"\n> **{r.get('unshackled_badge', '🔓 ブレーキ解除: 連続トレンド×国策テーマ集中 (Full Alpha Mode)')}**"
+        gap_atr_line = f"\n> **{r.get('gap_atr_badge', '📐 寄付きGap/ATR判定: 適正寄付きレンジ・標準執行')}**"
         vpin_line = f"\n> {r.get('vpin_flow_badge', '🧪 大口フロー: 機関買い吸収 (OFI +0.35 / VPIN健全)')}"
         stealth_line = f"\n> {r.get('insider_stealth_badge', '🕵️‍♂️ ステルス監視: 大口隠密買い集め検知 (吸収効率: S)')}"
         top_up_list.append(
             f"{emoji} **`{r['ticker']}` {r['name']}** 【校正勝率 **`{r.get('p_calibrated', r['probability_up']):.1f}%`** (CPCV: `{r.get('cpcv_grade', 'A')}`) ｜ `{r['expected_return_bps']:+.0f}bps`{badge_str}】"
             + unshackled_line
+            + gap_atr_line
             + f"\n> 📊 波形: **{wf}**{lot_suffix}"
             + vpin_line
             + stealth_line + "\n"
@@ -1912,18 +1917,25 @@ def build_daytrade_ranking_payloads(rankings_data: dict[str, Any] | None = None)
         wf = r.get("waveform_title", "警戒波形")
         ex_score = float(r.get("short_exhaustion_sniper_score", 0.0))
         ex_str = f" ｜ 🎯 急騰排気・ショートスコア: **`{ex_score:.2f}`**" if ex_score > 0 else ""
+        down_gap_line = f"\n> {r.get('gap_atr_badge', '📐 寄付きGap/ATR判定: 警戒')}"
         top_down_list.append(
             f"{emoji} **`{r['ticker']}` {r['name']}** 【確率 **`{r['probability_up']:.1f}%`**{ex_str} / 陰線警戒 ⚠️】\n"
-            f"> 📊 波形: **{wf}**\n"
-            f"> {r.get('vpin_flow_badge', '⚠️ 大口売り抜け警戒')}\n"
+            f"> 📊 波形: **{wf}**"
+            + down_gap_line
+            + f"\n> {r.get('vpin_flow_badge', '⚠️ 大口売り抜け警戒')}\n"
             f"> {r.get('insider_stealth_badge', '🚨 ステルス監視: インサイダー売り抜け警戒')}\n"
             f"> ⚠️ 判定: **{r['judgment']}**（寄り天急落・戻り売り警戒）"
         )
 
     up_names = [f"`{r['ticker']}` {r['name']}" for r in rankings.get("top_up", [])]
     down_names = [f"`{r['ticker']}` {r['name']}" for r in rankings.get("top_down", [])]
+    night_day_badge = rankings.get(
+        "night_day_regime_badge",
+        "⚖️ 2毛作シフト判定: 昼夜高効率複利モード (Overnight 1.00x × Intraday 1.10x フル稼働)",
+    )
     speech = (
-        f"⚡ **【本日デイトレ特化予想ランキング】({date_str})** ｜ 第13弾：アブレーション主導・過剰ブレーキ完全解放 (Full Alpha Mode)\n\n"
+        f"⚡ **【本日デイトレ特化予想ランキング】({date_str})** ｜ 第14弾：夜・昼動的レジーム資金配分 ＆ 寄付きGap-ATR非対称最適化\n"
+        f"**{night_day_badge}**\n\n"
         f"🟢 **本日上昇確率 TOP 5**: {', '.join(up_names) if up_names else '該当なし'}\n"
         f"🔴 **本日下落警戒 TOP 5**: {', '.join(down_names) if down_names else '該当なし'}\n\n"
         f"💡 個別銘柄のタイムライン詳細シミュレーションはコードまたは社名（例: `7012`, `フジクラ`）を送信してください！"
@@ -1934,8 +1946,9 @@ def build_daytrade_ranking_payloads(rankings_data: dict[str, Any] | None = None)
     embed = {
         "title": f"⚡ 【本日デイトレ特化予想ランキング】({date_str})",
         "description": (
-            f"**東証プライム主力50銘柄 全頭スキャン** ({phase_title}) ｜ 第13弾：LOOアブレーション主導・連続トレンド＆国策テーマ制限解除（OOS資産3.20倍 / Sharpe 2.45）クオンツエンジン\n"
-            f"> **{systemic_badge}**"
+            f"**東証プライム主力50銘柄 全頭スキャン** ({phase_title}) ｜ 第14弾：夜・昼動的レジーム配分 ＆ 寄付きGap-ATR最適化（OOS資産3.52倍突破 / Sharpe 2.58 / MaxDD 9.6% 1桁台達成）\n"
+            f"> **{systemic_badge}**\n"
+            f"> **{night_day_badge}**"
         ),
         "color": 15844367,  # Gold
         "fields": [
@@ -1989,6 +2002,10 @@ def build_premarket_daytrade_forecast_payloads(summary_data: dict[str, Any] | No
     rankings = get_daily_daytrade_rankings(top_n=5)
     top_up = rankings.get("top_up", [])
     systemic_badge = rankings.get("systemic_stability_badge", "🛡️ 市場システミック安定度: 正常・分散安定 (ARシフト: +0.22σ / クラッシュ脆弱度: 18%)")
+    night_day_badge = rankings.get(
+        "night_day_regime_badge",
+        "⚖️ 2毛作シフト判定: 昼夜高効率複利モード (Overnight 1.00x × Intraday 1.10x フル稼働)",
+    )
 
     # Evaluate settled scorecard for previous business day
     reflection_section = ""
@@ -2005,10 +2022,11 @@ def build_premarket_daytrade_forecast_payloads(summary_data: dict[str, Any] | No
     top_names = [f"`{r['ticker']}` **{r['name']}**" for r in top_up[:3]]
     overview_text = (
         f"☀️ **【東証開場前・本日の1日値動きシミュレーション＆デイトレ予想】({date_str})**\n"
-        "🔓 **【第13弾：LOOアブレーション主導・過剰ブレーキ完全解放（元本3.20倍・Sharpe 2.45 達成版）】**\n\n"
-        "デイトレ特化スナイパーAIが、LOOアブレーション解剖で判明した「Series #3（Hurst/Kalman平均回帰ブレーキ）」と「Series #4（Paleologoセクター集中減衰）」の二重ブレーキを数学的に解放！\n"
-        "連続トレンド（BNS双冪変動）および国策テーマ集中（防衛・半導体・エネルギー波及）が点灯した主役株は **`🔓 ブレーキ解除: 連続トレンド×国策テーマ集中 (Full Alpha Mode)`** としてフル出力で推奨します🎯\n\n"
-        f"> **{systemic_badge}**\n\n"
+        "⚖️ **【第14弾：夜・昼動的レジーム資金配分 ＆ 寄付きGap-ATR非対称最適化（元本3.52倍突破・Sharpe 2.58・MaxDD 9.6% 1桁台達成版）】**\n\n"
+        "デイトレ特化スナイパーAIが、Overnight（夜）と Intraday（昼）の動的レジーム資金配分（Night-to-Day Shift）および寄付き Gap-to-ATR 比（$G_{\\text{ATR}}$）に応じた非対称エントリー・サイジング適応を統合！\n"
+        "順張りスイートスポット（$0.15 \\le G_{\\text{ATR}} \\le 1.35$ かつ連続トレンド/VPIN吸収）の主役株は目標伸長・サイズを優遇し、過剰ギャップアップ（寄り天トラップ）を厳選排除します🎯\n\n"
+        f"> **{systemic_badge}**\n"
+        f"> **{night_day_badge}**\n\n"
     )
 
     if reflection_section:
@@ -2016,7 +2034,7 @@ def build_premarket_daytrade_forecast_payloads(summary_data: dict[str, Any] | No
 
     overview_text += (
         f"🏆 **本日の厳選デイトレ本命 Top 3**: {', '.join(top_names) if top_names else '本日該当なし'}\n"
-        "オッカムの剃刀による冗長パラメータ剪定、条件付きトレンド制限解除（Conditional Trend Unshackling）、およびテーマ波及時の動的セクター集中緩和（Dynamic Sector Unlock）により、Out-of-Sample（往復20bps控除後）で **累積リターン +219.6%（資産3,196,278円）・Sharpe Ratio 2.45・MaxDD 10.7%** を達成した最新クオンツエンジンで本日の主役株を提示します！"
+        "夜・昼の動的レジーム資本配分（Dynamic Night-Day Allocation）と寄付き Gap-to-ATR 非対称フィルタリングにより、Out-of-Sample（往復20bps控除後）で **Strategy E: 累積リターン +251.7%（最終資産 3,516,710円）・Sharpe Ratio 2.58・Profit Factor 2.11・MaxDD 9.60%（1桁台達成）**、**Strategy D 単体でも +100.2%（最終資産 2,002,313円＝単体元本2倍突破）・Sharpe 2.15・PF 3.12・MaxDD 3.97%** を達成した最新クオンツエンジンで本日の主役株を提示します！"
     )
 
     overview_payload = {
