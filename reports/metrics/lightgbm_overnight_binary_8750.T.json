@@ -1,55 +1,55 @@
 {
   "metrics": {
-    "accuracy": 0.5081967213114754,
-    "f1": 0.601063829787234,
-    "auc": 0.4765305010893246,
+    "accuracy": 0.5065573770491804,
+    "f1": 0.5904761904761905,
+    "auc": 0.48006083136194655,
     "rows": 610
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4984,
+      "max_p": 0.4983,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.5122,
-      "description": "実績ギャップアップ率 51.2%（陰線・下落警戒）"
+      "historical_win_rate": 0.5041,
+      "description": "実績ギャップアップ率 50.4%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4984,
-      "max_p": 0.5014,
+      "min_p": 0.4983,
+      "max_p": 0.5012,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.5492,
-      "description": "実績ギャップアップ率 54.9%（弱気）"
+      "historical_win_rate": 0.623,
+      "description": "実績ギャップアップ率 62.3%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.5014,
-      "max_p": 0.5019,
+      "min_p": 0.5012,
+      "max_p": 0.5017,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5328,
-      "description": "実績ギャップアップ率 53.3%（中立・推移注視）"
+      "historical_win_rate": 0.5164,
+      "description": "実績ギャップアップ率 51.6%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5019,
-      "max_p": 0.5068,
+      "min_p": 0.5017,
+      "max_p": 0.5066,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.4836,
-      "description": "実績ギャップアップ率 48.4%（堅調）"
+      "historical_win_rate": 0.4098,
+      "description": "実績ギャップアップ率 41.0%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5068,
+      "min_p": 0.5066,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.4836,
-      "description": "実績ギャップアップ率 48.4%（最高勝率群）"
+      "historical_win_rate": 0.5082,
+      "description": "実績ギャップアップ率 50.8%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -167,8 +167,8 @@
       "importance": 2.0
     },
     {
-      "feature": "insider_stealth_accumulation_10d",
-      "importance": 2.0
+      "feature": "high_low_range",
+      "importance": 1.0
     }
   ]
 }

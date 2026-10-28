@@ -1,15 +1,15 @@
 {
   "metrics": {
-    "accuracy": 0.47896440129449835,
-    "f1": 0.11049723756906077,
-    "auc": 0.5083140248057789,
+    "accuracy": 0.48381877022653724,
+    "f1": 0.10140845070422536,
+    "auc": 0.505041928721174,
     "rows": 618
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4767,
+      "max_p": 0.4768,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
       "historical_win_rate": 0.5484,
@@ -17,17 +17,17 @@
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4769,
-      "max_p": 0.4828,
+      "min_p": 0.4768,
+      "max_p": 0.4825,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.5041,
-      "description": "実績ギャップアップ率 50.4%（弱気）"
+      "historical_win_rate": 0.4878,
+      "description": "実績ギャップアップ率 48.8%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4829,
-      "max_p": 0.4875,
+      "min_p": 0.4825,
+      "max_p": 0.4879,
       "label": "中立帯",
       "direction": "neutral",
       "historical_win_rate": 0.5242,
@@ -35,21 +35,21 @@
     },
     {
       "quantile": "Q4",
-      "min_p": 0.4876,
-      "max_p": 0.4949,
+      "min_p": 0.488,
+      "max_p": 0.4953,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5285,
-      "description": "実績ギャップアップ率 52.8%（堅調）"
+      "historical_win_rate": 0.5447,
+      "description": "実績ギャップアップ率 54.5%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.4953,
+      "min_p": 0.4955,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.5161,
-      "description": "実績ギャップアップ率 51.6%（最高勝率群）"
+      "historical_win_rate": 0.5242,
+      "description": "実績ギャップアップ率 52.4%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -143,7 +143,7 @@
       "importance": 4.0
     },
     {
-      "feature": "chan_variance_ratio_10d",
+      "feature": "volume_change_1d",
       "importance": 4.0
     },
     {
@@ -155,11 +155,11 @@
       "importance": 3.0
     },
     {
-      "feature": "volume_change_1d",
+      "feature": "macd",
       "importance": 3.0
     },
     {
-      "feature": "macd",
+      "feature": "macd_hist",
       "importance": 3.0
     },
     {
