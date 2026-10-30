@@ -2,49 +2,49 @@
   "metrics": {
     "accuracy": 0.532258064516129,
     "f1": 0.6947368421052632,
-    "auc": 0.454158829676071,
+    "auc": 0.46008881922675027,
     "rows": 620
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.5181,
+      "max_p": 0.5165,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.4435,
-      "description": "実績ギャップアップ率 44.4%（陰線・下落警戒）"
+      "historical_win_rate": 0.4919,
+      "description": "実績ギャップアップ率 49.2%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.5181,
-      "max_p": 0.5195,
+      "min_p": 0.5165,
+      "max_p": 0.5207,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.4758,
-      "description": "実績ギャップアップ率 47.6%（弱気）"
+      "historical_win_rate": 0.379,
+      "description": "実績ギャップアップ率 37.9%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.5195,
-      "max_p": 0.5195,
+      "min_p": 0.5207,
+      "max_p": 0.521,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.4919,
-      "description": "実績ギャップアップ率 49.2%（中立・推移注視）"
+      "historical_win_rate": 0.5403,
+      "description": "実績ギャップアップ率 54.0%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5195,
-      "max_p": 0.525,
+      "min_p": 0.521,
+      "max_p": 0.5254,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5,
-      "description": "実績ギャップアップ率 50.0%（堅調）"
+      "historical_win_rate": 0.4919,
+      "description": "実績ギャップアップ率 49.2%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.525,
+      "min_p": 0.5254,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
@@ -131,7 +131,7 @@
   ],
   "top_features": [
     {
-      "feature": "volume_surge_5d",
+      "feature": "macro_sox_relative_return",
       "importance": 3.0
     },
     {
@@ -143,11 +143,7 @@
       "importance": 2.0
     },
     {
-      "feature": "tesla_return_1d",
-      "importance": 2.0
-    },
-    {
-      "feature": "macro_sox_relative_return",
+      "feature": "usdjpy_return_1d",
       "importance": 2.0
     },
     {
@@ -155,7 +151,7 @@
       "importance": 2.0
     },
     {
-      "feature": "abnormal_volume_z_20d",
+      "feature": "chan_regime_momentum_score",
       "importance": 2.0
     },
     {
@@ -163,11 +159,15 @@
       "importance": 1.0
     },
     {
-      "feature": "close_vs_ma_5",
+      "feature": "volume_surge_5d",
       "importance": 1.0
     },
     {
-      "feature": "vol_adjusted_momentum_5d",
+      "feature": "macd_signal",
+      "importance": 1.0
+    },
+    {
+      "feature": "bb_percent_b",
       "importance": 1.0
     }
   ]

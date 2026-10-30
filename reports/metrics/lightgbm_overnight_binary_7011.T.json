@@ -1,55 +1,55 @@
 {
   "metrics": {
-    "accuracy": 0.5306451612903226,
-    "f1": 0.5676077265973254,
-    "auc": 0.5251741575391329,
+    "accuracy": 0.532258064516129,
+    "f1": 0.5684523809523809,
+    "auc": 0.5268265558772923,
     "rows": 620
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4941,
+      "max_p": 0.4942,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.5242,
-      "description": "実績ギャップアップ率 52.4%（陰線・下落警戒）"
+      "historical_win_rate": 0.5161,
+      "description": "実績ギャップアップ率 51.6%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4941,
-      "max_p": 0.4988,
+      "min_p": 0.4942,
+      "max_p": 0.499,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.4919,
-      "description": "実績ギャップアップ率 49.2%（弱気）"
+      "historical_win_rate": 0.4839,
+      "description": "実績ギャップアップ率 48.4%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4988,
-      "max_p": 0.5027,
+      "min_p": 0.499,
+      "max_p": 0.5029,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5565,
-      "description": "実績ギャップアップ率 55.6%（中立・推移注視）"
+      "historical_win_rate": 0.5645,
+      "description": "実績ギャップアップ率 56.5%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5027,
-      "max_p": 0.5041,
+      "min_p": 0.5029,
+      "max_p": 0.5042,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5968,
-      "description": "実績ギャップアップ率 59.7%（堅調）"
+      "historical_win_rate": 0.5887,
+      "description": "実績ギャップアップ率 58.9%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5041,
+      "min_p": 0.5042,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.5484,
-      "description": "実績ギャップアップ率 54.8%（最高勝率群）"
+      "historical_win_rate": 0.5565,
+      "description": "実績ギャップアップ率 55.6%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -131,11 +131,11 @@
   ],
   "top_features": [
     {
-      "feature": "volume_change_1d",
-      "importance": 2.0
+      "feature": "macd_hist",
+      "importance": 3.0
     },
     {
-      "feature": "macd_hist",
+      "feature": "volume_change_1d",
       "importance": 2.0
     },
     {

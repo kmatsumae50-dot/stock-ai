@@ -1,33 +1,33 @@
 {
   "metrics": {
-    "accuracy": 0.5096774193548387,
-    "f1": 0.4966887417218543,
-    "auc": 0.49821910246930295,
+    "accuracy": 0.5016129032258064,
+    "f1": 0.47892074198988194,
+    "auc": 0.49150520833333333,
     "rows": 620
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4947,
+      "max_p": 0.4952,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.4516,
-      "description": "実績ギャップアップ率 45.2%（陰線・下落警戒）"
+      "historical_win_rate": 0.4113,
+      "description": "実績ギャップアップ率 41.1%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.495,
-      "max_p": 0.4983,
+      "min_p": 0.4952,
+      "max_p": 0.4985,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.4274,
-      "description": "実績ギャップアップ率 42.7%（弱気）"
+      "historical_win_rate": 0.4758,
+      "description": "実績ギャップアップ率 47.6%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4983,
-      "max_p": 0.5001,
+      "min_p": 0.4985,
+      "max_p": 0.5003,
       "label": "中立帯",
       "direction": "neutral",
       "historical_win_rate": 0.4516,
@@ -35,21 +35,21 @@
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5001,
-      "max_p": 0.5047,
+      "min_p": 0.5003,
+      "max_p": 0.5053,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.4919,
-      "description": "実績ギャップアップ率 49.2%（堅調）"
+      "historical_win_rate": 0.5,
+      "description": "実績ギャップアップ率 50.0%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5047,
+      "min_p": 0.5053,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.5,
-      "description": "実績ギャップアップ率 50.0%（最高勝率群）"
+      "historical_win_rate": 0.4758,
+      "description": "実績ギャップアップ率 47.6%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -139,10 +139,6 @@
       "importance": 2.0
     },
     {
-      "feature": "sector_relative_return",
-      "importance": 2.0
-    },
-    {
       "feature": "chan_hurst_20d",
       "importance": 2.0
     },
@@ -168,6 +164,10 @@
     },
     {
       "feature": "volume_change_1d",
+      "importance": 1.0
+    },
+    {
+      "feature": "rsi_14",
       "importance": 1.0
     }
   ]

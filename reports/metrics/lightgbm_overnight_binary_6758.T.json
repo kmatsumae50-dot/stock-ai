@@ -1,24 +1,24 @@
 {
   "metrics": {
-    "accuracy": 0.47419354838709676,
-    "f1": 0.6433260393873085,
-    "auc": 0.5331476148741706,
+    "accuracy": 0.47580645161290325,
+    "f1": 0.644808743169399,
+    "auc": 0.5299504563233377,
     "rows": 620
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.5242,
+      "max_p": 0.5243,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.5323,
-      "description": "実績ギャップアップ率 53.2%（陰線・下落警戒）"
+      "historical_win_rate": 0.5242,
+      "description": "実績ギャップアップ率 52.4%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.5242,
-      "max_p": 0.5261,
+      "min_p": 0.5243,
+      "max_p": 0.5262,
       "label": "弱気帯",
       "direction": "down",
       "historical_win_rate": 0.4839,
@@ -26,8 +26,8 @@
     },
     {
       "quantile": "Q3",
-      "min_p": 0.5261,
-      "max_p": 0.531,
+      "min_p": 0.5262,
+      "max_p": 0.5294,
       "label": "中立帯",
       "direction": "neutral",
       "historical_win_rate": 0.4758,
@@ -35,21 +35,21 @@
     },
     {
       "quantile": "Q4",
-      "min_p": 0.531,
-      "max_p": 0.5337,
+      "min_p": 0.5294,
+      "max_p": 0.5344,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.4597,
-      "description": "実績ギャップアップ率 46.0%（堅調）"
+      "historical_win_rate": 0.4355,
+      "description": "実績ギャップアップ率 43.5%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5337,
+      "min_p": 0.5344,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.4677,
-      "description": "実績ギャップアップ率 46.8%（最高勝率群）"
+      "historical_win_rate": 0.4919,
+      "description": "実績ギャップアップ率 49.2%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -135,6 +135,10 @@
       "importance": 3.0
     },
     {
+      "feature": "ml4at_alpha_06",
+      "importance": 3.0
+    },
+    {
       "feature": "volume_surge_5d",
       "importance": 2.0
     },
@@ -147,7 +151,7 @@
       "importance": 2.0
     },
     {
-      "feature": "ml4at_alpha_06",
+      "feature": "intraday_range_ratio",
       "importance": 2.0
     },
     {
@@ -164,10 +168,6 @@
     },
     {
       "feature": "close_vs_ma_5",
-      "importance": 1.0
-    },
-    {
-      "feature": "volume_change_1d",
       "importance": 1.0
     }
   ]
