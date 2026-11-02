@@ -1,55 +1,55 @@
 {
   "metrics": {
-    "accuracy": 0.49263502454991814,
-    "f1": 0.5441176470588235,
-    "auc": 0.47512762028891065,
+    "accuracy": 0.5008183306055647,
+    "f1": 0.5573294629898403,
+    "auc": 0.4730138919036249,
     "rows": 611
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4965,
+      "max_p": 0.4973,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.5122,
-      "description": "実績ギャップアップ率 51.2%（陰線・下落警戒）"
+      "historical_win_rate": 0.5854,
+      "description": "実績ギャップアップ率 58.5%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4965,
-      "max_p": 0.4988,
+      "min_p": 0.4973,
+      "max_p": 0.4995,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.582,
-      "description": "実績ギャップアップ率 58.2%（弱気）"
+      "historical_win_rate": 0.541,
+      "description": "実績ギャップアップ率 54.1%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4988,
-      "max_p": 0.5016,
+      "min_p": 0.4995,
+      "max_p": 0.5014,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5656,
-      "description": "実績ギャップアップ率 56.6%（中立・推移注視）"
+      "historical_win_rate": 0.5082,
+      "description": "実績ギャップアップ率 50.8%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5016,
-      "max_p": 0.5063,
+      "min_p": 0.5014,
+      "max_p": 0.5062,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.4016,
-      "description": "実績ギャップアップ率 40.2%（堅調）"
+      "historical_win_rate": 0.4262,
+      "description": "実績ギャップアップ率 42.6%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5063,
+      "min_p": 0.5062,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.5082,
-      "description": "実績ギャップアップ率 50.8%（最高勝率群）"
+      "historical_win_rate": 0.5164,
+      "description": "実績ギャップアップ率 51.6%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -131,15 +131,15 @@
   ],
   "top_features": [
     {
-      "feature": "usdjpy_close_vs_ma_25",
-      "importance": 3.0
-    },
-    {
       "feature": "macd_hist",
       "importance": 2.0
     },
     {
       "feature": "volatility_20",
+      "importance": 2.0
+    },
+    {
+      "feature": "usdjpy_close_vs_ma_25",
       "importance": 2.0
     },
     {
