@@ -11295,11 +11295,11 @@
           {
             "date": "2026-11-02",
             "long_picks": [
-              "8411.T",
-              "9983.T",
-              "8058.T",
+              "7012.T",
               "6367.T",
-              "8053.T"
+              "8035.T",
+              "4063.T",
+              "8001.T"
             ],
             "short_picks": [],
             "gross_return": 0.0,
@@ -22676,7 +22676,7 @@
           {
             "date": "2026-11-02",
             "long_picks": [
-              "8411.T"
+              "7012.T"
             ],
             "short_picks": [],
             "gross_return": 0.0,
@@ -36084,12 +36084,12 @@
           {
             "date": "2026-11-02",
             "long_picks": [
-              "8411.T",
-              "9433.T"
+              "7012.T",
+              "8001.T"
             ],
             "short_picks": [
-              "5801.T",
-              "9107.T"
+              "7201.T",
+              "3382.T"
             ],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -47588,7 +47588,9 @@
           },
           {
             "date": "2026-11-02",
-            "long_picks": [],
+            "long_picks": [
+              "6857.T"
+            ],
             "short_picks": [],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -59701,9 +59703,11 @@
           {
             "date": "2026-11-02",
             "long_picks": [
-              "8411.T"
+              "7012.T"
             ],
-            "intraday_picks": [],
+            "intraday_picks": [
+              "6857.T"
+            ],
             "short_picks": [],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -73536,11 +73540,11 @@
           {
             "date": "2026-11-02",
             "long_picks": [
-              "8411.T",
-              "9983.T",
-              "8058.T",
+              "7012.T",
               "6367.T",
-              "8053.T"
+              "8035.T",
+              "4063.T",
+              "8001.T"
             ],
             "short_picks": [],
             "gross_return": 0.0,
@@ -84917,7 +84921,7 @@
           {
             "date": "2026-11-02",
             "long_picks": [
-              "8411.T"
+              "7012.T"
             ],
             "short_picks": [],
             "gross_return": 0.0,
@@ -98325,12 +98329,12 @@
           {
             "date": "2026-11-02",
             "long_picks": [
-              "8411.T",
-              "9433.T"
+              "7012.T",
+              "8001.T"
             ],
             "short_picks": [
-              "5801.T",
-              "9107.T"
+              "7201.T",
+              "3382.T"
             ],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -109829,7 +109833,9 @@
           },
           {
             "date": "2026-11-02",
-            "long_picks": [],
+            "long_picks": [
+              "6857.T"
+            ],
             "short_picks": [],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -121942,9 +121948,11 @@
           {
             "date": "2026-11-02",
             "long_picks": [
-              "8411.T"
+              "7012.T"
             ],
-            "intraday_picks": [],
+            "intraday_picks": [
+              "6857.T"
+            ],
             "short_picks": [],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -135777,11 +135785,11 @@
           {
             "date": "2026-11-02",
             "long_picks": [
-              "8411.T",
-              "9983.T",
-              "8058.T",
+              "7012.T",
               "6367.T",
-              "8053.T"
+              "8035.T",
+              "4063.T",
+              "8001.T"
             ],
             "short_picks": [],
             "gross_return": 0.0,
@@ -147158,7 +147166,7 @@
           {
             "date": "2026-11-02",
             "long_picks": [
-              "8411.T"
+              "7012.T"
             ],
             "short_picks": [],
             "gross_return": 0.0,
@@ -160566,12 +160574,12 @@
           {
             "date": "2026-11-02",
             "long_picks": [
-              "8411.T",
-              "9433.T"
+              "7012.T",
+              "8001.T"
             ],
             "short_picks": [
-              "5801.T",
-              "9107.T"
+              "7201.T",
+              "3382.T"
             ],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -172070,7 +172078,9 @@
           },
           {
             "date": "2026-11-02",
-            "long_picks": [],
+            "long_picks": [
+              "6857.T"
+            ],
             "short_picks": [],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -184183,9 +184193,11 @@
           {
             "date": "2026-11-02",
             "long_picks": [
-              "8411.T"
+              "7012.T"
             ],
-            "intraday_picks": [],
+            "intraday_picks": [
+              "6857.T"
+            ],
             "short_picks": [],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -198018,11 +198030,11 @@
           {
             "date": "2026-11-02",
             "long_picks": [
-              "8411.T",
-              "9983.T",
-              "8058.T",
+              "7012.T",
               "6367.T",
-              "8053.T"
+              "8035.T",
+              "4063.T",
+              "8001.T"
             ],
             "short_picks": [],
             "gross_return": 0.0,
@@ -209399,7 +209411,7 @@
           {
             "date": "2026-11-02",
             "long_picks": [
-              "8411.T"
+              "7012.T"
             ],
             "short_picks": [],
             "gross_return": 0.0,
@@ -222807,12 +222819,12 @@
           {
             "date": "2026-11-02",
             "long_picks": [
-              "8411.T",
-              "9433.T"
+              "7012.T",
+              "8001.T"
             ],
             "short_picks": [
-              "5801.T",
-              "9107.T"
+              "7201.T",
+              "3382.T"
             ],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -234311,7 +234323,9 @@
           },
           {
             "date": "2026-11-02",
-            "long_picks": [],
+            "long_picks": [
+              "6857.T"
+            ],
             "short_picks": [],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -246424,9 +246438,11 @@
           {
             "date": "2026-11-02",
             "long_picks": [
-              "8411.T"
+              "7012.T"
             ],
-            "intraday_picks": [],
+            "intraday_picks": [
+              "6857.T"
+            ],
             "short_picks": [],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -260259,11 +260275,11 @@
           {
             "date": "2026-11-02",
             "long_picks": [
-              "8411.T",
-              "9983.T",
-              "8058.T",
+              "7012.T",
               "6367.T",
-              "8053.T"
+              "8035.T",
+              "4063.T",
+              "8001.T"
             ],
             "short_picks": [],
             "gross_return": 0.0,
@@ -271640,7 +271656,7 @@
           {
             "date": "2026-11-02",
             "long_picks": [
-              "8411.T"
+              "7012.T"
             ],
             "short_picks": [],
             "gross_return": 0.0,
@@ -285048,12 +285064,12 @@
           {
             "date": "2026-11-02",
             "long_picks": [
-              "8411.T",
-              "9433.T"
+              "7012.T",
+              "8001.T"
             ],
             "short_picks": [
-              "5801.T",
-              "9107.T"
+              "7201.T",
+              "3382.T"
             ],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -296552,7 +296568,9 @@
           },
           {
             "date": "2026-11-02",
-            "long_picks": [],
+            "long_picks": [
+              "6857.T"
+            ],
             "short_picks": [],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -308665,9 +308683,11 @@
           {
             "date": "2026-11-02",
             "long_picks": [
-              "8411.T"
+              "7012.T"
             ],
-            "intraday_picks": [],
+            "intraday_picks": [
+              "6857.T"
+            ],
             "short_picks": [],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -311391,11 +311411,11 @@
     "strategies": {
       "q5_equal_weight": {
         "long_picks": [
-          "8411.T",
-          "9983.T",
-          "8058.T",
+          "7012.T",
           "6367.T",
-          "8053.T"
+          "8035.T",
+          "4063.T",
+          "8001.T"
         ],
         "intraday_picks": [],
         "short_picks": [],
@@ -311403,7 +311423,7 @@
       },
       "elite_top2_long": {
         "long_picks": [
-          "8411.T"
+          "7012.T"
         ],
         "intraday_picks": [],
         "short_picks": [],
@@ -311411,27 +311431,31 @@
       },
       "long_short_spread": {
         "long_picks": [
-          "8411.T",
-          "9433.T"
+          "7012.T",
+          "8001.T"
         ],
         "intraday_picks": [],
         "short_picks": [
-          "5801.T",
-          "9107.T"
+          "7201.T",
+          "3382.T"
         ],
         "equity": 526348.6334152817
       },
       "intraday_top1_long": {
-        "long_picks": [],
+        "long_picks": [
+          "6857.T"
+        ],
         "intraday_picks": [],
         "short_picks": [],
         "equity": 1511488.0046520021
       },
       "dual_shift_compound": {
         "long_picks": [
-          "8411.T"
+          "7012.T"
         ],
-        "intraday_picks": [],
+        "intraday_picks": [
+          "6857.T"
+        ],
         "short_picks": [],
         "equity": 1860929.7924641399
       }
