@@ -1,8 +1,8 @@
 {
   "metrics": {
-    "accuracy": 0.5016129032258064,
-    "f1": 0.507177033492823,
-    "auc": 0.5069670056115776,
+    "accuracy": 0.5,
+    "f1": 0.5063694267515924,
+    "auc": 0.5070357116466626,
     "rows": 620
   },
   "quantile_cutoffs": [
@@ -12,12 +12,12 @@
       "max_p": 0.4918,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.5161,
-      "description": "実績ギャップアップ率 51.6%（陰線・下落警戒）"
+      "historical_win_rate": 0.512,
+      "description": "実績ギャップアップ率 51.2%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4918,
+      "min_p": 0.4919,
       "max_p": 0.4966,
       "label": "弱気帯",
       "direction": "down",
