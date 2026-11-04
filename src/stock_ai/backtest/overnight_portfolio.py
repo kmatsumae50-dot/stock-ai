@@ -485,6 +485,7 @@ def simulate_overnight_strategy(
         except Exception:
             piv_rets_all = None
 
+    b_ticker_history: dict[str, dict[str, Any]] = {}
     day_groups = {dt: grp for dt, grp in df.groupby("date")}
 
     for d in dates:
@@ -537,6 +538,25 @@ def simulate_overnight_strategy(
             if "insider_dumping_alert_score" in eligible.columns:
                 eligible = eligible[eligible["insider_dumping_alert_score"].fillna(0.0) < 0.70]
 
+            # Series #15 Closing Auction Imbalance Distortion Guard:
+            if "high" in eligible.columns and "low" in eligible.columns and "close" in eligible.columns:
+                hl_range = (eligible["high"] - eligible["low"]).clip(lower=1e-4)
+                clv = (2.0 * eligible["close"] - eligible["high"] - eligible["low"]) / hl_range
+                j_ratio = eligible["jump_ratio_5d"].fillna(0.15) if "jump_ratio_5d" in eligible.columns else pd.Series(0.15, index=eligible.index)
+                is_moc_trap = (clv >= 0.82) & (j_ratio >= 0.28)
+                eligible = eligible[~is_moc_trap]
+
+            # Series #15 Universe Purification (Causal Walk-Forward Compatibility):
+            purged_b = set()
+            boosted_b = set()
+            for tick_b, h_b in b_ticker_history.items():
+                if h_b["trades"] >= 4 and (h_b["wins"] / h_b["trades"] < 0.28 and h_b["cum_return"] < -0.030):
+                    purged_b.add(tick_b)
+                elif h_b["trades"] >= 3 and (h_b["wins"] / h_b["trades"] >= 0.65 and h_b["cum_return"] > 0.02):
+                    boosted_b.add(tick_b)
+            if purged_b:
+                eligible = eligible[~eligible["ticker"].isin(purged_b)]
+
             sort_col = "p_cs" if has_cs else "p_up"
             score_series = eligible[sort_col].copy()
             if "leadlag_spillover_alpha_1d" in eligible.columns:
@@ -550,6 +570,8 @@ def simulate_overnight_strategy(
                 stealth_acc = eligible["insider_stealth_accumulation_10d"].fillna(0.50)
                 stealth_boost = 1.0 + (np.maximum(0.0, stealth_acc - 0.50) * 0.08)
                 score_series = score_series * stealth_boost
+            if boosted_b:
+                score_series = score_series * np.where(eligible["ticker"].isin(boosted_b), 1.10, 1.0)
 
             elites = eligible.assign(_sort_score=score_series).sort_values("_sort_score", ascending=False)
             if not elites.empty:
@@ -786,6 +808,14 @@ def simulate_overnight_strategy(
                             })
                     if settled_recs:
                         adaptor.update_from_settled_trades(d.strftime("%Y-%m-%d"), settled_recs)
+                for t_code, r_val in zip(valid_long_picks, long_rets):
+                    net_r_tick = r_val - cost
+                    if t_code not in b_ticker_history:
+                        b_ticker_history[t_code] = {"trades": 0, "wins": 0, "cum_return": 0.0}
+                    b_ticker_history[t_code]["trades"] += 1
+                    if net_r_tick > 0:
+                        b_ticker_history[t_code]["wins"] += 1
+                    b_ticker_history[t_code]["cum_return"] += net_r_tick
             else:
                 gross_return = float(np.mean(long_rets))
                 applied_cost = cost
@@ -909,6 +939,7 @@ def simulate_intraday_strategy(
         df["_gap_to_atr"] = df["overnight_gap"].fillna(0.0) / p_vol
 
     disable_s14 = "_disable_s14" in df.columns
+    d_ticker_history: dict[str, dict[str, Any]] = {}
     day_groups = {dt: grp for dt, grp in df.groupby("date")}
 
     for d in dates:
@@ -951,6 +982,17 @@ def simulate_intraday_strategy(
             # Series #12 Pre-Leak Informed Dumping Filter:
             if "insider_dumping_alert_flag" in day_slice.columns:
                 cond = cond & (~day_slice["insider_dumping_alert_flag"].fillna(False).astype(bool))
+
+            # Series #15 Universe Purification: Causal Walk-Forward Purge of Low-Compatibility Tickers
+            purged_d = set()
+            boosted_d = set()
+            for tick_d, h_d in d_ticker_history.items():
+                if h_d["trades"] >= 2 and (h_d["wins"] == 0 or h_d["cum_return"] < -0.012):
+                    purged_d.add(tick_d)
+                elif h_d["trades"] >= 3 and (h_d["wins"] / h_d["trades"] >= 0.65 and h_d["cum_return"] > 0.02):
+                    boosted_d.add(tick_d)
+            if purged_d:
+                cond = cond & (~day_slice["ticker"].isin(purged_d))
 
             # Market Microstructure Vacuum Book (Upward Elasticity) & Paleologo Idio IR Enhancement
             # with Series #13 Dynamic Sector/Theme Unshackling Floor during extreme policy or lead-lag waves
@@ -1037,6 +1079,13 @@ def simulate_intraday_strategy(
                 policy_mult = 1.0 + (np.maximum(0.0, policy_s - 0.50) * 0.06).clip(0.0, 0.12)
                 day_slice["intraday_sniper_score"] = day_slice["intraday_sniper_score"] * policy_mult
 
+            if boosted_d:
+                day_slice["intraday_sniper_score"] = np.where(
+                    day_slice["ticker"].isin(boosted_d),
+                    day_slice["intraday_sniper_score"] * 1.10,
+                    day_slice["intraday_sniper_score"],
+                )
+
             # Series #14 Opening Gap-to-ATR Ratio Asymmetric Entry & Sizing Optimization:
             # 1) Filter out unbacked excessive gap-ups (Yoriten fade traps) and panic crash falling knives
             # 2) Boost conviction score in the Gap-ATR sweet spot (0.15 <= G_ATR <= 1.35) and strong-trend V-rebounds
@@ -1072,7 +1121,8 @@ def simulate_intraday_strategy(
             trade_logs.append(
                 {
                     "date": d.strftime("%Y-%m-%d"),
-                    "long_picks": picks,
+                    "long_picks": picks if is_filled else [],
+                "execution_tactic": execution_tactic,
                     "short_picks": [],
                     "gross_return": 0.0,
                     "net_return": 0.0,
@@ -1086,6 +1136,8 @@ def simulate_intraday_strategy(
 
         gross_return = 0.0
         applied_cost = 0.0
+        is_filled = True
+        execution_tactic = "NO_PICKS"
         if picks:
             match = day_slice.loc[day_slice["ticker"] == picks[0], "intraday_return"]
             if not match.empty and pd.notna(match.values[0]):
@@ -1156,6 +1208,8 @@ def simulate_intraday_strategy(
 
                 # Series #11 Optimal Stopping Theory: Dynamic Exit Boundaries
                 exec_ret = raw_intraday_ret
+                sl_barrier = -0.015
+                tp_barrier = 0.035
                 if "volatility_20" in cand_row.columns and "prior_chan_hurst_20d" in cand_row.columns:
                     from stock_ai.features.jump_bipower_optimal_stop import compute_optimal_stopping_barriers
                     vol_v = float(cand_row["volatility_20"].values[0]) if pd.notna(cand_row["volatility_20"].values[0]) else 0.02
@@ -1167,7 +1221,56 @@ def simulate_intraday_strategy(
                     if is_sweet_spot_pick and cont_v_gap >= 0.50:
                         tp_barrier = min(0.065, tp_barrier * 1.12)
 
-                    # Dynamic Exit Stop Loss & Trailing Take Profit Protection
+                # Series #15 Smart Execution Alpha: ORB Breakout Confirmation vs Pullback Limit
+                is_breakout = bool(is_sweet_spot_pick or cont_v_gap >= 0.52 or pred_r >= 0.0055)
+                is_pullback = bool(is_v_rebound_pick or g_atr_val <= -0.20)
+                is_filled = True
+                execution_tactic = "OPEN_MARKET"
+
+                open_p = float(cand_row["open"].values[0])
+                high_p = float(cand_row["high"].values[0])
+                low_p = float(cand_row["low"].values[0])
+                close_p = float(cand_row["close"].values[0])
+
+                if is_breakout:
+                    orb_thresh = max(0.0018, min(0.0035, 0.12 * vol_v))
+                    hi_pct = (high_p - open_p) / open_p
+                    if hi_pct < orb_thresh:
+                        is_filled = False
+                        execution_tactic = "ORB_NO_FILL_SAVED"
+                    else:
+                        execution_tactic = "ORB_BREAKOUT_FILL"
+                        entry_p = open_p * (1.0 + orb_thresh)
+                        base_r = (close_p - entry_p) / entry_p
+                        if base_r <= sl_barrier:
+                            exec_ret = sl_barrier
+                        elif base_r >= tp_barrier:
+                            exec_ret = tp_barrier
+                        else:
+                            exec_ret = base_r
+                elif is_pullback:
+                    pb_limit = max(0.0020, min(0.0040, 0.14 * vol_v))
+                    lo_pct = (low_p - open_p) / open_p
+                    if lo_pct <= -pb_limit:
+                        execution_tactic = "PULLBACK_LIMIT_FILL"
+                        entry_p = open_p * (1.0 - pb_limit)
+                        base_r = (close_p - entry_p) / entry_p
+                        if base_r <= sl_barrier:
+                            exec_ret = sl_barrier
+                        elif base_r >= tp_barrier:
+                            exec_ret = tp_barrier
+                        else:
+                            exec_ret = base_r
+                    else:
+                        execution_tactic = "OPEN_FALLBACK_FILL"
+                        if raw_intraday_ret <= sl_barrier:
+                            exec_ret = sl_barrier
+                        elif raw_intraday_ret >= tp_barrier:
+                            exec_ret = tp_barrier
+                        else:
+                            exec_ret = raw_intraday_ret
+                else:
+                    execution_tactic = "STANDARD_OPEN"
                     if raw_intraday_ret <= sl_barrier:
                         exec_ret = sl_barrier
                     elif raw_intraday_ret >= tp_barrier:
@@ -1175,31 +1278,43 @@ def simulate_intraday_strategy(
                     else:
                         exec_ret = raw_intraday_ret
 
-                gross_return = exec_ret * pos_w
-                applied_cost = cost * pos_w
+                if is_filled:
+                    gross_return = exec_ret * pos_w
+                    applied_cost = cost * pos_w
+                else:
+                    gross_return = 0.0
+                    applied_cost = 0.0
 
                 # Update online adaptor strictly post-market for NEXT day's use (Zero Leakage)
-                if adaptor is not None:
-                    raw_ret = float(match.values[0])
-                    trade_record = {
-                        "ticker": picks[0],
-                        "sector": cand_row.get("sector", [None]).values[0] if "sector" in cand_row.columns else None,
-                        "probability_up": 55.0,
-                        "expected_return_bps": pred_r * 10000.0,
-                        "net_return_pct": (gross_return - applied_cost) * 100.0,
-                        "result_status": "WIN" if (gross_return - applied_cost) > 0 else "LOSS",
-                        "result_code": "TARGET_HIT" if raw_ret >= 0.015 else ("STOPPED_OUT" if raw_ret <= -0.012 else "CLOSE_POSITIVE" if raw_ret > 0 else "CLOSE_NEGATIVE"),
-                        "actual_open": 1000.0,
-                        "actual_high": 1000.0 * (1.0 + max(0.0, raw_ret)),
-                        "actual_low": 1000.0 * (1.0 + min(0.0, raw_ret)),
-                        "actual_close": 1000.0 * (1.0 + raw_ret),
-                        "predicted_waveform": "🔥【寄り付き突破 ➔ 終日トレンド独歩高型】" if pred_r >= 0.005 else "🚀【GU朝押し ➔ 後場高値引け型】",
-                        "gap_to_atr": 0.50,
-                        "chan_hurst": float(cand_row["_eff_chan_hurst"].values[0]) if "_eff_chan_hurst" in cand_row.columns else (float(cand_row["prior_chan_hurst_20d"].values[0]) if "prior_chan_hurst_20d" in cand_row.columns else 0.50),
-                        "micro_upward_elasticity": float(cand_row["prior_micro_upward_elasticity_10d"].values[0]) if "prior_micro_upward_elasticity_10d" in cand_row.columns else 1.00,
-                        "prior_clv": 0.50,
-                    }
-                    adaptor.update_from_settled_trades(d.strftime("%Y-%m-%d"), [trade_record])
+                if is_filled:
+                    if adaptor is not None:
+                        raw_ret = float(match.values[0])
+                        trade_record = {
+                            "ticker": picks[0],
+                            "sector": cand_row.get("sector", [None]).values[0] if "sector" in cand_row.columns else None,
+                            "probability_up": 55.0,
+                            "expected_return_bps": pred_r * 10000.0,
+                            "net_return_pct": (gross_return - applied_cost) * 100.0,
+                            "result_status": "WIN" if (gross_return - applied_cost) > 0 else "LOSS",
+                            "result_code": "TARGET_HIT" if raw_ret >= 0.015 else ("STOPPED_OUT" if raw_ret <= -0.012 else "CLOSE_POSITIVE" if raw_ret > 0 else "CLOSE_NEGATIVE"),
+                            "actual_open": 1000.0,
+                            "actual_high": 1000.0 * (1.0 + max(0.0, raw_ret)),
+                            "actual_low": 1000.0 * (1.0 + min(0.0, raw_ret)),
+                            "actual_close": 1000.0 * (1.0 + raw_ret),
+                            "predicted_waveform": "🔥【寄り付き突破 ➔ 終日トレンド独歩高型】" if pred_r >= 0.005 else "🚀【GU朝押し ➔ 後場高値引け型】",
+                            "gap_to_atr": 0.50,
+                            "chan_hurst": float(cand_row["_eff_chan_hurst"].values[0]) if "_eff_chan_hurst" in cand_row.columns else (float(cand_row["prior_chan_hurst_20d"].values[0]) if "prior_chan_hurst_20d" in cand_row.columns else 0.50),
+                            "micro_upward_elasticity": float(cand_row["prior_micro_upward_elasticity_10d"].values[0]) if "prior_micro_upward_elasticity_10d" in cand_row.columns else 1.00,
+                            "prior_clv": 0.50,
+                        }
+                        adaptor.update_from_settled_trades(d.strftime("%Y-%m-%d"), [trade_record])
+                    net_r_tick = gross_return - applied_cost
+                    if picks[0] not in d_ticker_history:
+                        d_ticker_history[picks[0]] = {"trades": 0, "wins": 0, "cum_return": 0.0}
+                    d_ticker_history[picks[0]]["trades"] += 1
+                    if net_r_tick > 0:
+                        d_ticker_history[picks[0]]["wins"] += 1
+                    d_ticker_history[picks[0]]["cum_return"] += net_r_tick
 
         net_return = gross_return - applied_cost if picks else 0.0
         pnl = equity * net_return
@@ -1208,7 +1323,7 @@ def simulate_intraday_strategy(
         pick_unshackled = False
         pick_cont_score = 0.0
         pick_sweet_gap = False
-        if picks:
+        if picks and is_filled:
             p_row = day_slice.loc[day_slice["ticker"] == picks[0]]
             if not p_row.empty:
                 pick_unshackled = bool(
@@ -1222,7 +1337,7 @@ def simulate_intraday_strategy(
         trade_logs.append(
             {
                 "date": d.strftime("%Y-%m-%d"),
-                "long_picks": picks,
+                "long_picks": picks if is_filled else [],
                 "short_picks": [],
                 "gross_return": gross_return,
                 "net_return": net_return,
@@ -1232,6 +1347,8 @@ def simulate_intraday_strategy(
                 "continuous_trend_score": pick_cont_score,
                 "is_sweet_spot_gap": pick_sweet_gap,
                 "disable_s14_regime": disable_s14,
+                "execution_tactic": execution_tactic,
+                "is_filled": is_filled,
                 "is_pending": False,
             }
         )
@@ -1424,15 +1541,18 @@ def run_full_overnight_portfolio_backtest(
     metrics_dir: Path | str = "reports/metrics",
     start_date: str = "2024-04-01",
     initial_capital: float = 1_000_000.0,
+    df: pd.DataFrame | None = None,
+    dates: list[pd.Timestamp] | None = None,
 ) -> dict[str, Any]:
     """Execute complete multi-strategy backtest across 0bps and 5bps costs with YTD sub-analysis."""
-    df, dates = collect_overnight_universe_predictions(
-        universe=universe,
-        features_dir=features_dir,
-        models_dir=models_dir,
-        metrics_dir=metrics_dir,
-        start_date=start_date,
-    )
+    if df is None or dates is None:
+        df, dates = collect_overnight_universe_predictions(
+            universe=universe,
+            features_dir=features_dir,
+            models_dir=models_dir,
+            metrics_dir=metrics_dir,
+            start_date=start_date,
+        )
 
     if df.empty or not dates:
         return {"error": "No prediction data found."}
@@ -1507,7 +1627,7 @@ def run_full_overnight_portfolio_backtest(
             strategy_name="intraday_top1_long",
             cost=0.0020,
             initial_capital=initial_capital,
-            hurdle_bps=30.0,
+            hurdle_bps=42.0,
         )
         ytd_2026["intraday_top1_long"] = intra_2026["metrics"]
 

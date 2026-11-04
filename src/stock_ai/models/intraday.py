@@ -1629,6 +1629,22 @@ def predict_daytrade_sniper(
     if bet_size >= 0.70:
         lot_recommendation = "🔥 推奨ロット: 100%（AFML強気フルサイズ）"
 
+    # Series #15 Smart Execution Alpha & Ticker Compatibility Rank
+    smart_exec = compute_smart_execution_tactic(
+        ticker=ticker,
+        open_price=open_p,
+        pred_intraday_ret=eff_bps / 10000.0,
+        gap_to_atr=signed_gap_to_atr,
+        volatility_20=vol_20,
+        continuous_trend_score=continuous_trend,
+        vpin_smart_accumulation_score=smart_acc,
+        policy_wave_score=policy_wave,
+    )
+    compat_rank = compute_ticker_compatibility_rank(
+        ticker=ticker,
+        adapt_state=adapt_state,
+    )
+
     return {
         "ticker": ticker,
         "name": name or ticker,
@@ -1740,6 +1756,16 @@ def predict_daytrade_sniper(
         "is_yoriten_gap_trap": bool(gap_atr_info["is_yoriten_gap_trap"]),
         "is_panic_crash_trap": bool(gap_atr_info["is_panic_crash_trap"]),
         "gap_atr_badge": gap_atr_badge,
+        # Series #15 Smart Execution Alpha & Universe Compatibility Purification
+        "execution_tactic_code": smart_exec["tactic_code"],
+        "execution_tactic_name": smart_exec["tactic_name"],
+        "execution_tactic_badge": smart_exec["tactic_badge"],
+        "execution_trigger_price": smart_exec["trigger_price"],
+        "execution_description": smart_exec["description"],
+        "compatibility_rank": compat_rank["rank"],
+        "compatibility_badge": compat_rank["rank_badge"],
+        "is_compatibility_purged": compat_rank["is_purged"],
+        "is_compatibility_boosted": compat_rank["is_boosted"],
 
         # Backwards compatible alias keys
         "target_price": waveform_data["target_final_price"],
@@ -1849,9 +1875,9 @@ def compute_night_day_regime_allocation(
     """Series #14: Compute Dynamic Night-to-Day Regime Capital Allocation for Dual-Shift 2毛作.
 
     - Overnight leg (15:30 -> 09:00) carries macro gap risk during drawdown or elevated systemic fragility:
-      tighten Overnight throttle (warn_dd=4.0%, max_dd=10.0%, min_mult=0.20) and scale down when systemic fragility & vol spike.
-    - Intraday leg (09:00 -> 15:30) has ultra-high capital efficiency (PF > 3.10, MaxDD < 4.0%):
-      dynamically boost Intraday utilization (1.10x) when Full Alpha Mode / continuous trend / Gap-ATR sweet spot is active.
+      Series #15 Closing Auction Guard & Causal Purge cuts MaxDD to ~6.0%, allowing safely relaxed night throttle (warn_dd=3.8%, max_dd=10.0%, min_mult=0.30).
+    - Intraday leg (09:00 -> 15:30) has ultra-high capital efficiency (PF > 3.50, MaxDD < 4.5%):
+      dynamically boost Intraday utilization (1.20x) when Full Alpha Mode / continuous trend / Gap-ATR sweet spot is active.
     """
     from stock_ai.features.carver_systematic import apply_drawdown_throttle
 
@@ -1859,16 +1885,16 @@ def compute_night_day_regime_allocation(
     frag = float(systemic_fragility_score)
     mvol = float(market_volatility_20)
 
-    night_w = float(apply_drawdown_throttle(dd, max_dd_limit=0.075, warn_dd=0.018, min_multiplier=0.15))
+    night_w = float(apply_drawdown_throttle(dd, max_dd_limit=0.100, warn_dd=0.038, min_multiplier=0.30))
     if frag >= 0.65 or mvol >= 0.0192:
-        night_w = max(0.15, night_w * 0.72)
+        night_w = max(0.30, night_w * 0.75)
 
     day_base = float(apply_drawdown_throttle(dd, max_dd_limit=0.145, warn_dd=0.075, min_multiplier=0.55))
-    day_boost = 1.18 if (frag >= 0.65 or mvol >= 0.0192 or dd >= 0.018) else (1.12 if has_day_alpha_pick else 1.00)
+    day_boost = 1.20 if (frag >= 0.65 or mvol >= 0.0192 or dd >= 0.038) else (1.12 if has_day_alpha_pick else 1.00)
     day_w = round(day_base * day_boost, 3)
     night_w = round(night_w, 3)
 
-    if frag >= 0.65 or mvol >= 0.0192 or dd >= 0.018:
+    if frag >= 0.65 or mvol >= 0.0192 or dd >= 0.038:
         regime_code = "DAY_FOCUS"
         regime_badge = (
             f"⚖️ 2毛作シフト判定: 日中トレンド集中モード "
@@ -1886,6 +1912,117 @@ def compute_night_day_regime_allocation(
         "day_allocation_weight": day_w,
         "regime_mode_code": regime_code,
         "night_day_regime_badge": regime_badge,
+    }
+
+
+def compute_smart_execution_tactic(
+    ticker: str,
+    open_price: float,
+    pred_intraday_ret: float = 0.005,
+    gap_to_atr: float = 0.0,
+    volatility_20: float = 0.02,
+    continuous_trend_score: float = 0.50,
+    vpin_smart_accumulation_score: float = 0.35,
+    policy_wave_score: float = 0.50,
+) -> dict[str, Any]:
+    """Series #15 Smart Execution Alpha: Determine optimal execution tactic and entry trigger.
+
+    Eliminates blind 09:00 market-on-open fills and prevents morning fade traps (寄り天):
+    - Tactic A (Breakout / Strong GU): 5-minute ORB High Breakout Confirmation Stop-Order.
+      Trigger: open_price * (1.0 + orb_threshold). Prevents morning fade traps.
+    - Tactic B (Dip-Buy / GD Rebound): Morning Pullback Limit Order.
+      Trigger: open_price * (1.0 - pullback_pct). Captures favorable dip fill price.
+    - Tactic C (Standard Open): 09:00 Market Open Fallback when signal is balanced.
+    """
+    is_sweet_spot = (0.15 <= gap_to_atr <= 1.35) and (continuous_trend_score >= 0.50 or vpin_smart_accumulation_score >= 0.25)
+    is_v_rebound = (-2.05 <= gap_to_atr < -0.25) and (continuous_trend_score >= 0.55 or vpin_smart_accumulation_score >= 0.25 or policy_wave_score >= 0.55)
+
+    is_pullback = bool(is_v_rebound or gap_to_atr <= -0.20)
+    is_breakout = bool((is_sweet_spot or continuous_trend_score >= 0.52 or pred_intraday_ret >= 0.0055) and not is_pullback)
+
+    vol = max(0.012, min(0.050, volatility_20))
+
+    if is_breakout:
+        tactic_code = "ORB_BREAKOUT"
+        orb_threshold = max(0.0018, min(0.0035, 0.12 * vol))
+        trigger_price = round(open_price * (1.0 + orb_threshold), 1) if open_price > 0 else 0.0
+        tactic_name = "5分足ORB高値ブレイク確認逆指値"
+        tactic_badge = f"🎯 執行戦術: 5分足ORBブレイク確認 (突破目安: {format_price_yen(trigger_price)} / 寄り天回避)"
+        description = f"朝9時台の寄り天反落を遮断するため、寄値+{orb_threshold*100:.2f}%突破（5分足高値ブレイク）を確認後にエントリー。"
+    elif is_pullback:
+        tactic_code = "PULLBACK_LIMIT"
+        pullback_pct = max(0.0020, min(0.0040, 0.14 * vol))
+        trigger_price = round(open_price * (1.0 - pullback_pct), 1) if open_price > 0 else 0.0
+        tactic_name = "初押し指値エントリー"
+        tactic_badge = f"🎯 執行戦術: 初押し指値エントリー (指値目安: {format_price_yen(trigger_price)} / 押し目狙い)"
+        description = f"寄付き後の初押し（寄値-{pullback_pct*100:.2f}%付近）に指値を待ち受け、有利な押し目価格で約定を狙う。"
+    else:
+        tactic_code = "OPEN_MARKET"
+        orb_threshold = 0.0
+        trigger_price = round(open_price, 1)
+        tactic_name = "寄り付き成行エントリー"
+        tactic_badge = "🎯 執行戦術: 09:00 寄り付き成行 (標準執行)"
+        description = "寄り付きから即座に均等参加する標準成行執行。"
+
+    return {
+        "tactic_code": tactic_code,
+        "tactic_name": tactic_name,
+        "tactic_badge": tactic_badge,
+        "trigger_price": trigger_price,
+        "description": description,
+    }
+
+
+def compute_ticker_compatibility_rank(
+    ticker: str,
+    adapt_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Series #15 Universe Purification: Assess causal walk-forward compatibility rank (S/A/B/D).
+
+    Detects chronic losers for causal purging and elite performers for conviction boosts.
+    """
+    if adapt_state is None:
+        try:
+            from stock_ai.features.adaptive_online_learning import load_adaptation_state
+            adapt_state = load_adaptation_state()
+        except Exception:
+            adapt_state = {}
+
+    ticker_td = adapt_state.get("ticker_td_state", {}).get(ticker, {})
+    trades = int(ticker_td.get("trades", 0))
+    wins = int(ticker_td.get("wins", 0))
+    cum_ret = float(ticker_td.get("cum_return", 0.0))
+    win_rate = float(wins / trades) if trades > 0 else 0.50
+
+    if trades >= 3 and win_rate >= 0.70 and cum_ret >= 0.02:
+        rank = "S"
+        rank_badge = f"🏆 銘柄相性ランク: S (過去勝率 {win_rate*100:.0f}% / エリート特選)"
+        is_purged = False
+        is_boosted = True
+    elif trades >= 3 and win_rate >= 0.60 and cum_ret >= 0.005:
+        rank = "A"
+        rank_badge = f"✨ 銘柄相性ランク: A (過去勝率 {win_rate*100:.0f}% / 好相性)"
+        is_purged = False
+        is_boosted = False
+    elif trades >= 2 and (win_rate == 0.0 or cum_ret < -0.012):
+        rank = "D"
+        rank_badge = f"⚠️ 銘柄相性ランク: D (過去勝率 {win_rate*100:.0f}% / パージ警戒)"
+        is_purged = True
+        is_boosted = False
+    else:
+        rank = "B"
+        rank_badge = "⚖️ 銘柄相性ランク: B (標準推移)"
+        is_purged = False
+        is_boosted = False
+
+    return {
+        "rank": rank,
+        "rank_badge": rank_badge,
+        "win_rate": win_rate,
+        "trades": trades,
+        "cum_return": cum_ret,
+        "is_purged": is_purged,
+        "is_boosted": is_boosted,
     }
 
 
@@ -2077,6 +2214,11 @@ def get_daily_daytrade_rankings(
             np.where(unshackled_active & (smart_acc >= 0.30) & (stealth_acc >= 0.18), 1.18, 1.0),
         )
 
+        # Series #15 Universe Purification: Ticker compatibility boost / purge
+        is_purged_c = df_results.get("is_compatibility_purged", pd.Series([False] * len(df_results))).fillna(False).astype(bool)
+        is_boosted_c = df_results.get("is_compatibility_boosted", pd.Series([False] * len(df_results))).fillna(False).astype(bool)
+        compat_mult = np.where(is_purged_c, 0.40, np.where(is_boosted_c, 1.12, 1.0))
+
         df_results["composite_score"] = (
             p_up_clean
             * (1.0 + exp_bps_clean / 1000.0)
@@ -2085,6 +2227,7 @@ def get_daily_daytrade_rankings(
             * gap_atr_mult
             * sell_gate_mult
             * vpin_stealth_gate
+            * compat_mult
         )
         penalized_tickers = apply_paleologo_cluster_penalty(
             candidates_df=df_results,

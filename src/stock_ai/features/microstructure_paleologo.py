@@ -230,6 +230,44 @@ def compute_dynamic_sector_concentration_unlock(
     }
 
 
+def compute_closing_auction_distortion(
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    jump_ratio_5d: pd.Series | None = None,
+    volume: pd.Series | None = None,
+) -> dict[str, Any]:
+    """Compute Tokyo Stock Exchange Closing Auction (15:25-15:30) Imbalance Distortion.
+
+    Separates genuine institutional carry momentum from artificial passive MOC (Market on Close)
+    auction imbalance overshoots that are prone to next-morning mean-reversion crashes.
+
+    Metrics:
+    - clv: Close Location Value in [-1.0, +1.0]
+    - is_closing_auction_distortion: bool flag indicating high CLV (>= 0.82) combined with high jump ratio (>= 0.28)
+    - closing_auction_distortion_score: continuous penalty score in [0.0, 1.0]
+    """
+    hl_range = (high - low).clip(lower=1e-4)
+    clv = (2.0 * close - high - low) / hl_range
+    clv = clv.clip(-1.0, 1.0).fillna(0.0)
+
+    if jump_ratio_5d is not None:
+        jr = jump_ratio_5d.fillna(0.15).clip(0.0, 1.0)
+    else:
+        jr = pd.Series(0.15, index=close.index)
+
+    excess_clv = np.maximum(0.0, clv - 0.75) / 0.25
+    excess_jump = np.maximum(0.0, jr - 0.22) / 0.28
+    distortion_score = (excess_clv * excess_jump).clip(0.0, 1.0)
+    is_distortion = (clv >= 0.82) & (jr >= 0.28)
+
+    return {
+        "clv": clv,
+        "closing_auction_distortion_score": distortion_score,
+        "is_closing_auction_distortion": is_distortion,
+    }
+
+
 def apply_paleologo_cluster_penalty(
     candidates_df: pd.DataFrame | None = None,
     score_col: str = "p_cs",
