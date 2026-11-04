@@ -209,7 +209,7 @@ def compute_dynamic_sector_concentration_unlock(
         idx = policy_wave_score.index if isinstance(policy_wave_score, pd.Series) else leadlag_spillover_score.index
         pol_s = policy_wave_score.fillna(0.50) if isinstance(policy_wave_score, pd.Series) else pd.Series(float(policy_wave_score), index=idx)
         ll_s = leadlag_spillover_score.fillna(0.0) if isinstance(leadlag_spillover_score, pd.Series) else pd.Series(float(leadlag_spillover_score), index=idx)
-        is_theme_unlocked = (pol_s >= 0.55) | (ll_s >= 0.45)
+        is_theme_unlocked = (pol_s >= 0.58) | (ll_s >= 0.50)
         is_extreme_theme = (pol_s >= 0.68) | (ll_s >= 1.20)
         return {
             "is_theme_unlocked": is_theme_unlocked,
@@ -218,7 +218,7 @@ def compute_dynamic_sector_concentration_unlock(
 
     pol_v = float(policy_wave_score if policy_wave_score is not None and not np.isnan(policy_wave_score) else 0.50)
     ll_v = float(leadlag_spillover_score if leadlag_spillover_score is not None and not np.isnan(leadlag_spillover_score) else 0.0)
-    unlocked = bool(pol_v >= 0.55 or ll_v >= 0.45)
+    unlocked = bool(pol_v >= 0.58 or ll_v >= 0.50)
     extreme = bool(pol_v >= 0.68 or ll_v >= 1.20)
     dyn_max_cluster = max(2, base_max_per_cluster) if unlocked else base_max_per_cluster
     dyn_penalty = max(base_gamma_penalty, 0.92) if unlocked else base_gamma_penalty

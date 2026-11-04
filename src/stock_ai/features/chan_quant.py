@@ -317,7 +317,9 @@ def compute_conditional_trend_unshackled_chan(
         ofi_s = vpin_signed_ofi_5d.fillna(0.0) if isinstance(vpin_signed_ofi_5d, pd.Series) else pd.Series(float(vpin_signed_ofi_5d), index=idx)
 
         is_fake_jump_dump = (jr_s >= 0.55) & (ofi_s < -0.15)
-        is_unshackled = ((cont_s >= 0.25) | (jr_s <= 0.45) | (smart_s >= 0.25)) & (~is_fake_jump_dump)
+        has_vpin_flow = (smart_s > 0.0) | (ofi_s > 0.05)
+        has_clean_trend = (cont_s >= 0.25) | (jr_s <= 0.45)
+        is_unshackled = has_vpin_flow & has_clean_trend & (~is_fake_jump_dump)
 
         eff_hurst = pd.Series(np.where(is_unshackled, np.maximum(h_s, 0.60), h_s), index=idx, dtype=float)
         eff_ou_z = pd.Series(np.where(is_unshackled, 0.0, ou_s), index=idx, dtype=float)
@@ -343,7 +345,9 @@ def compute_conditional_trend_unshackled_chan(
     ofi_val = float(vpin_signed_ofi_5d if vpin_signed_ofi_5d is not None and not np.isnan(vpin_signed_ofi_5d) else 0.0)
 
     is_fake_dump = bool(jr_val >= 0.55 and ofi_val < -0.15)
-    is_unshackled_b = bool((cont_val >= 0.25 or jr_val <= 0.45 or smart_val >= 0.25) and not is_fake_dump)
+    has_vpin_flow_b = bool(smart_val > 0.0 or ofi_val > 0.05)
+    has_clean_trend_b = bool(cont_val >= 0.25 or jr_val <= 0.45)
+    is_unshackled_b = bool(has_vpin_flow_b and has_clean_trend_b and not is_fake_dump)
 
     eff_h = max(h_val, 0.60) if is_unshackled_b else h_val
     eff_ou = 0.0 if is_unshackled_b else ou_val

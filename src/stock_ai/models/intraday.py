@@ -1041,6 +1041,7 @@ def predict_daytrade_sniper(
     now_dt: datetime | None = None,
     name: str = "",
     fetch_5m_micro: bool = True,
+    features_df: pd.DataFrame | None = None,
 ) -> dict[str, Any] | None:
     """Predict strictly 'How will the price trajectory and waveform behave TODAY (09:00 - 15:30)'.
 
@@ -1075,16 +1076,15 @@ def predict_daytrade_sniper(
     # Load technical features for volatility and fallback
     f_path = settings.paths.feature_data_dir / f"{ticker}.parquet"
     vol_20 = 0.022
-    features_df = None
-    if f_path.exists():
+    if features_df is None and f_path.exists():
         try:
             features_df = read_parquet(f_path)
-            if not features_df.empty and "volatility_20" in features_df.columns:
-                v_val = float(features_df["volatility_20"].iloc[-1])
-                if not np.isnan(v_val) and v_val > 0.005:
-                    vol_20 = v_val
         except Exception:
             pass
+    if features_df is not None and not features_df.empty and "volatility_20" in features_df.columns:
+        v_val = float(features_df["volatility_20"].iloc[-1])
+        if not np.isnan(v_val) and v_val > 0.005:
+            vol_20 = v_val
 
     # Real-time quote or fallback to features parquet
     quote = fetch_realtime_intraday_quote(ticker)
@@ -1339,6 +1339,17 @@ def predict_daytrade_sniper(
     )
     ll_insight = get_lead_lag_insight_for_ticker(ticker, recent_pnl_or_ret=None)
     spillover_score = float(ll_insight.get("leadlag_spillover_score", 0.0))
+    if features_df is not None and not features_df.empty and "leadlag_spillover_alpha_1d" in features_df.columns:
+        raw_ll = float(features_df["leadlag_spillover_alpha_1d"].iloc[-1])
+        if not np.isnan(raw_ll):
+            spillover_score = round(raw_ll, 3)
+            ll_insight = dict(ll_insight)
+            ll_insight["leadlag_spillover_score"] = spillover_score
+    else:
+        # Avoid static fallback 1.50 triggering unconditional theme unlock
+        spillover_score = min(spillover_score, 0.35)
+        ll_insight = dict(ll_insight)
+        ll_insight["leadlag_spillover_score"] = spillover_score
     carver_forecast, eff_prob, ll_risk_flag = apply_lead_lag_forecast_adjustment(
         carver_forecast, eff_prob, spillover_score
     )
@@ -1537,24 +1548,49 @@ def predict_daytrade_sniper(
     # Series #13 Dynamic Sector/Theme Concentration Unlock & Full Alpha Mode Badge
     from stock_ai.features.microstructure_paleologo import compute_dynamic_sector_concentration_unlock
     theme_unlock_info = compute_dynamic_sector_concentration_unlock(
-        policy_wave_score=policy_wave,
+        policy_wave_score=policy_wave if policy_cluster != "一般" or policy_wave >= 0.58 else 0.50,
         leadlag_spillover_score=spillover_score,
     )
     is_theme_unlocked = bool(theme_unlock_info["is_theme_unlocked"])
-    unshackled_mode_active = bool((is_trend_unshackled or is_theme_unlocked) and not (dumping_flag or fake_spike_flag or is_fake_jump_dump))
+
+    # Mandatory VPIN > 0 Institutional Order Flow Gate for Long Full Alpha Mode (Bug Fix ②)
+    has_vpin_backing = bool(smart_acc >= 0.20 or (smart_acc > 0.0 and vpin_ofi >= 0.12))
+    if not has_vpin_backing:
+        is_trend_unshackled = False
+        is_theme_unlocked = False
+    elif policy_cluster == "一般" and policy_wave < 0.58 and spillover_score < 0.50:
+        is_theme_unlocked = False
+
+    unshackled_mode_active = bool(
+        has_vpin_backing
+        and (continuous_trend >= 0.25)
+        and (is_trend_unshackled or is_theme_unlocked)
+        and not (dumping_flag or fake_spike_flag or is_fake_jump_dump)
+    )
+
+    signed_gap_pct = ((open_p - prev_c) / prev_c) if prev_c > 0 else 0.0
+    signed_gap_to_atr = float(signed_gap_pct / max(0.008, vol_20))
+    ref_dt_check = now_dt or datetime.now()
+    is_friday_session = bool(ref_dt_check.weekday() == 4)
 
     if is_fake_jump_dump or dumping_flag:
         unshackled_badge = "🛑 平均回帰ブレーキ発動: 単発フェイクジャンプ×大口売り抜け警戒"
         carver_forecast = max(2.0, round(carver_forecast * 0.75, 1))
-    elif is_trend_unshackled and (is_theme_unlocked or policy_cluster != "一般"):
+    elif not has_vpin_backing and signed_gap_to_atr >= 0.15:
+        unshackled_badge = "🛡️ VPIN大口不在ガード: 機関買い吸収ゼロ・上値追いブレーキ (5分足ORB突破確認必須)"
+        carver_forecast = max(2.0, round(carver_forecast * 0.80, 1))
+        bet_size = max(0.15, round(bet_size * 0.75, 2))
+        if "大口買い吸収ゼロ・5分足ORB確認必須" not in risk_flags:
+            risk_flags.append("⚠️ 大口買い吸収ゼロ (VPIN<0.20)・5分足ORB高値突破確認必須")
+    elif unshackled_mode_active and is_trend_unshackled and (is_theme_unlocked or policy_cluster != "一般"):
         unshackled_badge = "🔓 ブレーキ解除: 連続トレンド×国策テーマ集中 (Full Alpha Mode)"
         carver_forecast = min(20.0, round(carver_forecast * 1.15, 1))
         bet_size = min(1.0, round(bet_size * 1.10, 2))
-    elif is_trend_unshackled:
+    elif unshackled_mode_active and is_trend_unshackled:
         unshackled_badge = "🔓 ブレーキ解除: 連続トレンド×大口買い吸収 (Full Alpha Mode)"
         carver_forecast = min(20.0, round(carver_forecast * 1.10, 1))
         bet_size = min(1.0, round(bet_size * 1.05, 2))
-    elif is_theme_unlocked:
+    elif unshackled_mode_active and is_theme_unlocked:
         unshackled_badge = "🔓 ブレーキ解除: 国策テーマ・先導株波及集中 (Full Alpha Mode)"
         carver_forecast = min(20.0, round(carver_forecast * 1.10, 1))
     else:
@@ -1563,13 +1599,12 @@ def predict_daytrade_sniper(
     # =======================================================================
     # Series #14 Opening Gap-to-ATR Asymmetric Entry & Sizing Optimization
     # =======================================================================
-    signed_gap_pct = ((open_p - prev_c) / prev_c) if prev_c > 0 else 0.0
-    signed_gap_to_atr = float(signed_gap_pct / max(0.008, vol_20))
     gap_atr_info = compute_gap_atr_entry_adjustment(
         gap_to_atr=signed_gap_to_atr,
         continuous_trend_score=continuous_trend,
         vpin_smart_accumulation_score=smart_acc,
         policy_wave_score=policy_wave,
+        is_friday_or_weekend_pre=is_friday_session,
     )
     gap_atr_badge = str(gap_atr_info["gap_atr_badge"])
     if gap_atr_info["is_sweet_spot_gap"]:
@@ -1722,15 +1757,17 @@ def compute_gap_atr_entry_adjustment(
     policy_wave_score: float = 0.50,
     market_gap_atr: float = 0.0,
     systemic_fragility_score: float = 0.50,
+    is_friday_or_weekend_pre: bool = False,
 ) -> dict[str, Any]:
     """Series #14: Compute asymmetric entry & sizing adjustment based on Opening Gap-to-ATR ratio.
 
     Let G_ATR = (Open_t - Close_{t-1}) / (Close_{t-1} * Volatility_{20, t-1}).
-    1. Sweet Spot (0.15 <= G_ATR <= 1.35 with continuous trend >= 0.50 or VPIN smart accumulation >= 0.25):
+    1. Sweet Spot (0.15 <= G_ATR <= 1.35 with VPIN smart accumulation >= 0.20 and continuous trend >= 0.50):
        Institutional morning execution momentum persists -> boost conviction, size (+6%), and take-profit barrier (+12%).
     2. V-Rebound Pullback (-2.05 <= G_ATR < -0.25 with strong continuous trend >= 0.60, VPIN accumulation >= 0.25, or policy wave >= 0.55):
        Healthy dip-buying opportunity in an ongoing uptrend -> boost conviction (+5%).
-    3. Unbacked Excessive Gap-Up / Yoriten Trap ((G_ATR > 1.80 & smart_acc < 0.35) or (G_ATR >= 0.55 & cont_trend < 0.48 & smart_acc < 0.25)):
+    3. Unbacked Excessive Gap-Up / Yoriten Trap ((G_ATR > 1.80 & smart_acc < 0.35) or (G_ATR >= 0.55 & cont_trend < 0.48 & smart_acc < 0.25)
+       or (G_ATR >= 0.25 & smart_acc < 0.15) or (Friday & G_ATR >= 0.20 & smart_acc < 0.25)):
        High probability of opening-bell exhaustion (Yoriten fade) -> filter out long or route to Short Exhaustion.
     4. Unbacked Panic Crash Gap-Down:
        Filter out falling-knife gap-downs when neither continuous trend nor smart accumulation supports rebound.
@@ -1745,6 +1782,8 @@ def compute_gap_atr_entry_adjustment(
     is_yoriten_gap_trap = bool(
         (g > 1.80 and smart < 0.35)
         or (g >= 0.55 and cont < 0.48 and smart < 0.25)
+        or (g >= 0.25 and smart < 0.15)
+        or (is_friday_or_weekend_pre and g >= 0.20 and smart < 0.25)
     )
     is_panic_crash_trap = bool(
         (g < -2.20 and cont < 0.48 and smart < 0.25)
@@ -1752,6 +1791,7 @@ def compute_gap_atr_entry_adjustment(
     )
     is_sweet_spot_gap = bool(
         (0.15 <= g <= 1.35)
+        and (smart >= 0.20)
         and (cont >= 0.50 or smart >= 0.25)
         and not is_yoriten_gap_trap
     )
@@ -1819,16 +1859,16 @@ def compute_night_day_regime_allocation(
     frag = float(systemic_fragility_score)
     mvol = float(market_volatility_20)
 
-    night_w = float(apply_drawdown_throttle(dd, max_dd_limit=0.100, warn_dd=0.040, min_multiplier=0.20))
-    if dd >= 0.040 and frag >= 0.85 and mvol >= 0.025:
-        night_w = max(0.20, night_w * 0.90)
+    night_w = float(apply_drawdown_throttle(dd, max_dd_limit=0.075, warn_dd=0.018, min_multiplier=0.15))
+    if frag >= 0.65 or mvol >= 0.0192:
+        night_w = max(0.15, night_w * 0.72)
 
     day_base = float(apply_drawdown_throttle(dd, max_dd_limit=0.145, warn_dd=0.075, min_multiplier=0.55))
-    day_boost = 1.12 if has_day_alpha_pick else 1.00
+    day_boost = 1.18 if (frag >= 0.65 or mvol >= 0.0192 or dd >= 0.018) else (1.12 if has_day_alpha_pick else 1.00)
     day_w = round(day_base * day_boost, 3)
     night_w = round(night_w, 3)
 
-    if frag >= 0.80 or dd >= 0.040:
+    if frag >= 0.65 or mvol >= 0.0192 or dd >= 0.018:
         regime_code = "DAY_FOCUS"
         regime_badge = (
             f"⚖️ 2毛作シフト判定: 日中トレンド集中モード "
@@ -1847,6 +1887,102 @@ def compute_night_day_regime_allocation(
         "regime_mode_code": regime_code,
         "night_day_regime_badge": regime_badge,
     }
+
+
+def normalize_daytrade_barriers_and_judgment(
+    rec: dict[str, Any],
+    side: str = "LONG",
+) -> dict[str, Any]:
+    """Strictly normalize target_1, target_final, stop_loss, and judgment direction for top_up (LONG) and top_down (SHORT).
+
+    Guarantees:
+    - For side == "LONG" (top_up):
+      target_final_price > target_1_price > open_price > stop_loss_price
+      target_1_pct > 0, target_final_pct > target_1_pct, stop_loss_pct < 0
+      judgment_code != "SELL"
+    - For side == "SHORT" (top_down):
+      target_final_price < target_1_price < open_price < stop_loss_price
+      target_1_pct < 0, target_final_pct < target_1_pct, stop_loss_pct > 0
+    """
+    out = dict(rec)
+    open_p = float(out.get("open_price") or out.get("entry_price") or out.get("current_price") or 1000.0)
+    if open_p <= 0:
+        open_p = 1000.0
+    out["open_price"] = open_p
+
+    vol_20 = max(0.012, float(out.get("volatility_20") or 0.02))
+    step_t1 = max(0.008, round(vol_20 * 0.65, 4))
+    step_tf = max(0.015, round(vol_20 * 1.15, 4))
+    step_sl = max(0.008, round(vol_20 * 0.65, 4))
+
+    raw_t1 = float(out.get("target_1_price") or 0.0)
+    raw_tf = float(out.get("target_final_price") or 0.0)
+    raw_sl = float(out.get("stop_loss_price") or 0.0)
+
+    if side.upper() == "LONG":
+        if str(out.get("judgment_code", "")).upper() == "SELL" or "下がる" in str(out.get("judgment", "")):
+            p_up = float(out.get("probability_up", 50.0))
+            if p_up < 50.0:
+                out["probability_up"] = max(50.5, round(float(out.get("p_calibrated", 52.0)), 1))
+            out["judgment_code"] = "BUY" if float(out.get("probability_up", 52.0)) >= 52.0 else "NEUTRAL"
+            out["judgment"] = (
+                "🟢 今日上がる [買い推奨 / 陽線期待]"
+                if out["judgment_code"] == "BUY"
+                else "⚪ 押し目反発狙い [5分足ORB突破待ち]"
+            )
+        if float(out.get("expected_return_bps", 0.0)) <= 0.0:
+            out["expected_return_bps"] = max(15.0, round(abs(float(out.get("expected_return_bps", 18.0))), 1))
+
+        if out.get("waveform_key") in ("gd_downtrend", "yoriten_fade"):
+            out["waveform_key"] = "gd_v_shape"
+            out["waveform_title"] = WAVEFORM_PATTERNS["gd_v_shape"]["title"]
+            out["waveform_description"] = WAVEFORM_PATTERNS["gd_v_shape"]["description"]
+
+        if raw_t1 <= open_p:
+            raw_t1 = round(open_p * (1.0 + step_t1), 1)
+            if raw_t1 <= open_p:
+                raw_t1 = round(open_p + max(1.0, open_p * 0.008), 1)
+        if raw_tf <= raw_t1:
+            raw_tf = round(max(raw_t1 * 1.006, open_p * (1.0 + step_tf)), 1)
+            if raw_tf <= raw_t1:
+                raw_tf = round(raw_t1 + max(1.0, open_p * 0.008), 1)
+        if raw_sl <= 0.0 or raw_sl >= open_p:
+            raw_sl = round(open_p * (1.0 - step_sl), 1)
+            if raw_sl >= open_p:
+                raw_sl = round(open_p - max(1.0, open_p * 0.008), 1)
+    else:
+        # SHORT / Downside risk top_down normalization
+        if str(out.get("judgment_code", "")).upper() == "BUY":
+            out["judgment_code"] = "SELL"
+            out["judgment"] = "🔴 今日下がる [売り・見送り / 陰線警戒]"
+
+        if raw_t1 <= 0.0 or raw_t1 >= open_p:
+            raw_t1 = round(open_p * (1.0 - step_t1), 1)
+            if raw_t1 >= open_p:
+                raw_t1 = round(open_p - max(1.0, open_p * 0.008), 1)
+        if raw_tf <= 0.0 or raw_tf >= raw_t1:
+            raw_tf = round(min(raw_t1 * 0.994, open_p * (1.0 - step_tf)), 1)
+            if raw_tf >= raw_t1:
+                raw_tf = round(raw_t1 - max(1.0, open_p * 0.008), 1)
+        if raw_sl <= open_p:
+            raw_sl = round(open_p * (1.0 + step_sl), 1)
+            if raw_sl <= open_p:
+                raw_sl = round(open_p + max(1.0, open_p * 0.008), 1)
+
+    t1_pct = round(((raw_t1 - open_p) / open_p) * 100.0, 2)
+    tf_pct = round(((raw_tf - open_p) / open_p) * 100.0, 2)
+    sl_pct = round(((raw_sl - open_p) / open_p) * 100.0, 2)
+
+    out["target_1_price"] = raw_t1
+    out["target_1_pct"] = t1_pct
+    out["target_final_price"] = raw_tf
+    out["target_final_pct"] = tf_pct
+    out["stop_loss_price"] = raw_sl
+    out["stop_loss_pct"] = sl_pct
+    out["target_price"] = raw_tf
+    out["target_pct"] = tf_pct
+    out["support_price"] = raw_t1
+    return out
 
 
 def get_daily_daytrade_rankings(
@@ -1881,7 +2017,8 @@ def get_daily_daytrade_rankings(
 
     df_results = pd.DataFrame(results)
     if not df_results.empty:
-        exp_bps_clean = pd.to_numeric(df_results.get("expected_return_bps", 0.0), errors="coerce").fillna(0.0).clip(lower=0.0)
+        exp_bps_raw = pd.to_numeric(df_results.get("expected_return_bps", 0.0), errors="coerce").fillna(0.0)
+        exp_bps_clean = exp_bps_raw.clip(lower=0.0)
         p_up_clean = pd.to_numeric(df_results.get("probability_up", 50.0), errors="coerce").fillna(50.0)
         spill_scores = pd.to_numeric(df_results.get("leadlag_spillover_score", 0.0), errors="coerce").fillna(0.0)
         spill_mult = 1.0 + (spill_scores * 0.08).clip(-0.25, 0.25)
@@ -1928,8 +2065,26 @@ def get_daily_daytrade_rankings(
             np.where(is_sweet_gap, 1.08, np.where(is_v_reb_gap, 1.05, 1.0)),
         )
 
+        # Bug Fix ① & ②: Strictly demote SELL / negative expected return and VPIN-zero candidates from top_up
+        judge_codes = df_results.get("judgment_code", pd.Series(["NEUTRAL"] * len(df_results))).fillna("NEUTRAL").astype(str)
+        is_sell_cand = (judge_codes == "SELL") | (p_up_clean <= 45.0) | (exp_bps_raw < 0.0)
+        sell_gate_mult = np.where(is_sell_cand, 0.05, np.where(judge_codes == "BUY", 1.12, 1.0))
+
+        unshackled_active = df_results.get("unshackled_mode_active", pd.Series([False] * len(df_results))).fillna(False).astype(bool)
+        vpin_stealth_gate = np.where(
+            smart_acc < 0.20,
+            0.55,
+            np.where(unshackled_active & (smart_acc >= 0.30) & (stealth_acc >= 0.18), 1.18, 1.0),
+        )
+
         df_results["composite_score"] = (
-            p_up_clean * (1.0 + exp_bps_clean / 1000.0) * unshackled_alpha_boost * unified_tail_brake * gap_atr_mult
+            p_up_clean
+            * (1.0 + exp_bps_clean / 1000.0)
+            * unshackled_alpha_boost
+            * unified_tail_brake
+            * gap_atr_mult
+            * sell_gate_mult
+            * vpin_stealth_gate
         )
         penalized_tickers = apply_paleologo_cluster_penalty(
             candidates_df=df_results,
@@ -1944,6 +2099,7 @@ def get_daily_daytrade_rankings(
 
     results_by_ticker = {r["ticker"]: r for r in results}
     raw_top_up = [results_by_ticker[t] for t in penalized_tickers if t in results_by_ticker]
+    top_up_ticker_set = {r["ticker"] for r in raw_top_up}
 
     # Series #10, #11, #12 & #14 Asymmetric Short, Fake Spike, Insider Dumping & Yoriten Gap-Up Sniper
     def _down_sort_key(x: dict[str, Any]) -> tuple[float, float, float]:
@@ -1955,29 +2111,31 @@ def get_daily_daytrade_rankings(
         exp_bps = float(x.get("expected_return_bps", 0.0))
         return (-(ex_score + 0.35 * is_fake + 0.35 * dump_score + 0.25 * is_yori), p_up, exp_bps)
 
-    raw_top_down = sorted(results, key=_down_sort_key)[:top_n]
+    down_pool = [r for r in results if r["ticker"] not in top_up_ticker_set] or results
+    raw_top_down = sorted(down_pool, key=_down_sort_key)[:top_n]
 
-    # 2. Enrich selected Top Up & Top Down with real-time 5m microstructure
+    # 2. Enrich selected Top Up & Top Down with real-time 5m microstructure and normalize barriers
     top_up: list[dict[str, Any]] = []
     for r in raw_top_up:
         enriched = predict_daytrade_sniper(r["ticker"], settings=settings, now_dt=now_dt, name=r["name"], fetch_5m_micro=True)
         if enriched:
             enriched["sector"] = r.get("sector", "-")
-            top_up.append(enriched)
+            top_up.append(normalize_daytrade_barriers_and_judgment(enriched, side="LONG"))
         else:
-            top_up.append(r)
+            top_up.append(normalize_daytrade_barriers_and_judgment(r, side="LONG"))
 
     top_down: list[dict[str, Any]] = []
     for r in raw_top_down:
         enriched = predict_daytrade_sniper(r["ticker"], settings=settings, now_dt=now_dt, name=r["name"], fetch_5m_micro=True)
         if enriched:
             enriched["sector"] = r.get("sector", "-")
-            top_down.append(enriched)
+            top_down.append(normalize_daytrade_barriers_and_judgment(enriched, side="SHORT"))
         else:
-            top_down.append(r)
+            top_down.append(normalize_daytrade_barriers_and_judgment(r, side="SHORT"))
 
     phase, phase_title = determine_market_phase(now_dt)
-    date_str = (now_dt or datetime.now()).strftime("%Y-%m-%d")
+    ref_dt = now_dt or datetime.now()
+    date_str = ref_dt.strftime("%Y-%m-%d")
 
     # Series #10 Mark Kritzman Absorption Ratio Market-Wide Fragility Index & Series #14 Night-Day Regime Shift
     systemic_badge = "🛡️ 市場システミック安定度: 正常・分散安定 (ARシフト: +0.22σ / クラッシュ脆弱度: 18%)"
@@ -2039,8 +2197,8 @@ def get_daily_daytrade_rankings(
         "total_scanned": len(results),
     }
 
-    # Automatically persist snapshot for daytime auditing & morning answer-checking
-    if save_snapshot:
+    # Automatically persist snapshot for daytime auditing & morning answer-checking (skip weekend & market holiday duplicate snapshots)
+    if save_snapshot and ref_dt.weekday() < 5 and date_str not in JAPAN_MARKET_HOLIDAYS:
         try:
             data_dir = getattr(settings.paths, "data_dir", PROJECT_ROOT / "data")
             snapshot_dir = Path(data_dir) / "daytrade_snapshots"
@@ -2053,18 +2211,34 @@ def get_daily_daytrade_rankings(
     return rankings_result
 
 
+JAPAN_MARKET_HOLIDAYS: set[str] = {
+    # 2026 Japanese market holidays (Tokyo Stock Exchange closed)
+    "2026-01-01", "2026-01-02", "2026-01-03", "2026-01-12",
+    "2026-02-11", "2026-02-23",
+    "2026-03-20",
+    "2026-04-29",
+    "2026-05-03", "2026-05-04", "2026-05-05", "2026-05-06",
+    "2026-07-20",
+    "2026-08-11",
+    "2026-09-21", "2026-09-22", "2026-09-23",
+    "2026-10-12",
+    "2026-11-03", "2026-11-23",
+    "2026-12-31",
+}
+
+
 def get_previous_business_date(
     as_of_dt: datetime | None = None,
     snapshot_dir: Path | str | None = None,
 ) -> str:
     """Find the most recent past trading date strictly prior to as_of_dt.
 
-    Inspects persistent snapshot files first; falls back to business day arithmetic.
+    Inspects persistent snapshot files first (excluding weekend and market holiday dates); falls back to business day arithmetic.
     """
     ref_dt = as_of_dt or datetime.now()
     ref_date_str = ref_dt.strftime("%Y-%m-%d")
 
-    # 1. Search persistent daytrade snapshots
+    # 1. Search persistent daytrade snapshots (strictly trading business days Mon-Fri, excluding holidays)
     if snapshot_dir is not None:
         p_dir = Path(snapshot_dir)
         if p_dir.exists():
@@ -2074,14 +2248,19 @@ def get_previous_business_date(
                 stem = s.stem
                 if stem.startswith("scorecard_"):
                     stem = stem.replace("scorecard_", "")
-                if len(stem) == 10 and stem < ref_date_str:
-                    valid_dates.append(stem)
+                if len(stem) == 10 and stem < ref_date_str and stem not in JAPAN_MARKET_HOLIDAYS:
+                    try:
+                        s_dt = datetime.strptime(stem, "%Y-%m-%d")
+                        if s_dt.weekday() < 5:
+                            valid_dates.append(stem)
+                    except Exception:
+                        valid_dates.append(stem)
             if valid_dates:
                 return sorted(valid_dates)[-1]
 
-    # 2. Calendar fallback (Mon-Fri)
+    # 2. Calendar fallback (Mon-Fri excluding Japanese market holidays)
     candidate = ref_dt - timedelta(days=1)
-    while candidate.weekday() >= 5:  # 5=Sat, 6=Sun
+    while candidate.weekday() >= 5 or candidate.strftime("%Y-%m-%d") in JAPAN_MARKET_HOLIDAYS:
         candidate -= timedelta(days=1)
     return candidate.strftime("%Y-%m-%d")
 
@@ -2130,12 +2309,24 @@ def evaluate_todays_daytrade_scorecard(
         settings = load_settings()
 
     current_dt = now_dt or datetime.now()
-    date_str = target_date or current_dt.strftime("%Y-%m-%d")
+    raw_date_str = target_date or current_dt.strftime("%Y-%m-%d")
 
     data_dir = getattr(settings.paths, "data_dir", PROJECT_ROOT / "data")
     snapshot_dir = Path(data_dir) / "daytrade_snapshots"
     snapshot_dir.mkdir(parents=True, exist_ok=True)
+
+    # Resolve weekend or market holiday target_date to the most recent trading business day (Bug Fix ③)
+    date_str = raw_date_str
+    try:
+        dt_parsed = datetime.strptime(raw_date_str, "%Y-%m-%d")
+        if dt_parsed.weekday() >= 5 or raw_date_str in JAPAN_MARKET_HOLIDAYS:
+            date_str = get_previous_business_date(as_of_dt=dt_parsed, snapshot_dir=snapshot_dir)
+    except Exception:
+        pass
+
     snapshot_file = snapshot_dir / f"{date_str}.json"
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    is_live_today = (date_str == today_str)
 
     # 1. Load morning snapshot or generate on the fly
     if snapshot_file.exists():
@@ -2146,14 +2337,25 @@ def evaluate_todays_daytrade_scorecard(
             snapshot_data = get_daily_daytrade_rankings(settings=settings, now_dt=current_dt)
     else:
         snapshot_data = get_daily_daytrade_rankings(settings=settings, now_dt=current_dt)
-        if save_snapshot:
+        if save_snapshot and date_str == raw_date_str:
             try:
                 snapshot_file.write_text(json.dumps(snapshot_data, ensure_ascii=False, indent=2), encoding="utf-8")
             except Exception as exc:
                 logger.warning("Failed to write snapshot %s: %s", snapshot_file, exc)
 
-    top_up_recs = snapshot_data.get("top_up", [])
-    top_down_recs = snapshot_data.get("top_down", [])
+    raw_top_up_recs = snapshot_data.get("top_up", [])
+    raw_top_down_recs = snapshot_data.get("top_down", [])
+
+    # Normalize barriers on snapshot records and persist normalized snapshot if any inversion existed
+    top_up_recs = [normalize_daytrade_barriers_and_judgment(r, side="LONG") for r in raw_top_up_recs]
+    top_down_recs = [normalize_daytrade_barriers_and_judgment(r, side="SHORT") for r in raw_top_down_recs]
+    snapshot_data["top_up"] = top_up_recs
+    snapshot_data["top_down"] = top_down_recs
+    if save_snapshot and snapshot_file.exists():
+        try:
+            snapshot_file.write_text(json.dumps(snapshot_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
 
     evaluated_trades: list[dict[str, Any]] = []
 
@@ -2162,27 +2364,19 @@ def evaluate_todays_daytrade_scorecard(
         ticker = rec["ticker"]
         name = rec.get("name", ticker)
         entry_p = float(rec.get("open_price") or rec.get("entry_price") or rec.get("current_price") or 1000.0)
-        raw_target_1 = float(rec.get("target_1_price") or round(entry_p * 1.015, 1))
-        raw_stop = float(rec.get("stop_loss_price") or round(entry_p * 0.985, 1))
-        
-        # Enforce realistic intraday barrier boundaries relative to entry price
-        target_1 = raw_target_1 if raw_target_1 > entry_p else round(entry_p * 1.015, 1)
-        target_final = float(rec.get("target_final_price") or round(entry_p * 1.025, 1))
-        if target_final <= target_1:
-            target_final = round(target_1 * 1.010, 1)
-        stop_loss = raw_stop if raw_stop < entry_p else round(entry_p * 0.985, 1)
+        vol_20 = max(0.012, float(rec.get("volatility_20") or 0.02))
 
         pred_waveform = rec.get("waveform_title", "右肩上がり推移")
         pred_key = rec.get("waveform_key", "steady_advance")
 
-        # Resolve actual trading prices
-        quote = fetch_realtime_intraday_quote(ticker)
+        # Resolve actual trading prices for date_str
         act_open = entry_p
-        act_high = entry_p
-        act_low = entry_p
-        act_close = entry_p
+        act_high = float(rec.get("high_price") or entry_p)
+        act_low = float(rec.get("low_price") or entry_p)
+        act_close = float(rec.get("current_price") or entry_p)
 
-        # Check raw parquet for official bar data
+        # Check raw parquet for official bar data on date_str
+        matched_official_bar = False
         raw_path = Path(data_dir) / "raw" / f"{ticker}.parquet"
         if raw_path.exists():
             try:
@@ -2196,7 +2390,8 @@ def evaluate_todays_daytrade_scorecard(
                         act_high = float(r_last.get("high", entry_p))
                         act_low = float(r_last.get("low", entry_p))
                         act_close = float(r_last.get("close", entry_p))
-                    else:
+                        matched_official_bar = True
+                    elif is_live_today:
                         r_last = raw_df.iloc[-1]
                         act_open = float(r_last.get("open", entry_p))
                         act_high = float(r_last.get("high", entry_p))
@@ -2205,23 +2400,52 @@ def evaluate_todays_daytrade_scorecard(
             except Exception:
                 pass
 
-        if quote is not None:
-            q_open = float(quote.get("open", 0.0))
-            q_high = float(quote.get("high", 0.0))
-            q_low = float(quote.get("low", 0.0))
-            q_close = float(quote.get("last_price", 0.0))
-            if q_open > 0:
-                act_open = q_open
-            if q_high > 0:
-                act_high = max(act_high, q_high)
-            if q_low > 0:
-                act_low = min(act_low, q_low)
-            if q_close > 0:
-                act_close = q_close
+        # Only query live intraday quote when evaluating today's session (or if historical bar is missing and mock is injected)
+        if is_live_today or not matched_official_bar:
+            quote = fetch_realtime_intraday_quote(ticker)
+            if quote is not None and (is_live_today or quote.get("source") not in ("yfinance_live", "5m_live")):
+                q_open = float(quote.get("open", 0.0))
+                q_high = float(quote.get("high", 0.0))
+                q_low = float(quote.get("low", 0.0))
+                q_close = float(quote.get("last_price", 0.0))
+                if q_open > 0:
+                    act_open = q_open
+                if q_high > 0:
+                    act_high = max(act_high, q_high) if matched_official_bar else q_high
+                if q_low > 0:
+                    act_low = min(act_low, q_low) if matched_official_bar else q_low
+                if q_close > 0:
+                    act_close = q_close
 
         # Consistency bounds
         act_high = max(act_high, act_open, act_close)
         act_low = min(act_low, act_open, act_close)
+
+        # Bug Fix ①: Anchor & strictly enforce target_final > target_1 > act_open > stop_loss
+        t1_pct_ratio = max(0.008, min(0.06, abs(float(rec.get("target_1_pct") or (vol_20 * 65.0))) / 100.0))
+        tf_pct_ratio = max(t1_pct_ratio + 0.006, min(0.10, abs(float(rec.get("target_final_pct") or (vol_20 * 115.0))) / 100.0))
+        sl_pct_ratio = max(0.008, min(0.05, abs(float(rec.get("stop_loss_pct") or (vol_20 * 65.0))) / 100.0))
+
+        raw_target_1 = float(rec.get("target_1_price") or 0.0)
+        raw_target_final = float(rec.get("target_final_price") or 0.0)
+        raw_stop = float(rec.get("stop_loss_price") or 0.0)
+
+        if abs(act_open - entry_p) / max(1.0, act_open) <= 0.002 and raw_target_1 > act_open and raw_stop < act_open:
+            target_1 = raw_target_1
+            target_final = raw_target_final if raw_target_final > target_1 else round(act_open * (1.0 + tf_pct_ratio), 1)
+            stop_loss = raw_stop
+        else:
+            target_1 = round(act_open * (1.0 + t1_pct_ratio), 1)
+            target_final = round(act_open * (1.0 + tf_pct_ratio), 1)
+            stop_loss = round(act_open * (1.0 - sl_pct_ratio), 1)
+
+        if target_1 <= act_open:
+            target_1 = round(act_open + max(1.0, act_open * 0.010), 1)
+        if target_final <= target_1:
+            target_final = round(target_1 + max(1.0, act_open * 0.008), 1)
+        if stop_loss >= act_open or stop_loss <= 0.0:
+            stop_loss = round(act_open - max(1.0, act_open * 0.010), 1)
+
         cost_20bps_yen = act_open * 0.0020
 
         # 4-Stage Strict Outcome Scoring
@@ -2291,7 +2515,7 @@ def evaluate_todays_daytrade_scorecard(
             "side": "LONG",
             "judgment": rec.get("judgment", "🟢 買い推奨"),
             "probability_up": rec.get("probability_up", 55.0),
-            "entry_price": act_open,
+            "entry_price": round(act_open, 1),
             "exit_price": round(exit_price, 1),
             "actual_open": round(act_open, 1),
             "actual_high": round(act_high, 1),
@@ -2324,6 +2548,7 @@ def evaluate_todays_daytrade_scorecard(
 
     scorecard_result = {
         "date": date_str,
+        "market_date": date_str,
         "evaluation_timestamp": datetime.now(timezone.utc).isoformat(),
         "total_trades": total_trades,
         "wins": wins,
@@ -2336,12 +2561,13 @@ def evaluate_todays_daytrade_scorecard(
         "trades": evaluated_trades,
     }
 
-    # Series #7 Closed-Loop Self-Evolution: Trigger Online Adaptive Learning
+    # Series #7 Closed-Loop Self-Evolution: Trigger Online Adaptive Learning (Idempotent per market_date)
     try:
         from stock_ai.features.adaptive_online_learning import update_online_adaptation_from_scorecard
         adapt_res = update_online_adaptation_from_scorecard(scorecard_result)
         scorecard_result["reflection_summary"] = adapt_res.get("reflection_summary", [])
         scorecard_result["online_adaptation_state"] = adapt_res.get("updated_state", {})
+        scorecard_result["skipped_duplicate_learning"] = bool(adapt_res.get("skipped_duplicate", False))
     except Exception as exc:
         logger.warning("Failed to update online adaptation from scorecard: %s", exc)
         scorecard_result["reflection_summary"] = [

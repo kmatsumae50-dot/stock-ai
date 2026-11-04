@@ -82,8 +82,10 @@ def initialize_fresh_state() -> dict[str, Any]:
     expert_weights["style_mean_reversion"] = 1.0
 
     return {
-        "version": "7.0.0",
+        "version": "7.1.0",
         "last_updated_date": None,
+        "last_evaluated_market_date": None,
+        "evaluated_market_dates": [],
         "total_updates": 0,
         "regime_expert_weights": expert_weights,
         "ticker_td_state": {},
@@ -570,7 +572,40 @@ def update_online_adaptation_from_scorecard(
     """
     state = load_adaptation_state(state_file=state_file)
     trades = scorecard_data.get("trades", [])
-    date_str = scorecard_data.get("date", datetime.now().strftime("%Y-%m-%d"))
+    date_str = str(scorecard_data.get("date", datetime.now().strftime("%Y-%m-%d")))
+    market_date = str(
+        scorecard_data.get("market_date")
+        or scorecard_data.get("snapshot_market_date")
+        or date_str
+    )
+
+    evaluated_dates: list[str] = list(state.get("evaluated_market_dates", []))
+    for h in state.get("history_log", []):
+        h_dt = h.get("market_date") or h.get("date")
+        if h_dt and h_dt not in evaluated_dates:
+            evaluated_dates.append(str(h_dt))
+
+    # Idempotent Guard: prevent duplicate learning on the same market trading date
+    if not scorecard_data.get("force_relearn", False):
+        if (
+            market_date == state.get("last_evaluated_market_date")
+            or market_date == state.get("last_updated_date")
+            or date_str == state.get("last_evaluated_market_date")
+            or date_str == state.get("last_updated_date")
+            or market_date in evaluated_dates
+            or date_str in evaluated_dates
+        ):
+            reflection = generate_self_reflection_summary(scorecard_data, state)
+            logger.info(
+                "Idempotent guard: skipping duplicate online adaptation for date=%s (market_date=%s)",
+                date_str,
+                market_date,
+            )
+            return {
+                "updated_state": state,
+                "reflection_summary": reflection,
+                "skipped_duplicate": True,
+            }
 
     # 1. Update Hedge weights
     updated_weights = update_regime_expert_weights(
@@ -607,6 +642,7 @@ def update_online_adaptation_from_scorecard(
     # 5. Record History
     hist_entry = {
         "date": date_str,
+        "market_date": market_date,
         "trades_count": len(trades),
         "wins": scorecard_data.get("wins", 0),
         "losses": scorecard_data.get("losses", 0),
@@ -620,7 +656,13 @@ def update_online_adaptation_from_scorecard(
         history = history[-30:]
     state["history_log"] = history
 
+    if market_date not in evaluated_dates:
+        evaluated_dates.append(market_date)
+    if len(evaluated_dates) > 60:
+        evaluated_dates = evaluated_dates[-60:]
+    state["evaluated_market_dates"] = evaluated_dates
     state["last_updated_date"] = date_str
+    state["last_evaluated_market_date"] = market_date
     state["total_updates"] = int(state.get("total_updates", 0)) + 1
 
     save_adaptation_state(state, state_file=state_file)
@@ -629,6 +671,7 @@ def update_online_adaptation_from_scorecard(
     return {
         "updated_state": state,
         "reflection_summary": reflection,
+        "skipped_duplicate": False,
     }
 
 
@@ -641,7 +684,10 @@ class RollingOnlineAdaptor:
 
     def __init__(self, initial_state: dict[str, Any] | None = None) -> None:
         self.state = initial_state or initialize_fresh_state()
-        self.last_settled_date: str | None = None
+        self.last_settled_date: str | None = self.state.get("last_evaluated_market_date") or self.state.get("last_updated_date")
+        self.evaluated_dates: set[str] = set(self.state.get("evaluated_market_dates", []))
+        if self.last_settled_date:
+            self.evaluated_dates.add(str(self.last_settled_date))
 
     def get_current_state(self) -> dict[str, Any]:
         """Return state snapshot strictly prior to current trade execution."""
@@ -652,19 +698,21 @@ class RollingOnlineAdaptor:
         date_str: str,
         trades: Sequence[dict[str, Any]],
         ticker_sector_map: Mapping[str, str] | None = None,
-    ) -> None:
-        """Update state using strictly settled trades from previous day."""
+        market_date: str | None = None,
+    ) -> bool:
+        """Update state using strictly settled trades from previous day (idempotent per market date)."""
         if not trades:
-            return
+            return False
 
-        mock_scorecard = {
-            "date": date_str,
-            "trades": list(trades),
-            "wins": sum(1 for t in trades if t.get("result_status") == "WIN"),
-            "losses": sum(1 for t in trades if t.get("result_status") == "LOSS"),
-            "win_rate_pct": float(np.mean([t.get("result_status") == "WIN" for t in trades]) * 100.0) if trades else 0.0,
-            "total_virtual_pnl_yen": sum(t.get("virtual_pnl_100_shares", 0) for t in trades),
-        }
+        eff_date = str(market_date or date_str)
+        if (
+            eff_date == self.last_settled_date
+            or str(date_str) == self.last_settled_date
+            or eff_date in self.evaluated_dates
+            or str(date_str) in self.evaluated_dates
+        ):
+            logger.info("RollingOnlineAdaptor idempotent guard: skipping duplicate update for %s", eff_date)
+            return False
 
         # Step 1: Hedge weights
         self.state["regime_expert_weights"] = update_regime_expert_weights(
@@ -686,8 +734,29 @@ class RollingOnlineAdaptor:
             trades=trades,
         )
 
-        self.last_settled_date = date_str
+        self.last_settled_date = eff_date
+        self.evaluated_dates.add(eff_date)
+        self.evaluated_dates.add(str(date_str))
+        self.state["last_updated_date"] = str(date_str)
+        self.state["last_evaluated_market_date"] = eff_date
+        self.state["evaluated_market_dates"] = sorted(self.evaluated_dates)[-60:]
         self.state["total_updates"] = int(self.state.get("total_updates", 0)) + 1
+        return True
+
+    def update(
+        self,
+        date_str: str,
+        trades: Sequence[dict[str, Any]],
+        ticker_sector_map: Mapping[str, str] | None = None,
+        market_date: str | None = None,
+    ) -> bool:
+        """Alias for update_from_settled_trades with strict idempotent guard."""
+        return self.update_from_settled_trades(
+            date_str=date_str,
+            trades=trades,
+            ticker_sector_map=ticker_sector_map,
+            market_date=market_date,
+        )
 
 
 def format_daytrade_reflection_overview(

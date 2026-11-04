@@ -117,9 +117,10 @@ def test_discord_sniper_unshackled_badge_display() -> None:
     payloads = build_daytrade_sniper_payloads("7011.T", name="三菱重工業")
     assert len(payloads) == 1
     p = payloads[0]
-    assert any(b in p["content"] for b in ["🔓 ブレーキ解除:", "⚖️ ブレーキ制御:", "🛑 平均回帰ブレーキ発動:"])
+    badge_prefixes = ["🔓 ブレーキ解除:", "⚖️ ブレーキ制御:", "🛑 平均回帰ブレーキ発動:", "🛡️ VPIN大口不在ガード:"]
+    assert any(b in p["content"] for b in badge_prefixes)
     embed_val = p["embeds"][0]["fields"][0]["value"]
-    assert any(b in embed_val for b in ["🔓 ブレーキ解除:", "⚖️ ブレーキ制御:", "🛑 平均回帰ブレーキ発動:"])
+    assert any(b in embed_val for b in badge_prefixes)
     assert "実効H:" in embed_val
 
 
