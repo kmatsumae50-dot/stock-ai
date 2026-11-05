@@ -1,50 +1,50 @@
 {
   "metrics": {
-    "accuracy": 0.48870967741935484,
-    "f1": 0.4581196581196581,
-    "auc": 0.4978536971629211,
+    "accuracy": 0.46774193548387094,
+    "f1": 0.40217391304347827,
+    "auc": 0.47193505356621784,
     "rows": 620
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4947,
+      "max_p": 0.4948,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.472,
-      "description": "実績ギャップアップ率 47.2%（陰線・下落警戒）"
+      "historical_win_rate": 0.44,
+      "description": "実績ギャップアップ率 44.0%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4947,
-      "max_p": 0.4985,
+      "min_p": 0.4948,
+      "max_p": 0.4983,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.4194,
-      "description": "実績ギャップアップ率 41.9%（弱気）"
+      "historical_win_rate": 0.4597,
+      "description": "実績ギャップアップ率 46.0%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4985,
-      "max_p": 0.5004,
+      "min_p": 0.4983,
+      "max_p": 0.4996,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.4677,
-      "description": "実績ギャップアップ率 46.8%（中立・推移注視）"
+      "historical_win_rate": 0.4435,
+      "description": "実績ギャップアップ率 44.4%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5004,
-      "max_p": 0.5039,
+      "min_p": 0.4996,
+      "max_p": 0.5038,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.4355,
-      "description": "実績ギャップアップ率 43.5%（堅調）"
+      "historical_win_rate": 0.4516,
+      "description": "実績ギャップアップ率 45.2%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5039,
+      "min_p": 0.5038,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
@@ -139,7 +139,7 @@
       "importance": 2.0
     },
     {
-      "feature": "sector_relative_return",
+      "feature": "sox_return_1d",
       "importance": 2.0
     },
     {
@@ -148,6 +148,10 @@
     },
     {
       "feature": "chan_regime_momentum_score",
+      "importance": 2.0
+    },
+    {
+      "feature": "jump_ratio_5d",
       "importance": 2.0
     },
     {
@@ -164,10 +168,6 @@
     },
     {
       "feature": "volume_change_1d",
-      "importance": 1.0
-    },
-    {
-      "feature": "rsi_14",
       "importance": 1.0
     }
   ]
