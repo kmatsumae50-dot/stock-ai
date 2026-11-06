@@ -11374,11 +11374,11 @@
           {
             "date": "2026-11-06",
             "long_picks": [
-              "9983.T",
-              "4568.T",
               "9766.T",
-              "6758.T",
-              "7267.T"
+              "6526.T",
+              "7267.T",
+              "4568.T",
+              "8035.T"
             ],
             "short_picks": [],
             "gross_return": 0.0,
@@ -22704,7 +22704,9 @@
           },
           {
             "date": "2026-11-06",
-            "long_picks": [],
+            "long_picks": [
+              "6526.T"
+            ],
             "short_picks": [],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -36238,10 +36240,13 @@
           },
           {
             "date": "2026-11-06",
-            "long_picks": [],
+            "long_picks": [
+              "6526.T",
+              "6920.T"
+            ],
             "short_picks": [
-              "8316.T",
-              "9432.T"
+              "9432.T",
+              "6301.T"
             ],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -49048,7 +49053,9 @@
           },
           {
             "date": "2026-11-06",
-            "long_picks": [],
+            "long_picks": [
+              "9101.T"
+            ],
             "execution_tactic": "NO_PICKS",
             "short_picks": [],
             "gross_return": 0.0,
@@ -61100,8 +61107,12 @@
           },
           {
             "date": "2026-11-06",
-            "long_picks": [],
-            "intraday_picks": [],
+            "long_picks": [
+              "6526.T"
+            ],
+            "intraday_picks": [
+              "9101.T"
+            ],
             "short_picks": [],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -75025,11 +75036,11 @@
           {
             "date": "2026-11-06",
             "long_picks": [
-              "9983.T",
-              "4568.T",
               "9766.T",
-              "6758.T",
-              "7267.T"
+              "6526.T",
+              "7267.T",
+              "4568.T",
+              "8035.T"
             ],
             "short_picks": [],
             "gross_return": 0.0,
@@ -86355,7 +86366,9 @@
           },
           {
             "date": "2026-11-06",
-            "long_picks": [],
+            "long_picks": [
+              "6526.T"
+            ],
             "short_picks": [],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -99889,10 +99902,13 @@
           },
           {
             "date": "2026-11-06",
-            "long_picks": [],
+            "long_picks": [
+              "6526.T",
+              "6920.T"
+            ],
             "short_picks": [
-              "8316.T",
-              "9432.T"
+              "9432.T",
+              "6301.T"
             ],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -112699,7 +112715,9 @@
           },
           {
             "date": "2026-11-06",
-            "long_picks": [],
+            "long_picks": [
+              "9101.T"
+            ],
             "execution_tactic": "NO_PICKS",
             "short_picks": [],
             "gross_return": 0.0,
@@ -124751,8 +124769,12 @@
           },
           {
             "date": "2026-11-06",
-            "long_picks": [],
-            "intraday_picks": [],
+            "long_picks": [
+              "6526.T"
+            ],
+            "intraday_picks": [
+              "9101.T"
+            ],
             "short_picks": [],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -138676,11 +138698,11 @@
           {
             "date": "2026-11-06",
             "long_picks": [
-              "9983.T",
-              "4568.T",
               "9766.T",
-              "6758.T",
-              "7267.T"
+              "6526.T",
+              "7267.T",
+              "4568.T",
+              "8035.T"
             ],
             "short_picks": [],
             "gross_return": 0.0,
@@ -150006,7 +150028,9 @@
           },
           {
             "date": "2026-11-06",
-            "long_picks": [],
+            "long_picks": [
+              "6526.T"
+            ],
             "short_picks": [],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -163540,10 +163564,13 @@
           },
           {
             "date": "2026-11-06",
-            "long_picks": [],
+            "long_picks": [
+              "6526.T",
+              "6920.T"
+            ],
             "short_picks": [
-              "8316.T",
-              "9432.T"
+              "9432.T",
+              "6301.T"
             ],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -176350,7 +176377,9 @@
           },
           {
             "date": "2026-11-06",
-            "long_picks": [],
+            "long_picks": [
+              "9101.T"
+            ],
             "execution_tactic": "NO_PICKS",
             "short_picks": [],
             "gross_return": 0.0,
@@ -188402,8 +188431,12 @@
           },
           {
             "date": "2026-11-06",
-            "long_picks": [],
-            "intraday_picks": [],
+            "long_picks": [
+              "6526.T"
+            ],
+            "intraday_picks": [
+              "9101.T"
+            ],
             "short_picks": [],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -202327,11 +202360,11 @@
           {
             "date": "2026-11-06",
             "long_picks": [
-              "9983.T",
-              "4568.T",
               "9766.T",
-              "6758.T",
-              "7267.T"
+              "6526.T",
+              "7267.T",
+              "4568.T",
+              "8035.T"
             ],
             "short_picks": [],
             "gross_return": 0.0,
@@ -213656,7 +213689,9 @@
           },
           {
             "date": "2026-11-06",
-            "long_picks": [],
+            "long_picks": [
+              "6526.T"
+            ],
             "short_picks": [],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -227190,10 +227225,13 @@
           },
           {
             "date": "2026-11-06",
-            "long_picks": [],
+            "long_picks": [
+              "6526.T",
+              "6920.T"
+            ],
             "short_picks": [
-              "8316.T",
-              "9432.T"
+              "9432.T",
+              "6301.T"
             ],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -240000,7 +240038,9 @@
           },
           {
             "date": "2026-11-06",
-            "long_picks": [],
+            "long_picks": [
+              "9101.T"
+            ],
             "execution_tactic": "NO_PICKS",
             "short_picks": [],
             "gross_return": 0.0,
@@ -252051,8 +252091,12 @@
           },
           {
             "date": "2026-11-06",
-            "long_picks": [],
-            "intraday_picks": [],
+            "long_picks": [
+              "6526.T"
+            ],
+            "intraday_picks": [
+              "9101.T"
+            ],
             "short_picks": [],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -265976,11 +266020,11 @@
           {
             "date": "2026-11-06",
             "long_picks": [
-              "9983.T",
-              "4568.T",
               "9766.T",
-              "6758.T",
-              "7267.T"
+              "6526.T",
+              "7267.T",
+              "4568.T",
+              "8035.T"
             ],
             "short_picks": [],
             "gross_return": 0.0,
@@ -277176,7 +277220,9 @@
           },
           {
             "date": "2026-11-06",
-            "long_picks": [],
+            "long_picks": [
+              "6526.T"
+            ],
             "short_picks": [],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -290710,10 +290756,13 @@
           },
           {
             "date": "2026-11-06",
-            "long_picks": [],
+            "long_picks": [
+              "6526.T",
+              "6920.T"
+            ],
             "short_picks": [
-              "8316.T",
-              "9432.T"
+              "9432.T",
+              "6301.T"
             ],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -303520,7 +303569,9 @@
           },
           {
             "date": "2026-11-06",
-            "long_picks": [],
+            "long_picks": [
+              "9101.T"
+            ],
             "execution_tactic": "NO_PICKS",
             "short_picks": [],
             "gross_return": 0.0,
@@ -315442,8 +315493,12 @@
           },
           {
             "date": "2026-11-06",
-            "long_picks": [],
-            "intraday_picks": [],
+            "long_picks": [
+              "6526.T"
+            ],
+            "intraday_picks": [
+              "9101.T"
+            ],
             "short_picks": [],
             "gross_return": 0.0,
             "net_return": 0.0,
@@ -318158,40 +318213,51 @@
     "strategies": {
       "q5_equal_weight": {
         "long_picks": [
-          "9983.T",
-          "4568.T",
           "9766.T",
-          "6758.T",
-          "7267.T"
+          "6526.T",
+          "7267.T",
+          "4568.T",
+          "8035.T"
         ],
         "intraday_picks": [],
         "short_picks": [],
         "equity": 809085.9034894635
       },
       "elite_top2_long": {
-        "long_picks": [],
+        "long_picks": [
+          "6526.T"
+        ],
         "intraday_picks": [],
         "short_picks": [],
         "equity": 1251803.9553515222
       },
       "long_short_spread": {
-        "long_picks": [],
+        "long_picks": [
+          "6526.T",
+          "6920.T"
+        ],
         "intraday_picks": [],
         "short_picks": [
-          "8316.T",
-          "9432.T"
+          "9432.T",
+          "6301.T"
         ],
         "equity": 490229.5822721389
       },
       "intraday_top1_long": {
-        "long_picks": [],
+        "long_picks": [
+          "9101.T"
+        ],
         "intraday_picks": [],
         "short_picks": [],
         "equity": 1395319.3917791932
       },
       "dual_shift_compound": {
-        "long_picks": [],
-        "intraday_picks": [],
+        "long_picks": [
+          "6526.T"
+        ],
+        "intraday_picks": [
+          "9101.T"
+        ],
         "short_picks": [],
         "equity": 1718634.4923974625
       }
