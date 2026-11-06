@@ -1,15 +1,15 @@
 {
   "metrics": {
-    "accuracy": 0.4935483870967742,
-    "f1": 0.6487695749440716,
-    "auc": 0.4840419996669998,
+    "accuracy": 0.49838709677419357,
+    "f1": 0.6586169045005489,
+    "auc": 0.4970342157842158,
     "rows": 620
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.5007,
+      "max_p": 0.5016,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
       "historical_win_rate": 0.568,
@@ -17,39 +17,39 @@
     },
     {
       "quantile": "Q2",
-      "min_p": 0.5007,
-      "max_p": 0.5047,
+      "min_p": 0.5016,
+      "max_p": 0.5044,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.5484,
-      "description": "実績ギャップアップ率 54.8%（弱気）"
+      "historical_win_rate": 0.5403,
+      "description": "実績ギャップアップ率 54.0%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.5047,
-      "max_p": 0.5075,
+      "min_p": 0.5044,
+      "max_p": 0.5082,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5323,
-      "description": "実績ギャップアップ率 53.2%（中立・推移注視）"
+      "historical_win_rate": 0.5081,
+      "description": "実績ギャップアップ率 50.8%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5084,
-      "max_p": 0.5092,
+      "min_p": 0.5082,
+      "max_p": 0.5094,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5242,
-      "description": "実績ギャップアップ率 52.4%（堅調）"
+      "historical_win_rate": 0.5403,
+      "description": "実績ギャップアップ率 54.0%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5092,
+      "min_p": 0.5094,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.4758,
-      "description": "実績ギャップアップ率 47.6%（最高勝率群）"
+      "historical_win_rate": 0.4839,
+      "description": "実績ギャップアップ率 48.4%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -131,6 +131,10 @@
   ],
   "top_features": [
     {
+      "feature": "sector_relative_return",
+      "importance": 3.0
+    },
+    {
       "feature": "sector_volatility",
       "importance": 3.0
     },
@@ -143,15 +147,7 @@
       "importance": 3.0
     },
     {
-      "feature": "afml_fracdiff_zscore_20",
-      "importance": 3.0
-    },
-    {
       "feature": "volume_change_1d",
-      "importance": 2.0
-    },
-    {
-      "feature": "sector_relative_return",
       "importance": 2.0
     },
     {
@@ -168,6 +164,10 @@
     },
     {
       "feature": "rsi_14",
+      "importance": 1.0
+    },
+    {
+      "feature": "macd_signal",
       "importance": 1.0
     }
   ]

@@ -2,14 +2,14 @@
   "metrics": {
     "accuracy": 0.5177419354838709,
     "f1": 0.6822529224229543,
-    "auc": 0.4611269131789246,
+    "auc": 0.45754800529282447,
     "rows": 620
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.5146,
+      "max_p": 0.5148,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
       "historical_win_rate": 0.576,
@@ -17,39 +17,39 @@
     },
     {
       "quantile": "Q2",
-      "min_p": 0.5146,
-      "max_p": 0.5189,
+      "min_p": 0.5148,
+      "max_p": 0.5193,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.4516,
-      "description": "実績ギャップアップ率 45.2%（弱気）"
+      "historical_win_rate": 0.4839,
+      "description": "実績ギャップアップ率 48.4%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.5189,
-      "max_p": 0.5225,
+      "min_p": 0.5193,
+      "max_p": 0.5226,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5081,
-      "description": "実績ギャップアップ率 50.8%（中立・推移注視）"
+      "historical_win_rate": 0.4839,
+      "description": "実績ギャップアップ率 48.4%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5225,
-      "max_p": 0.5243,
+      "min_p": 0.5226,
+      "max_p": 0.5229,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5161,
-      "description": "実績ギャップアップ率 51.6%（堅調）"
+      "historical_win_rate": 0.5565,
+      "description": "実績ギャップアップ率 55.6%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5243,
+      "min_p": 0.5229,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.5726,
-      "description": "実績ギャップアップ率 57.3%（最高勝率群）"
+      "historical_win_rate": 0.5161,
+      "description": "実績ギャップアップ率 51.6%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -139,10 +139,6 @@
       "importance": 2.0
     },
     {
-      "feature": "rsi_14",
-      "importance": 2.0
-    },
-    {
       "feature": "macd_hist",
       "importance": 2.0
     },
@@ -168,6 +164,10 @@
     },
     {
       "feature": "close_location_value",
+      "importance": 1.0
+    },
+    {
+      "feature": "return_1d",
       "importance": 1.0
     }
   ]

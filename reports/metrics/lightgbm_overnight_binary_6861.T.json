@@ -2,49 +2,49 @@
   "metrics": {
     "accuracy": 0.4854838709677419,
     "f1": 0.6536373507057546,
-    "auc": 0.47377081619262856,
+    "auc": 0.47444776554640233,
     "rows": 620
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.5275,
+      "max_p": 0.5276,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.512,
-      "description": "実績ギャップアップ率 51.2%（陰線・下落警戒）"
+      "historical_win_rate": 0.52,
+      "description": "実績ギャップアップ率 52.0%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.5275,
-      "max_p": 0.5343,
+      "min_p": 0.5276,
+      "max_p": 0.5345,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.5,
-      "description": "実績ギャップアップ率 50.0%（弱気）"
+      "historical_win_rate": 0.4839,
+      "description": "実績ギャップアップ率 48.4%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.5343,
-      "max_p": 0.5371,
+      "min_p": 0.5345,
+      "max_p": 0.537,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5,
-      "description": "実績ギャップアップ率 50.0%（中立・推移注視）"
+      "historical_win_rate": 0.4919,
+      "description": "実績ギャップアップ率 49.2%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5371,
-      "max_p": 0.5373,
+      "min_p": 0.537,
+      "max_p": 0.5375,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5161,
-      "description": "実績ギャップアップ率 51.6%（堅調）"
+      "historical_win_rate": 0.5242,
+      "description": "実績ギャップアップ率 52.4%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5373,
+      "min_p": 0.5375,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
@@ -163,11 +163,11 @@
       "importance": 1.0
     },
     {
-      "feature": "volume_surge_5d",
+      "feature": "vol_adjusted_momentum_5d",
       "importance": 1.0
     },
     {
-      "feature": "rsi_14",
+      "feature": "volume_surge_5d",
       "importance": 1.0
     }
   ]

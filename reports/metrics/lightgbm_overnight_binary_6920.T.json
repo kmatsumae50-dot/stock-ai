@@ -2,54 +2,54 @@
   "metrics": {
     "accuracy": 0.5170731707317073,
     "f1": 0.6590126291618829,
-    "auc": 0.515359539585457,
+    "auc": 0.5126891969346382,
     "rows": 615
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.5032,
+      "max_p": 0.5023,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.4553,
-      "description": "実績ギャップアップ率 45.5%（陰線・下落警戒）"
+      "historical_win_rate": 0.4634,
+      "description": "実績ギャップアップ率 46.3%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.5032,
-      "max_p": 0.5061,
+      "min_p": 0.5023,
+      "max_p": 0.5056,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.5366,
-      "description": "実績ギャップアップ率 53.7%（弱気）"
+      "historical_win_rate": 0.5691,
+      "description": "実績ギャップアップ率 56.9%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.5061,
-      "max_p": 0.5089,
+      "min_p": 0.5056,
+      "max_p": 0.51,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5691,
-      "description": "実績ギャップアップ率 56.9%（中立・推移注視）"
+      "historical_win_rate": 0.4959,
+      "description": "実績ギャップアップ率 49.6%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5089,
-      "max_p": 0.5148,
+      "min_p": 0.51,
+      "max_p": 0.5146,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.4715,
-      "description": "実績ギャップアップ率 47.2%（堅調）"
+      "historical_win_rate": 0.5203,
+      "description": "実績ギャップアップ率 52.0%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5148,
+      "min_p": 0.5146,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.5203,
-      "description": "実績ギャップアップ率 52.0%（最高勝率群）"
+      "historical_win_rate": 0.5122,
+      "description": "実績ギャップアップ率 51.2%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -135,11 +135,11 @@
       "importance": 4.0
     },
     {
-      "feature": "n225_return_1d",
+      "feature": "usdjpy_return_1d",
       "importance": 3.0
     },
     {
-      "feature": "usdjpy_return_1d",
+      "feature": "tesla_return_1d",
       "importance": 3.0
     },
     {
