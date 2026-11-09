@@ -1,55 +1,55 @@
 {
   "metrics": {
-    "accuracy": 0.5080645161290323,
-    "f1": 0.5895020188425303,
-    "auc": 0.4980208333333333,
+    "accuracy": 0.5161290322580645,
+    "f1": 0.5934959349593496,
+    "auc": 0.516934148449786,
     "rows": 620
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.495,
+      "max_p": 0.4957,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.56,
-      "description": "実績ギャップアップ率 56.0%（陰線・下落警戒）"
+      "historical_win_rate": 0.592,
+      "description": "実績ギャップアップ率 59.2%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.495,
-      "max_p": 0.5018,
+      "min_p": 0.4957,
+      "max_p": 0.5017,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.4839,
-      "description": "実績ギャップアップ率 48.4%（弱気）"
+      "historical_win_rate": 0.4355,
+      "description": "実績ギャップアップ率 43.5%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.5018,
-      "max_p": 0.5025,
+      "min_p": 0.5017,
+      "max_p": 0.5023,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.4919,
-      "description": "実績ギャップアップ率 49.2%（中立・推移注視）"
+      "historical_win_rate": 0.5,
+      "description": "実績ギャップアップ率 50.0%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5025,
-      "max_p": 0.5045,
+      "min_p": 0.5023,
+      "max_p": 0.5043,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.4597,
-      "description": "実績ギャップアップ率 46.0%（堅調）"
+      "historical_win_rate": 0.4435,
+      "description": "実績ギャップアップ率 44.4%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5045,
+      "min_p": 0.5043,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.5081,
-      "description": "実績ギャップアップ率 50.8%（最高勝率群）"
+      "historical_win_rate": 0.5403,
+      "description": "実績ギャップアップ率 54.0%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -132,18 +132,18 @@
   "top_features": [
     {
       "feature": "afml_fracdiff_close_d04",
-      "importance": 5.0
+      "importance": 4.0
     },
     {
       "feature": "volume_change_1d",
       "importance": 2.0
     },
     {
-      "feature": "macd_hist",
+      "feature": "macro_nvda_relative_return",
       "importance": 2.0
     },
     {
-      "feature": "macro_nvda_relative_return",
+      "feature": "macro_tnx_rate_shock",
       "importance": 2.0
     },
     {

@@ -1,50 +1,50 @@
 {
   "metrics": {
-    "accuracy": 0.4596774193548387,
+    "accuracy": 0.45806451612903226,
     "f1": 0.0,
-    "auc": 0.48874050798638385,
+    "auc": 0.5017343645204562,
     "rows": 620
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.475,
+      "max_p": 0.4752,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.56,
-      "description": "実績ギャップアップ率 56.0%（陰線・下落警戒）"
+      "historical_win_rate": 0.544,
+      "description": "実績ギャップアップ率 54.4%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.475,
-      "max_p": 0.4793,
+      "min_p": 0.4752,
+      "max_p": 0.4797,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.4758,
-      "description": "実績ギャップアップ率 47.6%（弱気）"
+      "historical_win_rate": 0.4677,
+      "description": "実績ギャップアップ率 46.8%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4793,
-      "max_p": 0.4836,
+      "min_p": 0.4797,
+      "max_p": 0.4835,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5726,
-      "description": "実績ギャップアップ率 57.3%（中立・推移注視）"
+      "historical_win_rate": 0.5645,
+      "description": "実績ギャップアップ率 56.5%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.4836,
-      "max_p": 0.4871,
+      "min_p": 0.4835,
+      "max_p": 0.487,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5161,
-      "description": "実績ギャップアップ率 51.6%（堅調）"
+      "historical_win_rate": 0.5403,
+      "description": "実績ギャップアップ率 54.0%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.4872,
+      "min_p": 0.487,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
@@ -131,15 +131,15 @@
   ],
   "top_features": [
     {
-      "feature": "vol_adjusted_momentum_5d",
+      "feature": "volume_change_1d",
+      "importance": 4.0
+    },
+    {
+      "feature": "usdjpy_return_1d",
       "importance": 3.0
     },
     {
       "feature": "tesla_return_1d",
-      "importance": 3.0
-    },
-    {
-      "feature": "vix_return_1d",
       "importance": 3.0
     },
     {
@@ -163,7 +163,7 @@
       "importance": 2.0
     },
     {
-      "feature": "volume_change_1d",
+      "feature": "vol_adjusted_momentum_5d",
       "importance": 2.0
     },
     {

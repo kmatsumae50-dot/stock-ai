@@ -2,31 +2,31 @@
   "metrics": {
     "accuracy": 0.4306451612903226,
     "f1": 0.0,
-    "auc": 0.5278140284983713,
+    "auc": 0.5335540206469958,
     "rows": 620
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4603,
+      "max_p": 0.4605,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.4,
-      "description": "実績ギャップアップ率 40.0%（陰線・下落警戒）"
+      "historical_win_rate": 0.384,
+      "description": "実績ギャップアップ率 38.4%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4603,
-      "max_p": 0.465,
+      "min_p": 0.4605,
+      "max_p": 0.4648,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.4516,
-      "description": "実績ギャップアップ率 45.2%（弱気）"
+      "historical_win_rate": 0.4435,
+      "description": "実績ギャップアップ率 44.4%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.465,
+      "min_p": 0.4648,
       "max_p": 0.4652,
       "label": "中立帯",
       "direction": "neutral",
@@ -36,20 +36,20 @@
     {
       "quantile": "Q4",
       "min_p": 0.4652,
-      "max_p": 0.47,
+      "max_p": 0.4707,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5726,
-      "description": "実績ギャップアップ率 57.3%（堅調）"
+      "historical_win_rate": 0.5887,
+      "description": "実績ギャップアップ率 58.9%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.47,
+      "min_p": 0.4707,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.5806,
-      "description": "実績ギャップアップ率 58.1%（最高勝率群）"
+      "historical_win_rate": 0.5887,
+      "description": "実績ギャップアップ率 58.9%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -131,12 +131,12 @@
   ],
   "top_features": [
     {
-      "feature": "afml_fracdiff_close_d04",
+      "feature": "volume_change_1d",
       "importance": 3.0
     },
     {
-      "feature": "volume_change_1d",
-      "importance": 2.0
+      "feature": "afml_fracdiff_vol_d04",
+      "importance": 3.0
     },
     {
       "feature": "sector_volatility",
@@ -155,10 +155,6 @@
       "importance": 2.0
     },
     {
-      "feature": "afml_fracdiff_vol_d04",
-      "importance": 2.0
-    },
-    {
       "feature": "chan_ou_halflife_20d",
       "importance": 2.0
     },
@@ -168,6 +164,10 @@
     },
     {
       "feature": "close_vs_ma_5",
+      "importance": 1.0
+    },
+    {
+      "feature": "close_vs_ma_75",
       "importance": 1.0
     }
   ]
