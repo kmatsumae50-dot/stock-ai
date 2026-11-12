@@ -1,55 +1,55 @@
 {
   "metrics": {
-    "accuracy": 0.4852941176470588,
-    "f1": 0.44833625218914186,
-    "auc": 0.47999826590221856,
+    "accuracy": 0.5032679738562091,
+    "f1": 0.5502958579881657,
+    "auc": 0.49019437695244705,
     "rows": 612
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4981,
+      "max_p": 0.4983,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.5041,
-      "description": "実績ギャップアップ率 50.4%（陰線・下落警戒）"
+      "historical_win_rate": 0.4878,
+      "description": "実績ギャップアップ率 48.8%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4981,
-      "max_p": 0.4986,
+      "min_p": 0.4983,
+      "max_p": 0.4985,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.541,
-      "description": "実績ギャップアップ率 54.1%（弱気）"
+      "historical_win_rate": 0.5082,
+      "description": "実績ギャップアップ率 50.8%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4986,
-      "max_p": 0.4992,
+      "min_p": 0.4985,
+      "max_p": 0.5002,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5656,
-      "description": "実績ギャップアップ率 56.6%（中立・推移注視）"
+      "historical_win_rate": 0.6148,
+      "description": "実績ギャップアップ率 61.5%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.4995,
-      "max_p": 0.5067,
+      "min_p": 0.5002,
+      "max_p": 0.5065,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5,
-      "description": "実績ギャップアップ率 50.0%（堅調）"
+      "historical_win_rate": 0.4672,
+      "description": "実績ギャップアップ率 46.7%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5067,
+      "min_p": 0.5065,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.4634,
-      "description": "実績ギャップアップ率 46.3%（最高勝率群）"
+      "historical_win_rate": 0.4878,
+      "description": "実績ギャップアップ率 48.8%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -135,11 +135,11 @@
       "importance": 3.0
     },
     {
-      "feature": "macro_sox_relative_return",
-      "importance": 3.0
+      "feature": "volatility_20",
+      "importance": 2.0
     },
     {
-      "feature": "volatility_20",
+      "feature": "usdjpy_return_1d",
       "importance": 2.0
     },
     {
@@ -147,7 +147,7 @@
       "importance": 2.0
     },
     {
-      "feature": "ml4at_alpha_44",
+      "feature": "macro_sox_relative_return",
       "importance": 2.0
     },
     {

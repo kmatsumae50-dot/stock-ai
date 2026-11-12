@@ -1,50 +1,50 @@
 {
   "metrics": {
-    "accuracy": 0.47665056360708535,
-    "f1": 0.22802850356294538,
-    "auc": 0.48735582109368514,
+    "accuracy": 0.4782608695652174,
+    "f1": 0.22857142857142856,
+    "auc": 0.48704929256047463,
     "rows": 621
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4927,
+      "max_p": 0.4925,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.52,
-      "description": "実績ギャップアップ率 52.0%（陰線・下落警戒）"
+      "historical_win_rate": 0.512,
+      "description": "実績ギャップアップ率 51.2%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4927,
-      "max_p": 0.495,
+      "min_p": 0.4925,
+      "max_p": 0.4948,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.5403,
-      "description": "実績ギャップアップ率 54.0%（弱気）"
+      "historical_win_rate": 0.5323,
+      "description": "実績ギャップアップ率 53.2%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.495,
-      "max_p": 0.4987,
+      "min_p": 0.4948,
+      "max_p": 0.4993,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5726,
-      "description": "実績ギャップアップ率 57.3%（中立・推移注視）"
+      "historical_win_rate": 0.5887,
+      "description": "実績ギャップアップ率 58.9%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.4987,
-      "max_p": 0.5013,
+      "min_p": 0.4993,
+      "max_p": 0.5011,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.4435,
-      "description": "実績ギャップアップ率 44.4%（堅調）"
+      "historical_win_rate": 0.4516,
+      "description": "実績ギャップアップ率 45.2%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5013,
+      "min_p": 0.5011,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
@@ -135,10 +135,6 @@
       "importance": 3.0
     },
     {
-      "feature": "volatility_20",
-      "importance": 2.0
-    },
-    {
       "feature": "usdjpy_close_vs_ma_25",
       "importance": 2.0
     },
@@ -148,6 +144,10 @@
     },
     {
       "feature": "sox_return_1d",
+      "importance": 2.0
+    },
+    {
+      "feature": "afml_fracdiff_zscore_20",
       "importance": 2.0
     },
     {
