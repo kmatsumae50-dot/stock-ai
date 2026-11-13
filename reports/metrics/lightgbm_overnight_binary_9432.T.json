@@ -2,7 +2,7 @@
   "metrics": {
     "accuracy": 0.5120772946859904,
     "f1": 0.0,
-    "auc": 0.4944319903688482,
+    "auc": 0.496507669634888,
     "rows": 621
   },
   "quantile_cutoffs": [
@@ -48,8 +48,8 @@
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.5484,
-      "description": "実績ギャップアップ率 54.8%（最高勝率群）"
+      "historical_win_rate": 0.544,
+      "description": "実績ギャップアップ率 54.4%（最高勝率群）"
     }
   ],
   "feature_columns": [

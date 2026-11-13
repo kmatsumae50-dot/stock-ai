@@ -2,7 +2,7 @@
   "metrics": {
     "accuracy": 0.5619967793880838,
     "f1": 0.7195876288659794,
-    "auc": 0.50564111747851,
+    "auc": 0.505383027136356,
     "rows": 621
   },
   "quantile_cutoffs": [
@@ -30,8 +30,8 @@
       "max_p": 0.5165,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.6341,
-      "description": "実績ギャップアップ率 63.4%（中立・推移注視）"
+      "historical_win_rate": 0.629,
+      "description": "実績ギャップアップ率 62.9%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
