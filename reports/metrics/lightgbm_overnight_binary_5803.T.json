@@ -1,24 +1,24 @@
 {
   "metrics": {
-    "accuracy": 0.4619124797406807,
-    "f1": 0.19806763285024154,
-    "auc": 0.49403395809426665,
+    "accuracy": 0.4473257698541329,
+    "f1": 0.18225419664268586,
+    "auc": 0.48452972927026217,
     "rows": 617
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4818,
+      "max_p": 0.4822,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.512,
-      "description": "実績ギャップアップ率 51.2%（陰線・下落警戒）"
+      "historical_win_rate": 0.488,
+      "description": "実績ギャップアップ率 48.8%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.482,
-      "max_p": 0.4853,
+      "min_p": 0.4822,
+      "max_p": 0.4854,
       "label": "弱気帯",
       "direction": "down",
       "historical_win_rate": 0.5323,
@@ -26,30 +26,30 @@
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4857,
-      "max_p": 0.4891,
+      "min_p": 0.4855,
+      "max_p": 0.4893,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5242,
-      "description": "実績ギャップアップ率 52.4%（中立・推移注視）"
+      "historical_win_rate": 0.5403,
+      "description": "実績ギャップアップ率 54.0%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.4891,
-      "max_p": 0.4935,
+      "min_p": 0.4893,
+      "max_p": 0.4932,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5161,
-      "description": "実績ギャップアップ率 51.6%（堅調）"
+      "historical_win_rate": 0.5242,
+      "description": "実績ギャップアップ率 52.4%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.4936,
+      "min_p": 0.4932,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.528,
-      "description": "実績ギャップアップ率 52.8%（最高勝率群）"
+      "historical_win_rate": 0.52,
+      "description": "実績ギャップアップ率 52.0%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -135,10 +135,6 @@
       "importance": 4.0
     },
     {
-      "feature": "ml4at_alpha_06",
-      "importance": 4.0
-    },
-    {
       "feature": "chan_kalman_slope",
       "importance": 4.0
     },
@@ -147,11 +143,11 @@
       "importance": 3.0
     },
     {
-      "feature": "macro_sox_relative_return",
+      "feature": "afml_fracdiff_vol_d04",
       "importance": 3.0
     },
     {
-      "feature": "afml_fracdiff_vol_d04",
+      "feature": "ml4at_alpha_06",
       "importance": 3.0
     },
     {
@@ -160,6 +156,10 @@
     },
     {
       "feature": "close_vs_ma_75",
+      "importance": 2.0
+    },
+    {
+      "feature": "vol_adjusted_momentum_1d",
       "importance": 2.0
     },
     {

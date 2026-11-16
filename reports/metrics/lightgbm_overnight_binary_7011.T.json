@@ -1,33 +1,33 @@
 {
   "metrics": {
-    "accuracy": 0.5458937198067633,
-    "f1": 0.5727272727272728,
-    "auc": 0.5266181399245916,
+    "accuracy": 0.534621578099839,
+    "f1": 0.5587786259541985,
+    "auc": 0.518924010885493,
     "rows": 621
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4912,
+      "max_p": 0.4913,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.576,
-      "description": "実績ギャップアップ率 57.6%（陰線・下落警戒）"
+      "historical_win_rate": 0.552,
+      "description": "実績ギャップアップ率 55.2%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4914,
-      "max_p": 0.4967,
+      "min_p": 0.4913,
+      "max_p": 0.4969,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.5323,
-      "description": "実績ギャップアップ率 53.2%（弱気）"
+      "historical_win_rate": 0.5403,
+      "description": "実績ギャップアップ率 54.0%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4967,
-      "max_p": 0.5024,
+      "min_p": 0.4969,
+      "max_p": 0.5022,
       "label": "中立帯",
       "direction": "neutral",
       "historical_win_rate": 0.5161,
@@ -35,21 +35,21 @@
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5024,
-      "max_p": 0.5075,
+      "min_p": 0.5022,
+      "max_p": 0.5066,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5161,
-      "description": "実績ギャップアップ率 51.6%（堅調）"
+      "historical_win_rate": 0.5323,
+      "description": "実績ギャップアップ率 53.2%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5075,
+      "min_p": 0.5067,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.552,
-      "description": "実績ギャップアップ率 55.2%（最高勝率群）"
+      "historical_win_rate": 0.56,
+      "description": "実績ギャップアップ率 56.0%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -159,15 +159,15 @@
       "importance": 4.0
     },
     {
+      "feature": "macro_tnx_rate_shock",
+      "importance": 4.0
+    },
+    {
       "feature": "macd_signal",
       "importance": 3.0
     },
     {
       "feature": "sector_relative_return",
-      "importance": 3.0
-    },
-    {
-      "feature": "macro_nvda_relative_return",
       "importance": 3.0
     }
   ]

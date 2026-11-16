@@ -1,15 +1,15 @@
 {
   "metrics": {
-    "accuracy": 0.5152979066022544,
-    "f1": 0.4537205081669691,
-    "auc": 0.544998952660243,
+    "accuracy": 0.5169082125603864,
+    "f1": 0.45054945054945056,
+    "auc": 0.5499005027230834,
     "rows": 621
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4856,
+      "max_p": 0.4852,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
       "historical_win_rate": 0.488,
@@ -17,8 +17,8 @@
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4857,
-      "max_p": 0.4931,
+      "min_p": 0.4853,
+      "max_p": 0.4928,
       "label": "弱気帯",
       "direction": "down",
       "historical_win_rate": 0.5242,
@@ -26,8 +26,8 @@
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4931,
-      "max_p": 0.4988,
+      "min_p": 0.4928,
+      "max_p": 0.4989,
       "label": "中立帯",
       "direction": "neutral",
       "historical_win_rate": 0.5161,
@@ -35,21 +35,21 @@
     },
     {
       "quantile": "Q4",
-      "min_p": 0.499,
-      "max_p": 0.5055,
+      "min_p": 0.4992,
+      "max_p": 0.5058,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5161,
-      "description": "実績ギャップアップ率 51.6%（堅調）"
+      "historical_win_rate": 0.5242,
+      "description": "実績ギャップアップ率 52.4%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5055,
+      "min_p": 0.5058,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.56,
-      "description": "実績ギャップアップ率 56.0%（最高勝率群）"
+      "historical_win_rate": 0.544,
+      "description": "実績ギャップアップ率 54.4%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -135,19 +135,15 @@
       "importance": 7.0
     },
     {
+      "feature": "nvda_return_1d",
+      "importance": 6.0
+    },
+    {
       "feature": "macd_hist",
       "importance": 5.0
     },
     {
       "feature": "usdjpy_close_vs_ma_25",
-      "importance": 5.0
-    },
-    {
-      "feature": "nvda_return_1d",
-      "importance": 5.0
-    },
-    {
-      "feature": "afml_fracdiff_vol_d04",
       "importance": 5.0
     },
     {
@@ -167,7 +163,11 @@
       "importance": 4.0
     },
     {
-      "feature": "ml4at_alpha_54",
+      "feature": "afml_fracdiff_vol_d04",
+      "importance": 4.0
+    },
+    {
+      "feature": "afml_fracdiff_zscore_20",
       "importance": 4.0
     }
   ]

@@ -2,32 +2,32 @@
   "metrics": {
     "accuracy": 0.4863123993558776,
     "f1": 0.6543878656554712,
-    "auc": 0.4856183437480538,
+    "auc": 0.48747119516701615,
     "rows": 621
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.5274,
+      "max_p": 0.5272,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.488,
-      "description": "実績ギャップアップ率 48.8%（陰線・下落警戒）"
+      "historical_win_rate": 0.48,
+      "description": "実績ギャップアップ率 48.0%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.5274,
-      "max_p": 0.5328,
+      "min_p": 0.5272,
+      "max_p": 0.5339,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.4597,
-      "description": "実績ギャップアップ率 46.0%（弱気）"
+      "historical_win_rate": 0.4677,
+      "description": "実績ギャップアップ率 46.8%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.5328,
-      "max_p": 0.5371,
+      "min_p": 0.5339,
+      "max_p": 0.5369,
       "label": "中立帯",
       "direction": "neutral",
       "historical_win_rate": 0.5161,
@@ -35,16 +35,16 @@
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5371,
-      "max_p": 0.5384,
+      "min_p": 0.5369,
+      "max_p": 0.538,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5242,
-      "description": "実績ギャップアップ率 52.4%（堅調）"
+      "historical_win_rate": 0.5323,
+      "description": "実績ギャップアップ率 53.2%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5384,
+      "min_p": 0.538,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
@@ -143,10 +143,6 @@
       "importance": 2.0
     },
     {
-      "feature": "nvda_return_1d",
-      "importance": 2.0
-    },
-    {
       "feature": "afml_fracdiff_vol_d04",
       "importance": 2.0
     },
@@ -168,6 +164,10 @@
     },
     {
       "feature": "close_vs_ma_75",
+      "importance": 1.0
+    },
+    {
+      "feature": "volume_surge_5d",
       "importance": 1.0
     }
   ]
