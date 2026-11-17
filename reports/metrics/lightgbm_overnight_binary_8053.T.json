@@ -1,15 +1,15 @@
 {
   "metrics": {
-    "accuracy": 0.5619967793880838,
-    "f1": 0.7195876288659794,
-    "auc": 0.5051986768919603,
+    "accuracy": 0.5603864734299517,
+    "f1": 0.718266253869969,
+    "auc": 0.5038945728600901,
     "rows": 621
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.5112,
+      "max_p": 0.511,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
       "historical_win_rate": 0.5645,
@@ -17,8 +17,8 @@
     },
     {
       "quantile": "Q2",
-      "min_p": 0.5112,
-      "max_p": 0.5114,
+      "min_p": 0.511,
+      "max_p": 0.5112,
       "label": "弱気帯",
       "direction": "down",
       "historical_win_rate": 0.4839,
@@ -26,8 +26,8 @@
     },
     {
       "quantile": "Q3",
-      "min_p": 0.5114,
-      "max_p": 0.5163,
+      "min_p": 0.5112,
+      "max_p": 0.5161,
       "label": "中立帯",
       "direction": "neutral",
       "historical_win_rate": 0.6371,
@@ -35,16 +35,16 @@
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5163,
+      "min_p": 0.5161,
       "max_p": 0.5202,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5565,
-      "description": "実績ギャップアップ率 55.6%（堅調）"
+      "historical_win_rate": 0.5645,
+      "description": "実績ギャップアップ率 56.5%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5212,
+      "min_p": 0.5202,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
@@ -131,7 +131,7 @@
   ],
   "top_features": [
     {
-      "feature": "volume_change_1d",
+      "feature": "high_low_range",
       "importance": 2.0
     },
     {
@@ -151,7 +151,7 @@
       "importance": 2.0
     },
     {
-      "feature": "chan_variance_ratio_10d",
+      "feature": "chan_ou_halflife_20d",
       "importance": 2.0
     },
     {
@@ -159,15 +159,15 @@
       "importance": 1.0
     },
     {
-      "feature": "high_low_range",
-      "importance": 1.0
-    },
-    {
       "feature": "close_vs_ma_75",
       "importance": 1.0
     },
     {
-      "feature": "vol_adjusted_momentum_5d",
+      "feature": "volume_change_1d",
+      "importance": 1.0
+    },
+    {
+      "feature": "volume_surge_5d",
       "importance": 1.0
     }
   ]

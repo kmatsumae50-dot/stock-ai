@@ -1,55 +1,55 @@
 {
   "metrics": {
-    "accuracy": 0.500805152979066,
-    "f1": 0.6420323325635104,
-    "auc": 0.5133274538285952,
+    "accuracy": 0.5024154589371981,
+    "f1": 0.6308243727598566,
+    "auc": 0.5121202058774698,
     "rows": 621
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.5033,
+      "max_p": 0.5042,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.512,
-      "description": "実績ギャップアップ率 51.2%（陰線・下落警戒）"
+      "historical_win_rate": 0.496,
+      "description": "実績ギャップアップ率 49.6%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.5033,
-      "max_p": 0.5075,
+      "min_p": 0.5042,
+      "max_p": 0.5074,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.6048,
-      "description": "実績ギャップアップ率 60.5%（弱気）"
+      "historical_win_rate": 0.6452,
+      "description": "実績ギャップアップ率 64.5%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.5075,
-      "max_p": 0.5085,
+      "min_p": 0.5074,
+      "max_p": 0.5083,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.4919,
-      "description": "実績ギャップアップ率 49.2%（中立・推移注視）"
+      "historical_win_rate": 0.4758,
+      "description": "実績ギャップアップ率 47.6%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5085,
-      "max_p": 0.5122,
+      "min_p": 0.5083,
+      "max_p": 0.512,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5403,
-      "description": "実績ギャップアップ率 54.0%（堅調）"
+      "historical_win_rate": 0.5565,
+      "description": "実績ギャップアップ率 55.6%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5122,
+      "min_p": 0.512,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.536,
-      "description": "実績ギャップアップ率 53.6%（最高勝率群）"
+      "historical_win_rate": 0.52,
+      "description": "実績ギャップアップ率 52.0%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -139,6 +139,10 @@
       "importance": 2.0
     },
     {
+      "feature": "volume_surge_5d",
+      "importance": 2.0
+    },
+    {
       "feature": "intraday_range_ratio",
       "importance": 2.0
     },
@@ -152,10 +156,6 @@
     },
     {
       "feature": "return_1d",
-      "importance": 1.0
-    },
-    {
-      "feature": "volume_surge_5d",
       "importance": 1.0
     },
     {
