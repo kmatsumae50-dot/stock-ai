@@ -1,15 +1,15 @@
 {
   "metrics": {
-    "accuracy": 0.5192926045016077,
-    "f1": 0.41487279843444225,
-    "auc": 0.4991107618496153,
+    "accuracy": 0.5160771704180064,
+    "f1": 0.4155339805825243,
+    "auc": 0.4973788154520638,
     "rows": 622
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4934,
+      "max_p": 0.4935,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
       "historical_win_rate": 0.504,
@@ -17,34 +17,34 @@
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4934,
-      "max_p": 0.4974,
+      "min_p": 0.4935,
+      "max_p": 0.4976,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.5161,
-      "description": "実績ギャップアップ率 51.6%（弱気）"
+      "historical_win_rate": 0.4758,
+      "description": "実績ギャップアップ率 47.6%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4974,
-      "max_p": 0.5007,
+      "min_p": 0.4976,
+      "max_p": 0.4997,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5161,
-      "description": "実績ギャップアップ率 51.6%（中立・推移注視）"
+      "historical_win_rate": 0.5323,
+      "description": "実績ギャップアップ率 53.2%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5007,
-      "max_p": 0.5018,
+      "min_p": 0.5009,
+      "max_p": 0.502,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.4839,
-      "description": "実績ギャップアップ率 48.4%（堅調）"
+      "historical_win_rate": 0.5,
+      "description": "実績ギャップアップ率 50.0%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5018,
+      "min_p": 0.502,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
@@ -155,19 +155,19 @@
       "importance": 2.0
     },
     {
-      "feature": "intraday_return",
-      "importance": 1.0
-    },
-    {
-      "feature": "high_low_range",
-      "importance": 1.0
-    },
-    {
       "feature": "rsi_14",
       "importance": 1.0
     },
     {
       "feature": "sector_relative_return",
+      "importance": 1.0
+    },
+    {
+      "feature": "sector_trend_score",
+      "importance": 1.0
+    },
+    {
+      "feature": "tesla_trend_direction",
       "importance": 1.0
     }
   ]
