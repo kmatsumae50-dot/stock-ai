@@ -1,33 +1,33 @@
 {
   "metrics": {
-    "accuracy": 0.5,
-    "f1": 0.6146220570012392,
-    "auc": 0.48983664185277087,
+    "accuracy": 0.4919614147909968,
+    "f1": 0.6238095238095238,
+    "auc": 0.47719189412737795,
     "rows": 622
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4999,
+      "max_p": 0.5032,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.568,
-      "description": "実績ギャップアップ率 56.8%（陰線・下落警戒）"
+      "historical_win_rate": 0.512,
+      "description": "実績ギャップアップ率 51.2%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4999,
+      "min_p": 0.5032,
       "max_p": 0.5067,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.4677,
-      "description": "実績ギャップアップ率 46.8%（弱気）"
+      "historical_win_rate": 0.5161,
+      "description": "実績ギャップアップ率 51.6%（弱気）"
     },
     {
       "quantile": "Q3",
       "min_p": 0.5067,
-      "max_p": 0.5079,
+      "max_p": 0.5105,
       "label": "中立帯",
       "direction": "neutral",
       "historical_win_rate": 0.5081,
@@ -35,8 +35,8 @@
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5079,
-      "max_p": 0.5108,
+      "min_p": 0.5105,
+      "max_p": 0.5109,
       "label": "強気先行帯",
       "direction": "up",
       "historical_win_rate": 0.5565,
@@ -44,7 +44,7 @@
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5108,
+      "min_p": 0.5109,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
@@ -135,6 +135,10 @@
       "importance": 4.0
     },
     {
+      "feature": "n225_return_1d",
+      "importance": 3.0
+    },
+    {
       "feature": "macro_nvda_relative_return",
       "importance": 3.0
     },
@@ -147,10 +151,6 @@
       "importance": 2.0
     },
     {
-      "feature": "n225_return_1d",
-      "importance": 2.0
-    },
-    {
       "feature": "byd_return_1d",
       "importance": 2.0
     },
@@ -159,15 +159,15 @@
       "importance": 2.0
     },
     {
-      "feature": "afml_fracdiff_zscore_20",
-      "importance": 2.0
-    },
-    {
       "feature": "return_1d",
       "importance": 1.0
     },
     {
       "feature": "high_low_range",
+      "importance": 1.0
+    },
+    {
+      "feature": "close_position",
       "importance": 1.0
     }
   ]

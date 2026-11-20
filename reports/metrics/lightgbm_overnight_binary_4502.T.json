@@ -1,55 +1,55 @@
 {
   "metrics": {
-    "accuracy": 0.4790996784565916,
-    "f1": 0.47058823529411764,
-    "auc": 0.49483650662251655,
+    "accuracy": 0.4807073954983923,
+    "f1": 0.46434494195688225,
+    "auc": 0.49528745978046096,
     "rows": 622
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4929,
+      "max_p": 0.4928,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.504,
-      "description": "実績ギャップアップ率 50.4%（陰線・下落警戒）"
+      "historical_win_rate": 0.52,
+      "description": "実績ギャップアップ率 52.0%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
       "min_p": 0.4929,
-      "max_p": 0.4986,
+      "max_p": 0.4982,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.4758,
-      "description": "実績ギャップアップ率 47.6%（弱気）"
+      "historical_win_rate": 0.5242,
+      "description": "実績ギャップアップ率 52.4%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4986,
-      "max_p": 0.5015,
+      "min_p": 0.4982,
+      "max_p": 0.5013,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5726,
-      "description": "実績ギャップアップ率 57.3%（中立・推移注視）"
+      "historical_win_rate": 0.5161,
+      "description": "実績ギャップアップ率 51.6%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5017,
-      "max_p": 0.5075,
+      "min_p": 0.5013,
+      "max_p": 0.5061,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.4677,
-      "description": "実績ギャップアップ率 46.8%（堅調）"
+      "historical_win_rate": 0.4435,
+      "description": "実績ギャップアップ率 44.4%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5075,
+      "min_p": 0.5061,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.496,
-      "description": "実績ギャップアップ率 49.6%（最高勝率群）"
+      "historical_win_rate": 0.52,
+      "description": "実績ギャップアップ率 52.0%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -140,7 +140,7 @@
     },
     {
       "feature": "afml_fracdiff_vol_d04",
-      "importance": 4.0
+      "importance": 5.0
     },
     {
       "feature": "afml_fracdiff_zscore_20",
@@ -155,7 +155,7 @@
       "importance": 3.0
     },
     {
-      "feature": "jump_ratio_20d",
+      "feature": "ml4at_alpha_44",
       "importance": 3.0
     },
     {
@@ -163,11 +163,11 @@
       "importance": 2.0
     },
     {
-      "feature": "intraday_range_ratio",
+      "feature": "macd_hist",
       "importance": 2.0
     },
     {
-      "feature": "sector_relative_strength",
+      "feature": "intraday_range_ratio",
       "importance": 2.0
     }
   ]

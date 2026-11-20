@@ -2,54 +2,54 @@
   "metrics": {
     "accuracy": 0.4482200647249191,
     "f1": 0.0,
-    "auc": 0.5211418952539252,
+    "auc": 0.5108726722212223,
     "rows": 618
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4848,
+      "max_p": 0.4837,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.56,
-      "description": "実績ギャップアップ率 56.0%（陰線・下落警戒）"
+      "historical_win_rate": 0.536,
+      "description": "実績ギャップアップ率 53.6%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4848,
-      "max_p": 0.4852,
+      "min_p": 0.4837,
+      "max_p": 0.4867,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.4758,
-      "description": "実績ギャップアップ率 47.6%（弱気）"
+      "historical_win_rate": 0.5161,
+      "description": "実績ギャップアップ率 51.6%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4852,
-      "max_p": 0.4876,
+      "min_p": 0.4867,
+      "max_p": 0.4881,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5242,
-      "description": "実績ギャップアップ率 52.4%（中立・推移注視）"
+      "historical_win_rate": 0.4435,
+      "description": "実績ギャップアップ率 44.4%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.4876,
-      "max_p": 0.4927,
+      "min_p": 0.4881,
+      "max_p": 0.4938,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5323,
-      "description": "実績ギャップアップ率 53.2%（堅調）"
+      "historical_win_rate": 0.5806,
+      "description": "実績ギャップアップ率 58.1%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.4927,
+      "min_p": 0.4938,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.512,
-      "description": "実績ギャップアップ率 51.2%（最高勝率群）"
+      "historical_win_rate": 0.52,
+      "description": "実績ギャップアップ率 52.0%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -135,11 +135,15 @@
       "importance": 3.0
     },
     {
-      "feature": "ml4at_alpha_06",
+      "feature": "tesla_return_1d",
       "importance": 2.0
     },
     {
-      "feature": "abnormal_volume_z_20d",
+      "feature": "afml_fracdiff_zscore_20",
+      "importance": 2.0
+    },
+    {
+      "feature": "chan_ou_halflife_20d",
       "importance": 2.0
     },
     {
@@ -151,15 +155,11 @@
       "importance": 1.0
     },
     {
-      "feature": "close_position",
+      "feature": "close_vs_ma_75",
       "importance": 1.0
     },
     {
       "feature": "vol_adjusted_momentum_1d",
-      "importance": 1.0
-    },
-    {
-      "feature": "volume_surge_5d",
       "importance": 1.0
     },
     {

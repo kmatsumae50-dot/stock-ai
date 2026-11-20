@@ -1,24 +1,24 @@
 {
   "metrics": {
-    "accuracy": 0.477491961414791,
-    "f1": 0.1514360313315927,
-    "auc": 0.4610384905972821,
+    "accuracy": 0.4790996784565916,
+    "f1": 0.1518324607329843,
+    "auc": 0.46765831953642384,
     "rows": 622
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4902,
+      "max_p": 0.49,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.472,
-      "description": "実績ギャップアップ率 47.2%（陰線・下落警戒）"
+      "historical_win_rate": 0.496,
+      "description": "実績ギャップアップ率 49.6%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4902,
-      "max_p": 0.4926,
+      "min_p": 0.49,
+      "max_p": 0.4924,
       "label": "弱気帯",
       "direction": "down",
       "historical_win_rate": 0.4194,
@@ -26,30 +26,30 @@
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4926,
-      "max_p": 0.4978,
+      "min_p": 0.4924,
+      "max_p": 0.4974,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5323,
-      "description": "実績ギャップアップ率 53.2%（中立・推移注視）"
+      "historical_win_rate": 0.5565,
+      "description": "実績ギャップアップ率 55.6%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.4978,
-      "max_p": 0.4984,
+      "min_p": 0.4974,
+      "max_p": 0.4982,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.6129,
-      "description": "実績ギャップアップ率 61.3%（堅調）"
+      "historical_win_rate": 0.5645,
+      "description": "実績ギャップアップ率 56.5%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.4984,
+      "min_p": 0.4982,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.504,
-      "description": "実績ギャップアップ率 50.4%（最高勝率群）"
+      "historical_win_rate": 0.512,
+      "description": "実績ギャップアップ率 51.2%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -139,15 +139,15 @@
       "importance": 2.0
     },
     {
-      "feature": "rsi_14",
-      "importance": 2.0
-    },
-    {
       "feature": "usdjpy_return_1d",
       "importance": 2.0
     },
     {
       "feature": "usdjpy_close_vs_ma_25",
+      "importance": 2.0
+    },
+    {
+      "feature": "tesla_return_1d",
       "importance": 2.0
     },
     {
@@ -163,11 +163,11 @@
       "importance": 1.0
     },
     {
-      "feature": "sector_relative_strength",
+      "feature": "rsi_14",
       "importance": 1.0
     },
     {
-      "feature": "sector_mean_return",
+      "feature": "sector_relative_strength",
       "importance": 1.0
     }
   ]
