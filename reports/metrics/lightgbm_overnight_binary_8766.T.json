@@ -1,55 +1,55 @@
 {
   "metrics": {
-    "accuracy": 0.5056360708534622,
-    "f1": 0.42401500938086306,
-    "auc": 0.5390615204580599,
+    "accuracy": 0.499194847020934,
+    "f1": 0.3717171717171717,
+    "auc": 0.5371024365779246,
     "rows": 621
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4926,
+      "max_p": 0.4924,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.56,
-      "description": "実績ギャップアップ率 56.0%（陰線・下落警戒）"
+      "historical_win_rate": 0.544,
+      "description": "実績ギャップアップ率 54.4%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4926,
-      "max_p": 0.4966,
+      "min_p": 0.4924,
+      "max_p": 0.4964,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.5806,
-      "description": "実績ギャップアップ率 58.1%（弱気）"
+      "historical_win_rate": 0.5726,
+      "description": "実績ギャップアップ率 57.3%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4966,
-      "max_p": 0.4999,
+      "min_p": 0.4964,
+      "max_p": 0.4995,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.4839,
-      "description": "実績ギャップアップ率 48.4%（中立・推移注視）"
+      "historical_win_rate": 0.5403,
+      "description": "実績ギャップアップ率 54.0%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.4999,
-      "max_p": 0.5002,
+      "min_p": 0.4995,
+      "max_p": 0.4997,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5403,
-      "description": "実績ギャップアップ率 54.0%（堅調）"
+      "historical_win_rate": 0.4677,
+      "description": "実績ギャップアップ率 46.8%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5002,
+      "min_p": 0.4997,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.48,
-      "description": "実績ギャップアップ率 48.0%（最高勝率群）"
+      "historical_win_rate": 0.528,
+      "description": "実績ギャップアップ率 52.8%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -143,11 +143,11 @@
       "importance": 2.0
     },
     {
-      "feature": "tnx_return_1d",
+      "feature": "vix_stress_score",
       "importance": 2.0
     },
     {
-      "feature": "chan_hurst_20d",
+      "feature": "ml4at_alpha_101_sma5",
       "importance": 2.0
     },
     {
