@@ -30,8 +30,8 @@
       "max_p": 0.5256,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5323,
-      "description": "実績ギャップアップ率 53.2%（中立・推移注視）"
+      "historical_win_rate": 0.528,
+      "description": "実績ギャップアップ率 52.8%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
