@@ -1,50 +1,50 @@
 {
   "metrics": {
-    "accuracy": 0.5171288743882545,
-    "f1": 0.5432098765432098,
-    "auc": 0.4980656177055416,
+    "accuracy": 0.531810766721044,
+    "f1": 0.6248366013071895,
+    "auc": 0.5089424656349961,
     "rows": 613
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4981,
+      "max_p": 0.4991,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.5854,
-      "description": "実績ギャップアップ率 58.5%（陰線・下落警戒）"
+      "historical_win_rate": 0.561,
+      "description": "実績ギャップアップ率 56.1%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4981,
-      "max_p": 0.4993,
+      "min_p": 0.4991,
+      "max_p": 0.5015,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.4959,
-      "description": "実績ギャップアップ率 49.6%（弱気）"
+      "historical_win_rate": 0.5854,
+      "description": "実績ギャップアップ率 58.5%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4993,
-      "max_p": 0.5026,
+      "min_p": 0.5015,
+      "max_p": 0.5027,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.5574,
-      "description": "実績ギャップアップ率 55.7%（中立・推移注視）"
+      "historical_win_rate": 0.4754,
+      "description": "実績ギャップアップ率 47.5%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.5026,
-      "max_p": 0.5071,
+      "min_p": 0.5027,
+      "max_p": 0.507,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.4472,
-      "description": "実績ギャップアップ率 44.7%（堅調）"
+      "historical_win_rate": 0.4634,
+      "description": "実績ギャップアップ率 46.3%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5071,
+      "min_p": 0.507,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
@@ -131,12 +131,12 @@
   ],
   "top_features": [
     {
-      "feature": "macd_hist",
+      "feature": "insider_dumping_alert_score",
       "importance": 3.0
     },
     {
-      "feature": "insider_dumping_alert_score",
-      "importance": 3.0
+      "feature": "macd_hist",
+      "importance": 2.0
     },
     {
       "feature": "volatility_20",

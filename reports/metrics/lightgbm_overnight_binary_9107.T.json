@@ -1,50 +1,50 @@
 {
   "metrics": {
-    "accuracy": 0.43569131832797425,
+    "accuracy": 0.4340836012861736,
     "f1": 0.0,
-    "auc": 0.4892873287707236,
+    "auc": 0.4897885101010101,
     "rows": 622
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.461,
+      "max_p": 0.4604,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.432,
-      "description": "実績ギャップアップ率 43.2%（陰線・下落警戒）"
+      "historical_win_rate": 0.416,
+      "description": "実績ギャップアップ率 41.6%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.461,
-      "max_p": 0.4641,
+      "min_p": 0.4604,
+      "max_p": 0.4643,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.4677,
-      "description": "実績ギャップアップ率 46.8%（弱気）"
+      "historical_win_rate": 0.4435,
+      "description": "実績ギャップアップ率 44.4%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4641,
-      "max_p": 0.469,
+      "min_p": 0.4643,
+      "max_p": 0.4688,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.512,
-      "description": "実績ギャップアップ率 51.2%（中立・推移注視）"
+      "historical_win_rate": 0.536,
+      "description": "実績ギャップアップ率 53.6%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.469,
-      "max_p": 0.4749,
+      "min_p": 0.4689,
+      "max_p": 0.475,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5403,
-      "description": "実績ギャップアップ率 54.0%（堅調）"
+      "historical_win_rate": 0.5484,
+      "description": "実績ギャップアップ率 54.8%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.4749,
+      "min_p": 0.475,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
@@ -135,8 +135,12 @@
       "importance": 6.0
     },
     {
+      "feature": "afml_fracdiff_vol_d04",
+      "importance": 4.0
+    },
+    {
       "feature": "chan_ou_halflife_20d",
-      "importance": 5.0
+      "importance": 4.0
     },
     {
       "feature": "volume_change_1d",
@@ -148,10 +152,6 @@
     },
     {
       "feature": "macro_nvda_relative_return",
-      "importance": 3.0
-    },
-    {
-      "feature": "afml_fracdiff_vol_d04",
       "importance": 3.0
     },
     {
