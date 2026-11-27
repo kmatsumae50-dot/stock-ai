@@ -2,14 +2,14 @@
   "metrics": {
     "accuracy": 0.45819935691318325,
     "f1": 0.0,
-    "auc": 0.49765734811806966,
+    "auc": 0.5019261804362538,
     "rows": 622
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.4688,
+      "max_p": 0.4699,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
       "historical_win_rate": 0.512,
@@ -17,39 +17,39 @@
     },
     {
       "quantile": "Q2",
-      "min_p": 0.4701,
-      "max_p": 0.4793,
+      "min_p": 0.47,
+      "max_p": 0.4792,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.5323,
-      "description": "実績ギャップアップ率 53.2%（弱気）"
+      "historical_win_rate": 0.5242,
+      "description": "実績ギャップアップ率 52.4%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.4797,
-      "max_p": 0.4807,
+      "min_p": 0.4792,
+      "max_p": 0.4806,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.56,
-      "description": "実績ギャップアップ率 56.0%（中立・推移注視）"
+      "historical_win_rate": 0.568,
+      "description": "実績ギャップアップ率 56.8%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
-      "min_p": 0.4807,
-      "max_p": 0.4882,
+      "min_p": 0.4806,
+      "max_p": 0.4873,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.5403,
-      "description": "実績ギャップアップ率 54.0%（堅調）"
+      "historical_win_rate": 0.5323,
+      "description": "実績ギャップアップ率 53.2%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.4882,
+      "min_p": 0.4873,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.496,
-      "description": "実績ギャップアップ率 49.6%（最高勝率群）"
+      "historical_win_rate": 0.512,
+      "description": "実績ギャップアップ率 51.2%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -131,10 +131,6 @@
   ],
   "top_features": [
     {
-      "feature": "usdjpy_close_vs_ma_25",
-      "importance": 4.0
-    },
-    {
       "feature": "tesla_return_1d",
       "importance": 4.0
     },
@@ -155,6 +151,10 @@
       "importance": 3.0
     },
     {
+      "feature": "usdjpy_close_vs_ma_25",
+      "importance": 3.0
+    },
+    {
       "feature": "tnx_return_1d",
       "importance": 3.0
     },
@@ -163,11 +163,11 @@
       "importance": 3.0
     },
     {
-      "feature": "macd_signal",
+      "feature": "close_vs_ma_75",
       "importance": 2.0
     },
     {
-      "feature": "volatility_20",
+      "feature": "macd_signal",
       "importance": 2.0
     }
   ]

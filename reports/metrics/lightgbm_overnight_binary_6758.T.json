@@ -2,54 +2,54 @@
   "metrics": {
     "accuracy": 0.4758842443729904,
     "f1": 0.644880174291939,
-    "auc": 0.5194256756756757,
+    "auc": 0.5326904742165479,
     "rows": 622
   },
   "quantile_cutoffs": [
     {
       "quantile": "Q1",
       "min_p": 0.0,
-      "max_p": 0.5234,
+      "max_p": 0.5245,
       "label": "ギャップダウン警戒帯",
       "direction": "down",
-      "historical_win_rate": 0.576,
-      "description": "実績ギャップアップ率 57.6%（陰線・下落警戒）"
+      "historical_win_rate": 0.544,
+      "description": "実績ギャップアップ率 54.4%（陰線・下落警戒）"
     },
     {
       "quantile": "Q2",
-      "min_p": 0.5234,
-      "max_p": 0.5271,
+      "min_p": 0.5249,
+      "max_p": 0.5269,
       "label": "弱気帯",
       "direction": "down",
-      "historical_win_rate": 0.4839,
-      "description": "実績ギャップアップ率 48.4%（弱気）"
+      "historical_win_rate": 0.5242,
+      "description": "実績ギャップアップ率 52.4%（弱気）"
     },
     {
       "quantile": "Q3",
-      "min_p": 0.5271,
+      "min_p": 0.5269,
       "max_p": 0.5299,
       "label": "中立帯",
       "direction": "neutral",
-      "historical_win_rate": 0.464,
-      "description": "実績ギャップアップ率 46.4%（中立・推移注視）"
+      "historical_win_rate": 0.496,
+      "description": "実績ギャップアップ率 49.6%（中立・推移注視）"
     },
     {
       "quantile": "Q4",
       "min_p": 0.5299,
-      "max_p": 0.5342,
+      "max_p": 0.5343,
       "label": "強気先行帯",
       "direction": "up",
-      "historical_win_rate": 0.3952,
-      "description": "実績ギャップアップ率 39.5%（堅調）"
+      "historical_win_rate": 0.379,
+      "description": "実績ギャップアップ率 37.9%（堅調）"
     },
     {
       "quantile": "Q5",
-      "min_p": 0.5342,
+      "min_p": 0.5343,
       "max_p": 1.0,
       "label": "強気ギャップアップ帯",
       "direction": "up",
-      "historical_win_rate": 0.488,
-      "description": "実績ギャップアップ率 48.8%（最高勝率群）"
+      "historical_win_rate": 0.464,
+      "description": "実績ギャップアップ率 46.4%（最高勝率群）"
     }
   ],
   "feature_columns": [
@@ -163,11 +163,11 @@
       "importance": 2.0
     },
     {
-      "feature": "close_location_value",
-      "importance": 1.0
+      "feature": "jump_ratio_20d",
+      "importance": 2.0
     },
     {
-      "feature": "close_vs_ma_5",
+      "feature": "return_1d",
       "importance": 1.0
     }
   ]
